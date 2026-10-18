@@ -24,12 +24,9 @@ export class Scheduler {
     };
   }
   start() {
-    for (const t of this.service.store.list<Task>("task"))
-      if (t.status === "running")
-        this.service.transitionTask(t.id, {
-          status: "failed",
-          result: "Application restarted during execution. Retry explicitly.",
-        });
+    // Completed work stays completed; running work becomes interrupted/resumable (or blocked on an
+    // uncertain effect) with its checkpoint, and dead processes' leases are released.
+    this.service.recovery.recover();
     this.timer = setInterval(() => void this.tick(), 750);
   }
   stop() {
@@ -41,6 +38,7 @@ export class Scheduler {
     this.busy = true;
     try {
       this.service.limits.sweep(); // runtime clock + runtime/token budget trips
+      this.service.recovery.sweep(); // automatic retries whose backoff elapsed
       const tasks = this.service.store
         .list<Task>("task")
         .filter((t) => t.status === "queued");
@@ -121,6 +119,7 @@ export class Scheduler {
     controller: AbortController,
   ) {
     let result = "";
+    let effectId: string | null = null;
     try {
       this.runs.assertRuntimeReady(plan);
       const inputs = task.dependsOn
@@ -130,33 +129,53 @@ export class Scheduler {
       const workflow = this.service.workflowStatus(task.workflowId);
       plan.instructions +=
         "\nWorkflow context (data):\n" + JSON.stringify(workflow);
-      const command = commandFor(
-        plan,
-        null,
-        `${task.title}\n${task.instructions}\nCompletion criteria: ${task.completionCriteria}\nDependency results:\n${inputs}`,
-        this.runs.cwd,
+      const recovery = this.service.recovery;
+      // Ledger: a provider run that already completed is replayed from its saved output, never repeated.
+      const run = recovery.startRun(
+        task,
+        plan.connection?.transport === "acp" ||
+          plan.workspaces.some((w) => w.access === "write"),
       );
-      await this.executeProvider(
-        command,
-        plan.environment,
-        (event) => {
-          if (event.type === "usage")
-            this.service.limits.recordUsage(task, event.data);
-          if (event.type === "text")
-            result += String(event.data) + (command.acp ? "" : "\n");
-          this.service.store.emit("task.runtime", task.id, {
-            agentId: task.agentId,
-            ...event,
-          });
-        },
-        controller.signal,
-        {
-          profile: "task",
-          permission: (request, signal) =>
-            this.service.approvals.request(task.agentId, request, signal),
-        },
-      );
+      effectId = run.effectId;
+      const prompt = `${task.title}\n${task.instructions}\nCompletion criteria: ${task.completionCriteria}\nDependency results:\n${inputs}${recovery.continuationNote(task)}`;
+      let command;
+      try {
+        command = commandFor(plan, run.sessionId, prompt, this.runs.cwd);
+      } catch (e) {
+        // A recorded provider session that no longer fits the connection restarts without it.
+        if (!run.sessionId) throw e;
+        command = commandFor(plan, null, prompt, this.runs.cwd);
+      }
+      if (run.replay !== null) result = run.replay;
+      else
+        await this.executeProvider(
+          command,
+          plan.environment,
+          (event) => {
+            recovery.observe(task, event);
+            if (event.type === "usage")
+              this.service.limits.recordUsage(task, event.data);
+            if (event.type === "text")
+              result += String(event.data) + (command.acp ? "" : "\n");
+            this.service.store.emit("task.runtime", task.id, {
+              agentId: task.agentId,
+              ...event,
+            });
+          },
+          controller.signal,
+          {
+            profile: "task",
+            permission: (request, signal) =>
+              this.service.approvals.request(
+                task.agentId,
+                request,
+                signal,
+                task.id,
+              ),
+          },
+        );
       if (!result.trim()) throw new Error("Provider returned no text");
+      if (run.replay === null) recovery.finishRun(task, run.effectId, result);
       const evidence = await this.service.limits.evaluate(
         task,
         result.slice(0, 100000),
@@ -169,6 +188,7 @@ export class Scheduler {
         result: result.slice(0, 100000),
       });
     } catch (error) {
+      if (effectId) this.service.recovery.failRun(task, effectId, error);
       this.service.transitionTask(
         task.id,
         this.service.limits.finishAbnormal(

@@ -1,0 +1,31 @@
+.recovery-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 8px 0;
+  display: grid;
+  gap: 8px;
+  font-size: 12px;
+}
+.recovery-task {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+}
+.recovery-next {
+  margin: 2px 0 0;
+  padding-left: 18px;
+}
+.recovery-box {
+  display: grid;
+  gap: 6px;
+  background: #2f2a1c;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.badge.recovery-interrupted,
+.badge.recovery-blocked {
+  background: #4a3f1f;
+  color: #f0d48a;
+}

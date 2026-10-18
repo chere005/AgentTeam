@@ -150,6 +150,12 @@ export function PendingApprovals({ agents }: { agents: Agent[] }) {
         permission
       </h3>
       <p>{approval.request.toolCall.title}</p>
+      {approval.orphaned && (
+        <p className="hint">
+          AgentTeam restarted while this request was open. Your answer is
+          recorded and applied once when the task resumes.
+        </p>
+      )}
       <details>
         <summary>Requested operation</summary>
         <pre>{JSON.stringify(approval.request.toolCall, null, 2)}</pre>

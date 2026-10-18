@@ -766,6 +766,12 @@ summary:focus-visible {
 .task-dot.cancelled {
   background: #555c68;
 }
+.task-dot.interrupted {
+  background: #e6c46c;
+}
+.task-dot.blocked {
+  background: #e6a46c;
+}
 .text-button {
   border: 0;
   background: none;
@@ -1763,4 +1769,37 @@ summary:focus-visible {
 }
 .diff-scroll:focus-visible {
   outline: 2px solid #5fd1a4;
+}
+
+.worktree-card {
+  border: 1px solid var(--border, #8884);
+  border-radius: 6px;
+  padding: 8px;
+  margin: 6px 0;
+  display: grid;
+  gap: 4px;
+}
+.worktree-card code {
+  overflow-wrap: anywhere;
+}
+.worktree-card .setup pre {
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+.worktree-card .row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.worktree-card .badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+}
+label.check {
+  display: flex;
+  gap: 6px;
+  align-items: center;
 }

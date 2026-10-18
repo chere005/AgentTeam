@@ -6,6 +6,7 @@ import { z } from "zod";
 import { ResourceCoordinator } from "./resources.ts";
 import { ValidationService } from "./validation.ts";
 import { LimitsService } from "./limits.ts";
+import { RecoveryService } from "./checkpoints.ts";
 import { Store } from "./store.ts";
 import { SkillCatalog } from "./skills.ts";
 import {
@@ -31,6 +32,7 @@ export class TeamService {
   validation: ValidationService;
   limits: LimitsService;
   approvals: Approvals;
+  recovery: RecoveryService;
   constructor(store: Store, skills: SkillCatalog) {
     this.store = store;
     this.approvals = new Approvals(store);
@@ -38,6 +40,7 @@ export class TeamService {
     this.resources = new ResourceCoordinator(store);
     this.validation = new ValidationService(store, this.resources);
     this.limits = new LimitsService(this);
+    this.recovery = new RecoveryService(this);
   }
   async saveAgent(input: unknown, id?: string) {
     const data = agentSchema.parse(input);
@@ -258,7 +261,9 @@ export class TeamService {
         ? "paused"
         : tasks.length && tasks.every((t) => t.status === "completed")
           ? "completed"
-          : tasks.some((t) => t.status === "failed")
+          : tasks.some((t) =>
+                ["failed", "interrupted", "blocked"].includes(t.status),
+              )
             ? "needs-attention"
             : tasks.some((t) => t.status === "running")
               ? "running"
@@ -403,6 +408,8 @@ export class TeamService {
           "failed",
           "cancelled",
           "queued",
+          "interrupted",
+          "blocked",
         ]),
         result: z.string().max(100_000).optional(),
       })
@@ -412,12 +419,18 @@ export class TeamService {
     if (data.status === "running")
       this.limits.enforceStart(this.store.get<Task>("task", id));
     if (data.status === "queued") this.limits.beforeRetry(id);
+    this.recovery.beforeTransition(
+      this.store.get<Task>("task", id),
+      data.status,
+    );
     return this.store.transaction(() => {
       const task = this.store.get<Task>("task", id);
       const allowed: Record<Task["status"], Task["status"][]> = {
         queued: ["running", "cancelled"],
-        running: ["completed", "failed", "cancelled"],
+        running: ["completed", "failed", "cancelled", "interrupted", "blocked"],
         failed: ["queued", "cancelled"],
+        interrupted: ["queued", "cancelled", "blocked"],
+        blocked: ["queued", "cancelled", "interrupted"],
         completed: [],
         cancelled: [],
       };
@@ -482,10 +495,14 @@ export class TeamService {
         );
         this.limits.assertCompletion(task, data.result);
       }
+      const from = task.status;
       task.status = data.status;
       if (data.status !== "running") this.resources.release(task.id);
       if (data.status === "queued") {
-        this.limits.recordRetry(task);
+        // Resuming an interrupted/blocked task is not a retry, but a limit stop recorded before the
+        // restart is cleared either way (recordRetry only clears it in that case).
+        if (from === "failed" || this.limits.meta(task.id).stoppedByLimit)
+          this.limits.recordRetry(task);
         delete task.result;
         task.queuedAt = new Date().toISOString();
       } else if (data.result) task.result = data.result;
@@ -501,6 +518,7 @@ export class TeamService {
       )
         this.flow(task, task.status === "completed" ? "result" : "failure");
       this.limits.onTransition(task);
+      this.recovery.onTransition(task, from);
       return task;
     });
   }
@@ -539,6 +557,10 @@ export class TeamService {
       .map((t) => this.taskState(t.id));
     const processing =
       sessions.some((s) => s.state === "running") || running.length > 0;
+    // Interrupted/blocked tasks keep their provider session for resume; the agent is not idle.
+    const interrupted = tasks
+      .filter((t) => t.status === "interrupted" || t.status === "blocked")
+      .map((t) => t.id);
     const queuedMessages = this.store
       .list<Message>("message")
       .filter(
@@ -551,10 +573,13 @@ export class TeamService {
         ? "processing"
         : agent.control === "human"
           ? "human-control"
-          : queued.length || queuedMessages
-            ? "waiting"
-            : "idle",
+          : interrupted.length
+            ? "interrupted"
+            : queued.length || queuedMessages
+              ? "waiting"
+              : "idle",
       runningTaskIds: running,
+      interruptedTaskIds: interrupted,
       queuedTasks: queued.map((t) => ({ id: t.id, waitReason: t.waitReason })),
       queuedMessages,
       failedTaskIds: tasks

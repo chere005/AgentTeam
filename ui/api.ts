@@ -7,6 +7,8 @@ export type Activity = {
   runningTaskIds: string[];
   queuedTasks: { id: string; waitReason: string | null }[];
   failedTaskIds: string[];
+  /** Interrupted or blocked tasks awaiting resume or a decision (Recovery panel). */
+  interruptedTaskIds: string[];
   capacity: { running: number; queued: number; limit: number | null };
 };
 export type Snapshot = {

@@ -145,6 +145,11 @@ function Card({ data }: NodeProps) {
           {activity.failedTaskIds.length} failed task(s)
         </div>
       )}
+      {activity?.interruptedTaskIds?.length > 0 && (
+        <div className="failure">
+          {activity.interruptedTaskIds.length} interrupted task(s) to resume
+        </div>
+      )}
       <Handle type="source" position={Position.Bottom} />
     </div>
   );

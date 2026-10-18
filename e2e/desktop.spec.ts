@@ -217,7 +217,7 @@ test("review feedback, local preview and isolated worktree flow", async () => {
     await page
       .getByRole("button", { name: "Start server", exact: true })
       .click();
-    await expect(page.getByText(/Process: running/)).toBeVisible();
+    await expect(page.getByText(/Server: Ready/)).toBeVisible();
     await page.getByRole("button", { name: "Open / reload preview" }).click();
     await expect(
       page
@@ -233,7 +233,7 @@ test("review feedback, local preview and isolated worktree flow", async () => {
     await page
       .getByRole("button", { name: "Stop server", exact: true })
       .click();
-    await expect(page.getByText(/Process: stopped/)).toBeVisible();
+    await expect(page.getByText(/Server: Stopped/)).toBeVisible();
     await page.getByRole("button", { name: "Git", exact: true }).click();
     await page.getByText("Create isolated worktree", { exact: true }).click();
     await page

@@ -107,9 +107,10 @@ Recommended implementation, subject to normal code review:
 | `src/runtime.ts` | Commands, direct/ACP dispatch, conversation run manager, cancellation and resource gating. |
 | `src/runtime-types.ts` | Shared adapter command/event/permission types. |
 | `src/acp.ts` | Stable ACP v1 SDK transport, sessions, model/effort config, streaming, approvals, child lifecycle. |
-| `src/approvals.ts` | Pending permission promises and response validation; pending requests are not durably resumable. |
+| `src/approvals.ts` | Permission requests persisted as `approval` entities; after a restart they stay answerable and the answer is applied once to the resumed task's identical request. |
 | `src/discovery.ts` | Existing provider installation/model discovery and manual overrides. |
-| `src/development.ts` | Worktree creation, idempotent inline review feedback, dev-server lifecycle. |
+| `src/development.ts` | Idempotent inline review feedback; worktree creation delegates to `src/worktrees.ts`. Dev servers live in `src/devserver.ts`/`src/devserver-service.ts`. |
+| `src/checkpoints.ts`, `src/recovery-routes.ts` | Immutable checkpoints, effect ledger, interrupted/blocked restart recovery, retry policy (see `docs/durable-execution.md`). |
 | `src/workspaces.ts` | Bounded file access, Git operations, diff/review data. |
 | `desktop/` | Electron main/preload integration. New backend APIs require restarting an old desktop process. |
 | `test/`, `e2e/desktop.spec.ts` | Backend fixtures and desktop flows; no paid provider calls required. |
@@ -118,10 +119,10 @@ Recommended implementation, subject to normal code review:
 
 - `workflow()` creates an unpaused workflow. A sample creator must explicitly ensure it is paused within its creation transaction.
 - `task()` validates same-workflow dependencies; `invokedBy` requires a permitted delegation edge. Guided coordination can inject a coordinator plan dependency.
-- Task states: queued -> running/cancelled; running -> completed/failed/cancelled; failed -> queued/cancelled. Completed and cancelled tasks cannot currently be retried.
+- Task states: queued -> running/cancelled; running -> completed/failed/cancelled/interrupted/blocked; failed -> queued/cancelled; interrupted -> queued/cancelled/blocked; blocked -> queued/cancelled/interrupted. Completed and cancelled tasks cannot currently be retried.
 - `taskState()` gates pause, human control, dependencies, invoker capacity, and resource conflicts. The running transition performs further agent/resource checks.
 - Scheduler passes dependency `result` strings plus serialized workflow context, truncates successful results to 100,000 characters, and treats nonempty provider output as task completion. This is not proof that acceptance criteria passed.
-- Restart recovery currently marks interrupted running tasks failed with an explicit retry message. Persistence is not checkpoint/resume.
+- Restart recovery turns running tasks into `interrupted` (resumable from the last checkpoint) or `blocked` (uncertain external effect awaiting a decision); see `docs/durable-execution.md`.
 - Store `put()` upserts entities. A handoff history should use unique immutable IDs and a service API that prevents accidental replacement.
 - Workflow status is derived from task states, with pause taking precedence. No sample/template or versioned Markdown history exists yet.
 
@@ -147,9 +148,9 @@ Keep AgentTeam's routing, graph permissions, scheduling, locks, priority/fairnes
 - Skills catalog and installed-harness skills are separate; skills carry environment compatibility.
 - Saved teams, workspace/file preview, basic Git UI, external editor preferences including Sublime/project opening.
 - Code review diff navigation, line feedback with recipient, stale-diff rejection and idempotency.
-- Worktree creation/attachment and basic development-server logs, stop controls and sandboxed preview.
+- Worktree create/attach/setup/archive/remove and development servers with readiness checks, process-tree stop and an origin-restricted preview.
 - Human Take control / Return semantics, workflow/task visibility, guided parallel resource settings.
-- Broader approved backlog remains in `TODO.md`: run inspector, stopping conditions, checkpoints, shared state, conditional/tool nodes, MCP/knowledge, eventual mobile/shared-human sessions and encryption. Do not conflate backlog with shipped behavior.
+- Broader approved backlog remains in `TODO.md`: run inspector, shared state, conditional/tool nodes, MCP/knowledge, eventual mobile/shared-human sessions and encryption. Do not conflate backlog with shipped behavior.
 
 ## Validation baseline and next tests
 

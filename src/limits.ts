@@ -80,6 +80,8 @@ type TaskMeta = {
   checkHistory?: CheckEvidence[];
 };
 const LIVE = ["queued", "running"];
+/** Unfinished work that still counts toward delegation chains and child caps (resumable states). */
+const PENDING = [...LIVE, "interrupted", "blocked"];
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 const COUNT_KINDS: Record<
   string,
@@ -210,7 +212,10 @@ export class LimitsService {
           if (
             t.workflowId === workflowId &&
             t.status === "failed" &&
-            this.meta(t.id).stoppedByLimit
+            this.meta(t.id).stoppedByLimit &&
+            // An aborted mutating run is uncertain (or attempts are exhausted): the task stays
+            // failed for an explicit decision in the recovery panel instead of failing the resume.
+            this.service.recovery.retryGate(t).allowed
           ) {
             this.service.transitionTask(t.id, { status: "queued" });
             requeued.push(t.id);
@@ -532,7 +537,7 @@ export class LimitsService {
     // Cycle among live delegations even when parent links are unknown (e.g. queued ping-pong).
     const edges = new Map<string, Set<string>>();
     for (const t of all)
-      if (t.invokedBy && LIVE.includes(t.status))
+      if (t.invokedBy && PENDING.includes(t.status))
         (
           edges.get(t.invokedBy) ??
           edges.set(t.invokedBy, new Set()).get(t.invokedBy)!
@@ -582,7 +587,7 @@ export class LimitsService {
       );
     if (parent && l.maxChildrenPerTask !== null) {
       const live = all.filter(
-        (t) => t.parentTaskId === parent!.id && LIVE.includes(t.status),
+        (t) => t.parentTaskId === parent!.id && PENDING.includes(t.status),
       ).length;
       assert(
         live < l.maxChildrenPerTask,
@@ -619,7 +624,7 @@ export class LimitsService {
     for (const child of this.store.list<Task>("task")) {
       if (child.parentTaskId !== task.id) continue;
       const reason = `Cancelled because ancestor task ${task.id} was cancelled.`;
-      if (child.status === "queued")
+      if (["queued", "interrupted", "blocked"].includes(child.status))
         this.service.transitionTask(child.id, {
           status: "cancelled",
           result: reason,
@@ -681,9 +686,9 @@ export class LimitsService {
     return this.store.transaction(() => {
       const task = this.store.get<Task>("task", taskId);
       assert(
-        task.status === "queued" || task.status === "failed",
+        ["queued", "failed", "interrupted", "blocked"].includes(task.status),
         "task_started",
-        "Completion checks can only change while a task is queued or failed",
+        "Completion checks can only change while a task is not running or finished",
       );
       task.completionChecks = checks;
       this.store.put("task", task);

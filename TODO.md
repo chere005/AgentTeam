@@ -45,33 +45,17 @@ At this checkpoint, type checking and the production build pass. All 43 backend 
 
 ### Automatic worktree setup
 
-- [ ] Add Create isolated worktree to Workspace/Git with source repository, base revision, branch name, and resulting destination.
-- [ ] Generate sensible unique branch names and directories automatically, with manual overrides.
-- [ ] Attach the created worktree to the selected agent, make it active, and visibly update that agent's access inventory.
-- [ ] Let the user choose whether the original repository remains attached; default to isolated access for the new task.
-- [ ] Serialize Git metadata changes across worktrees of the same repository; do not switch folders under an active run.
-- [ ] Validate branch names, missing revisions, duplicate branches, existing directories, unavailable permissions, and repositories with no commits.
-- [ ] Preserve a successfully created worktree if attachment fails and provide a recovery action instead of deleting work.
-- [ ] Support an optional project setup command, with visible command text, logs, exit status, and retry.
-- [ ] Add a project/team setting to create a worktree automatically when assigning coding work.
-- [ ] Show worktree ownership, branch, base commit, active tasks, and changed/untracked files.
-- [ ] Add safe archive/remove workflows that preserve uncommitted work and warn about active users of the checkout.
-- [ ] Test creation, attachment, failure recovery, and cleanup on macOS, Windows, and Linux.
+- [ ] Auto-create setting (`/worktrees/settings`, global toggle in the Git pane, per-repository overrides API-only) runs only for tasks created through `POST /tasks`; tasks created by templates/samples/service calls, a per-project UI, and an HTTP-level test of the auto path remain.
+- [ ] Test creation, attachment, failure recovery, and cleanup on macOS, Windows, and Linux (verified on macOS only; `/dev/null`-style and permission assumptions are untested elsewhere).
 
 ### Development server and preview
 
-- [ ] Add a Preview tab/pane with command, working directory, local URL/port, Start, Stop, Restart, and Reload controls.
-- [ ] Persist per-project development-server settings; allow different settings for different worktrees.
-- [ ] Detect common package scripts and offer suggestions without silently executing them.
-- [ ] Show starting, ready, stopping, stopped, and failed states, plus bounded live logs and exit codes.
-- [ ] Check readiness at the configured URL; a spawned process alone does not mean the app is ready.
-- [ ] Embed the local app in an isolated preview without exposing AgentTeam's IPC bridge or API credentials.
-- [ ] Restrict preview navigation appropriately, handle blocked embedding, and provide Open in browser.
-- [ ] Handle occupied ports, missing dependencies, early exits, URLs that redirect, and servers that ignore HOST/PORT settings.
-- [ ] Stop the whole process tree on all three platforms, including application shutdown; avoid killing unrelated processes.
-- [ ] Define how server-generated files interact with resource locks and make this behavior visible.
-- [ ] Offer viewport sizes and browser console errors for UI QA.
-- [ ] Add integration tests for server lifecycle, preview isolation, and shutdown cleanup.
+Implemented and verified on macOS (`src/devserver*.ts`, `ui/components/DevServer.tsx`, `test/devserver.test.ts`, `e2e/preview.spec.ts`): settings, suggestions, lifecycle/readiness, port/early-exit/redirect/PORT-ignoring handling, process-group tree stop incl. shutdown, isolated iframe preview, viewports, console capture, resource-lock warning.
+
+- [ ] Run `test/devserver.test.ts` and `e2e/preview.spec.ts` on Windows (`taskkill /T`; a wrapper that exits before its children leaves them unreachable) and Linux; fix platform differences.
+- [ ] Add desktop coverage that the blocked-embedding fallback (`X-Frame-Options`) renders and that Open in browser launches the system browser (only the link target and backend detection are tested today).
+- [ ] Console capture needs the desktop shell (webContents `console-message`); the standalone backend has no embedded preview. Decide whether a browser-only preview is needed.
+- [ ] Descendants that detach themselves (`setsid`/daemonizing servers) escape the process group; consider a recorded child-pid sweep if this shows up in real projects.
 
 ## 2 Finish the requested agent editor changes — P0
 
@@ -95,7 +79,6 @@ Remaining ACP and orchestration work:
 - [ ] Implement ACP filesystem/terminal client services within AgentTeam's access policy. They are currently advertised as unavailable; adapters can still use their own native tools and permissions.
 - [ ] Constrain or account for native subagents so they cannot bypass communication rules, resource locks, and invocation limits. Do not advertise native subagent support before this works.
 - [ ] Implement teammate invocation as AgentTeam-controlled tools/actions; ACP alone does not route arbitrary teammates.
-- [ ] Persist approval/checkpoint state appropriately for crash recovery; pending approval promises are currently in memory and decisions are audited as events.
 - [ ] Harden adapter process-tree shutdown, configurable timeouts, reconnect, and uncertain-outcome handling without blind replay of external side effects.
 - [ ] Add opt-in real-provider smoke tests and cross-platform ACP packaging tests before making ACP the preferred default.
 - [ ] Integrate the internal Wolfram ACP project later. The user has access; obtain its repository/documentation when this work begins and verify capabilities, authentication, session behavior, and distribution permissions. Do not publish internal code/artifacts without authorization; retain the current bridge in the interim.
@@ -115,7 +98,6 @@ References: [ACP protocol](https://agentclientprotocol.com/protocol/overview), [
 - [ ] Validate Wolfram execution with a configured local installation, evaluator selection, error handling, and session context.
 - [ ] Preserve provider session identity and verify resume after restart, model changes, and human takeover.
 - [ ] Provide a guided first-run check that does not require an Enable execution checkbox and does not unexpectedly drain old queued work.
-- [ ] Correct README and release notes that still describe execution as off by default.
 
 ## 4 Saved teams and reusable configurations — P1
 
@@ -162,14 +144,14 @@ References: [ACP protocol](https://agentclientprotocol.com/protocol/overview), [
 
 ## 7 Checkpoints and reliable workflow recovery — P1
 
-- [ ] Save durable checkpoints at meaningful task/tool/approval boundaries.
-- [ ] Resume after app restart or human input without rerunning completed steps. Current recovery marks interrupted work failed.
-- [ ] Track attempted, completed, and uncertain external effects so retries do not blindly repeat mutations.
-- [ ] Add per-step retry policy, backoff, maximum attempts, and an explicit retry-from-checkpoint action.
-- [ ] Support approval and human-input steps with pending requests, response history, and resumption from the same point.
-- [ ] Preserve dependencies, shared state, artifacts, provider session IDs, and resource ownership consistently across recovery.
-- [ ] Display the resumable checkpoint and explain which steps will execute next.
-- [ ] Test crash recovery during provider execution, delegation, feedback delivery, and lock acquisition/release.
+Implemented and fixture-tested (see `docs/durable-execution.md`): immutable checkpoints, effect ledger, interrupted/blocked recovery, retry policy, persisted approvals, recovery API and panel. Remaining:
+
+- [ ] Add human-input steps (free-form questions to the user, not only provider permission requests) with the same persisted pending request, answer history and resume-at-same-point behavior as approvals.
+- [ ] Carry shared workflow state and artifacts through recovery once they exist (section 10); dependencies, provider session ids, leases and approvals already recover consistently.
+- [ ] Verify resume with a live provider: the recorded provider session id is passed to Codex/Claude/ACP on resume, but only fixture adapters were exercised. Record ACP `session/load` support before relying on it.
+- [ ] Route AgentTeam-controlled teammate/tool invocations through the effect ledger when they exist (today the ledger covers provider runs, chat runs and ACP mutating tool calls).
+- [ ] Add a retry-policy editor (max attempts, backoff, automatic retry) to the Recovery panel; it is API-only (`PUT /tasks/:id/retry-policy`).
+- [ ] Decide the execution engine (XState or LangGraph) using the prototype task in section 3; the checkpoint/ledger entities are engine-agnostic.
 
 ## 8 Stopping conditions and usage limits — P1
 
@@ -300,10 +282,11 @@ References: [ACP protocol](https://agentclientprotocol.com/protocol/overview), [
 - [ ] Run desktop smoke tests on all supported OS targets and installation tests for packaged applications.
 - [ ] Test Developer ID signing and notarization using the other Mac's credentials or configured GitHub secrets; never commit credentials.
 - [ ] Clearly distinguish signed/notarized builds from unsigned builds in download and installation instructions.
-- [ ] Verify bundled notices and licenses for application dependencies and every distributed skill.
+- [ ] Verify bundled notices and licenses for application dependencies and every distributed skill. `scripts/audit-release.mjs` (run in CI) now checks the lockfile, production-dependency license allow-list, per-skill license text and `SKILL.md` hashes; still open: confirm Electron/Chromium notices inside a built package and legal review of the allow-list.
 - [ ] Add versioned database migrations, backup/export, import/restore, and recovery from migration failure.
 - [ ] Add safe update distribution, release notes in-app, and restart behavior that respects active work.
 - [ ] Keep README, release notes, screenshots, and this backlog aligned with the behavior actually shipped.
+- [ ] Follow [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) for each release; README/release notes were re-checked against the code on October 18, 2026 (execution default, limits, validation gate, review, templates, diagnostics), but `docs/team-canvas.png` has not been re-captured.
 
 ## Suggested implementation order
 

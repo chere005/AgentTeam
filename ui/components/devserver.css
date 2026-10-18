@@ -1,0 +1,33 @@
+.devserver .chip {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+.devserver .warn {
+  color: #e6c07b;
+}
+.devserver .button.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.devserver a.button {
+  display: inline-block;
+  padding: 6px 10px;
+  border: 1px solid #35413e;
+  border-radius: 6px;
+  text-decoration: none;
+  color: inherit;
+}
+.preview-scroll {
+  overflow: auto;
+  max-width: 100%;
+}
+.console-error {
+  color: #ff8b8b;
+  white-space: pre-wrap;
+  margin: 4px 0;
+}
+.console-warning {
+  color: #e6c07b;
+  white-space: pre-wrap;
+  margin: 4px 0;
+}

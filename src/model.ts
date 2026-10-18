@@ -141,7 +141,16 @@ export type Workflow = z.infer<typeof workflowSchema> & {
 };
 export type Task = z.infer<typeof taskSchema> & {
   id: string;
-  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  status:
+    | "queued"
+    | "running"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    /** Backend stopped mid-run; resumable from its last checkpoint (src/checkpoints.ts). */
+    | "interrupted"
+    /** Waiting for an explicit user decision about an uncertain external effect. */
+    | "blocked";
   result?: string;
   queuedAt?: string;
 };

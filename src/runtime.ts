@@ -329,8 +329,20 @@ export class RunManager {
   recover() {
     const store = this.service.store;
     store.transaction(() => {
+      // A run request that never started has no external effect, so it survives the restart
+      // (e.g. delivered review feedback); stale ones without a queued message are dropped.
       for (const request of store.list<{ id: string }>("run-request"))
-        store.remove("run-request", request.id);
+        if (
+          !store
+            .list<Message>("message")
+            .some(
+              (m) =>
+                m.sessionId === request.id &&
+                m.role === "user" &&
+                m.status === "queued",
+            )
+        )
+          store.remove("run-request", request.id);
       for (const lease of store.list<{ id: string }>("lease"))
         this.service.resources.release(lease.id);
       for (const session of store.list<Session>("session"))
@@ -482,7 +494,19 @@ export class RunManager {
   ) {
     const store = this.service.store;
     let text = "";
+    let effectId: string | null = null;
     try {
+      // Ledger: a mutating chat run interrupted by a crash needs a user decision before it is repeated.
+      effectId = this.service.recovery.ledger.begin({
+        taskId: id,
+        key: "chat:" + message.id,
+        kind: "chat-run",
+        description: "Chat run for message " + message.id.slice(0, 8),
+        mutating:
+          plan.connection?.transport === "acp" ||
+          plan.workspaces.some((w) => w.access === "write"),
+        ref: { messageId: message.id },
+      }).effect.id;
       await executeCommand(
         command,
         plan.environment,
@@ -502,6 +526,7 @@ export class RunManager {
             this.service.approvals.request(plan.agentId, request, signal),
         },
       );
+      if (effectId) this.service.recovery.ledger.complete(effectId);
       assert(
         text.trim(),
         "empty_result",
@@ -522,6 +547,7 @@ export class RunManager {
         store.emit("session.completed", id);
       });
     } catch (e) {
+      if (effectId) this.service.recovery.failEffect(effectId, e);
       store.transaction(() => {
         message.status = "failed";
         store.put("message", message);

@@ -12,6 +12,12 @@ import { RunManager } from "../src/runtime.ts";
 import { Scheduler } from "../src/scheduler.ts";
 import { createApi } from "../src/http.ts";
 import { roots, setProjectRoot } from "../src/config.ts";
+import {
+  liveDevServerCount,
+  previewNavigationAllowed,
+  recordPreviewConsole,
+  shutdownDevServers,
+} from "../src/devserver.ts";
 import type { Agent, Session } from "../src/model.ts";
 app.setName("AgentTeam");
 if (process.env.AGENTTEAM_DATA_DIR)
@@ -158,8 +164,34 @@ async function start() {
         sandbox: true,
       },
     });
-    win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    // Links in the embedded preview (target=_blank) open in the system browser,
+    // only for the configured development-server origin. Nothing else may open.
+    win.webContents.setWindowOpenHandler((details) => {
+      if (previewNavigationAllowed(details.url))
+        void shell.openExternal(details.url);
+      return { action: "deny" };
+    });
     win.webContents.on("will-navigate", (event) => event.preventDefault());
+    // The preview iframe may only navigate within the configured local origin.
+    const restrictFrames = (
+      event: Electron.Event & { url: string; isMainFrame: boolean },
+    ) => {
+      if (!event.isMainFrame && !previewNavigationAllowed(event.url))
+        event.preventDefault();
+    };
+    win.webContents.on("will-frame-navigate", restrictFrames);
+    win.webContents.on("will-redirect", restrictFrames);
+    // Console errors/warnings from the embedded preview, for UI QA.
+    win.webContents.on("console-message", (event) => {
+      if (event.frame !== win.webContents.mainFrame)
+        recordPreviewConsole(
+          event.frame?.url ?? "",
+          event.level,
+          event.message,
+          event.sourceId,
+          event.lineNumber,
+        );
+    });
     if (process.env.AGENTTEAM_DEV === "1")
       void win.loadURL("http://127.0.0.1:5173");
     else void win.loadFile(join(here, "../ui/index.html"));
@@ -213,10 +245,11 @@ async function start() {
     event.preventDefault();
     scheduler.stop();
     runs.close();
+    void shutdownDevServers();
     server.closeAllConnections();
     server.close();
     const timer = setInterval(() => {
-      if (!runs.active.size) {
+      if (!runs.active.size && !liveDevServerCount()) {
         clearInterval(timer);
         store.close();
         app.quit();

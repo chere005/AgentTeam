@@ -1,4 +1,5 @@
 import { DevelopmentService } from "./development.ts";
+import { DevServerService } from "./devserver-service.ts";
 import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { RuntimeDiscovery } from "./discovery.ts";
@@ -22,6 +23,7 @@ import { RunManager } from "./runtime.ts";
 import { WorkspaceService } from "./workspaces.ts";
 import { ReviewService } from "./reviews.ts";
 import { recommendations } from "./config.ts";
+import { recoveryRoute } from "./recovery-routes.ts";
 import {
   AppError,
   type Agent,
@@ -56,6 +58,7 @@ export function createApi(
   const store = service.store;
   const workspaces = new WorkspaceService(store);
   const development = new DevelopmentService(service);
+  const devservers = new DevServerService(service);
   const teams = new TeamTemplates(service, () => discovery.runtimes);
   const reviews = new ReviewService(service, workspaces);
   const server = createServer(async (req, res) => {
@@ -88,9 +91,48 @@ export function createApi(
         method = req.method;
       let match: RegExpMatchArray | null;
       if (
+        path === "/worktrees/settings" &&
+        (method === "GET" || method === "PUT")
+      )
+        return send(
+          method === "GET"
+            ? development.worktrees.settings()
+            : development.worktrees.saveSettings(await body(req)),
+        );
+      if (
         method === "POST" &&
         (match = path.match(
-          /^\/agents\/([^/]+)\/development\/(worktree|feedback|start|list|stop)$/,
+          /^\/agents\/([^/]+)\/worktrees\/(suggest|list|create|attach|setup|remove)$/,
+        ))
+      ) {
+        const agentId = id(match[1]),
+          action = match[2],
+          data = await body(req);
+        store.get<Agent>("agent", agentId);
+        const wt = development.worktrees;
+        if (action === "suggest") return send(await wt.suggest(agentId, data));
+        if (action === "list") return send(await wt.list(agentId, data));
+        if (action === "create")
+          return send(await wt.create(agentId, data), 201);
+        if (action === "attach") return send(await wt.attach(agentId, data));
+        if (action === "remove") return send(await wt.remove(agentId, data));
+        const { worktreeId, ...command } = data as { worktreeId?: string };
+        if (typeof worktreeId !== "string")
+          throw new AppError(400, "invalid_request", "worktreeId is required");
+        return send(
+          wt.runSetup(
+            agentId,
+            worktreeId,
+            Object.keys(command).length ? command : undefined,
+          ).setup,
+        );
+      }
+      const devResult = await devservers.route(method, path, () => body(req));
+      if (devResult !== undefined) return send(devResult);
+      if (
+        method === "POST" &&
+        (match = path.match(
+          /^\/agents\/([^/]+)\/development\/(worktree|feedback)$/,
         ))
       ) {
         const agentId = id(match[1]),
@@ -112,24 +154,7 @@ export function createApi(
           }
           return send({ ...feedback, execution });
         }
-        if (action === "start")
-          return send(await development.start(agentId, data));
-        if (action === "list") {
-          const { workspace } = z
-            .object({ workspace: z.string() })
-            .strict()
-            .parse(data);
-          await workspaces.location(agentId, { workspace });
-          return send(development.list(agentId, workspace));
-        }
-        const { processId } = z
-          .object({ processId: z.string() })
-          .strict()
-          .parse(data);
-        const processInfo = development.processes.get(processId);
-        if (!processInfo || processInfo.info.agentId !== agentId)
-          throw new AppError(404, "server_missing", "Server not found");
-        return send(await development.stop(processId));
+        throw new AppError(404, "not_found", "Unknown API endpoint");
       }
       if (
         method === "POST" &&
@@ -168,6 +193,10 @@ export function createApi(
         }
         return send({ ...result, execution });
       }
+      const recovered = await recoveryRoute(service, method, url, () =>
+        body(req),
+      );
+      if (recovered) return send(recovered.data, recovered.status);
       if (method === "GET" && path === "/approvals")
         return send(service.approvals.list());
       if (method === "POST" && (match = path.match(/^\/approvals\/([^/]+)$/))) {
@@ -555,8 +584,16 @@ export function createApi(
           .parse(await body(req));
         return send(service.limits.setChecks(id(match[1]), data.checks));
       }
-      if (method === "POST" && path === "/tasks")
-        return send(service.task(await body(req)), 201);
+      if (method === "POST" && path === "/tasks") {
+        const input = await body(req);
+        // Optional per-project setting: isolate coding work in a fresh worktree first.
+        const auto =
+          typeof (input as any)?.agentId === "string"
+            ? await development.worktrees.autoForTask((input as any).agentId)
+            : null;
+        const task = service.task(input);
+        return send(auto ? { ...task, autoWorktree: auto } : task, 201);
+      }
       if (method === "GET" && (match = path.match(/^\/tasks\/([^/]+)$/)))
         return send(service.taskState(id(match[1])));
       if (
@@ -721,6 +758,7 @@ export function createApi(
   });
   server.on("close", () => {
     void development.close();
+    void devservers.close();
   });
   return server;
 }

@@ -1,4 +1,5 @@
-import { WorktreeSetup, DevelopmentPreview } from "./Development";
+import { WorktreeManager } from "./Worktrees";
+import { DevServerPanel } from "./DevServer";
 import { ChangesReview } from "./ChangesReview";
 import {
   GateBadge,
@@ -8,6 +9,7 @@ import {
   WorkflowGateSummary,
 } from "./Validation";
 import { WorkflowLimits } from "./Limits";
+import { WorkflowRecovery } from "./Recovery";
 import { HarnessSettings } from "./HarnessSettings";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -489,6 +491,7 @@ export function Workflows(p: PaneProps) {
           <SampleSetup workflow={w} act={p.act} />
           <WorkflowGateSummary tasks={w.tasks} />
           <WorkflowLimits workflowId={w.id} act={p.act} />
+          <WorkflowRecovery workflowId={w.id} act={p.act} />
           <div className="progress">
             <span
               style={{
@@ -558,7 +561,9 @@ export function Workflows(p: PaneProps) {
                     Retry
                   </button>
                 )}
-                {["queued", "failed"].includes(t.status) && (
+                {["queued", "failed", "interrupted", "blocked"].includes(
+                  t.status,
+                ) && (
                   <button
                     onClick={() =>
                       void p.act(() =>
@@ -1093,7 +1098,7 @@ export function Workspace(p: PaneProps) {
       ) : (
         <div className="scroll section workspace-body">
           {tab === "preview" ? (
-            <DevelopmentPreview
+            <DevServerPanel
               key={agent.id + root}
               agentId={agent.id}
               workspace={root}
@@ -1348,7 +1353,7 @@ export function Workspace(p: PaneProps) {
                   <pre>{preview.content}</pre>
                 </div>
               )}
-              <WorktreeSetup
+              <WorktreeManager
                 key={agent.id + root}
                 agentId={agent.id}
                 workspace={root}

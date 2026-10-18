@@ -24,6 +24,7 @@ jobs:
             arch: x64
             platform: linux
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -32,6 +33,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: node node_modules/electron/install.js
+      - run: node scripts/audit-release.mjs
       - run: npm run typecheck
       - run: npm test
       - run: npm run build

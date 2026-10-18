@@ -1,7 +1,7 @@
 /**
  * Runtime capability table. Every value describes what AgentTeam's adapters actually implement
  * today (src/runtime.ts, src/acp.ts, src/discovery.ts), not what a provider could support.
- * test/capabilities.test.ts cross-checks the claims that can be checked against the code.
+ * Keep these claims in step with the adapters when they change (there is no dedicated test).
  */
 export type CapabilityLevel = "yes" | "partial" | "no";
 export type CapabilityKey =
