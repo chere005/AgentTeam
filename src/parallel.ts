@@ -113,7 +113,9 @@ export const assignSchema = z
   })
   .strict();
 
-const MARK = "[Parallel assignment]";
+/** Separates a task's own instructions from the scope text an assignment appends. */
+export const PARALLEL_MARK = "[Parallel assignment]";
+const MARK = PARALLEL_MARK;
 async function git(cwd: string, args: string[]) {
   const r = await exec("git", ["-C", cwd, ...SAFE_GIT_CONFIG, ...args], {
     encoding: "utf8",

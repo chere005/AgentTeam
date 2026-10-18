@@ -43,6 +43,7 @@ export class Scheduler {
       this.service.recovery.sweep(); // automatic retries whose backoff elapsed
       this.service.graphs.sweep(); // workflow-graph steps waiting on gates without an event
       this.service.locks.sweep(); // draining leases whose processes have exited
+      this.service.pipelines.sweep(); // pipeline sample: assign stage-5 workers once integration finished
       // One ordering for tasks and chat run requests (src/queue.ts): Preempt first, then priority plus
       // aging; one clock reading keeps equal-age work FIFO. Entries waiting only for a lease on paths
       // overlapping a lower-ranked entry reserve those paths (starvation guard).

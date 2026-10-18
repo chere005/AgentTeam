@@ -90,6 +90,10 @@ function baseEnv(): NodeJS.ProcessEnv {
     GIT_LITERAL_PATHSPECS: "1",
     GIT_EDITOR: "true",
     GIT_MERGE_AUTOEDIT: "no",
+    // Read-only commands (status after a watched file change) must not take the optional
+    // index.lock refresh: it made the user's own concurrent `git switch`/`commit` fail with
+    // "index.lock: File exists". Mutating commands still take their required locks.
+    GIT_OPTIONAL_LOCKS: "0",
     GCM_INTERACTIVE: "never",
     // No askpass helper (Git's or ssh's) may pop up or run.
     GIT_ASKPASS: "",

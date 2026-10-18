@@ -178,6 +178,20 @@ test("conflict marker parsing finds bounded sections incl. diff3 base", () => {
   assert.equal(parseConflictMarkers("<<<<<<< x\nfoo\n").malformed, true);
 });
 
+test("reading Git state never rewrites the index (no optional index.lock while the user runs Git)", async (t) => {
+  const { root, agent, gw } = await fixture(t);
+  // A stat-dirty tracked file: plain `git status` would refresh and rewrite .git/index under
+  // index.lock, racing the user's own `git switch`/`commit` in the same repository.
+  const { utimes, stat } = await import("node:fs/promises");
+  const later = new Date(Date.now() + 60_000);
+  await utimes(join(root, "a.txt"), later, later);
+  const index = join(root, ".git", "index");
+  const before = (await stat(index)).mtimeMs;
+  await new Promise((r) => setTimeout(r, 20));
+  await gw.state(agent.id, w(root));
+  assert.equal((await stat(index)).mtimeMs, before);
+});
+
 test("fetch, pull (ff-only) and push work against a local bare remote", async (t) => {
   const { root, other, bare, agent, gw } = await fixture(t);
   const st = await gw.state(agent.id, w(root));
@@ -935,6 +949,9 @@ test(
     assert.equal(env.GIT_ASKPASS, "");
     assert.equal(env.SSH_ASKPASS_REQUIRE, "never");
     assert.equal(env.GIT_TERMINAL_PROMPT, "0");
+    // Background status refreshes never take the optional index.lock, so the user's own Git
+    // commands running at the same moment do not fail with "index.lock: File exists".
+    assert.equal(env.GIT_OPTIONAL_LOCKS, "0");
 
     // Repository-local core.sshCommand (e.g. from a cloned repo's setup) is never used.
     const repoMarker = join(base, "repo-ssh-ran"),

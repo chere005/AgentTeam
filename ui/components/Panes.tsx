@@ -14,9 +14,17 @@ import {
   WolframSampleButton,
   WorkflowGateSummary,
 } from "./Validation";
+import {
+  PipelineHistory,
+  PipelineSample,
+  PIPELINE_SAMPLE_ID,
+} from "./Pipeline";
 import { WorkflowLimits } from "./Limits";
 import { WorkflowRecovery } from "./Recovery";
 import { WorkflowSharedState } from "./SharedState";
+import { WorkflowStateEditor } from "./StateEditor";
+import { TaskSettings } from "./TaskSettings";
+import { RuleEditor } from "./RuleEditor";
 import { HarnessSettings } from "./HarnessSettings";
 import { GitWorkflowPanel } from "./GitWorkflow";
 import { FilePreview, OpenWith } from "./FilePreview";
@@ -481,6 +489,7 @@ export function Workflows(p: PaneProps) {
           </button>
         </div>
       </div>
+      <PipelineSample act={p.act} />
       <div className="summary-grid">
         <div>
           <strong>
@@ -575,10 +584,14 @@ export function Workflows(p: PaneProps) {
           </div>
           <p>{w.goal}</p>
           <SampleSetup workflow={w} act={p.act} />
+          {w.setup?.sample === PIPELINE_SAMPLE_ID && (
+            <PipelineHistory workflowId={w.id} act={p.act} />
+          )}
           <WorkflowGateSummary tasks={w.tasks} />
           <WorkflowLimits workflowId={w.id} act={p.act} />
           <WorkflowRecovery workflowId={w.id} act={p.act} />
           <WorkflowSharedState workflowId={w.id} />
+          <WorkflowStateEditor workflowId={w.id} act={p.act} />
           <div className="progress">
             <span
               style={{
@@ -641,6 +654,7 @@ export function Workflows(p: PaneProps) {
                 liveExecution={p.data.liveExecution}
                 act={p.act}
               />
+              <TaskSettings task={t} tasks={w.tasks} act={p.act} />
               <div className="row">
                 {t.status === "failed" && (
                   <button
@@ -925,6 +939,7 @@ export function Workflows(p: PaneProps) {
             </small>
             <RuleBadge rule={r} />
           </div>
+          <RuleEditor rule={r} agents={p.data.agents} act={p.act} />
           <button
             onClick={() => void p.act(() => api("/rules/" + r.id, "DELETE"))}
           >

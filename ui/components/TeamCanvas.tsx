@@ -709,6 +709,7 @@ export function TeamCanvas(p: Props) {
               .filter((n) => n.type === "agent")
               .map((n) => [n.id, n.position]),
           )}
+          groups={groups.map((g) => ({ name: g.name, agentIds: g.agentIds }))}
           close={() => setSavingTeam(false)}
         />
       )}

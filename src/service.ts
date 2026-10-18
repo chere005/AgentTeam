@@ -16,6 +16,8 @@ import { Orchestration, matchEvidence } from "./orchestration.ts";
 import { OwnershipService } from "./ownership.ts";
 import { LockRecovery } from "./lock-recovery.ts";
 import { ParallelWork } from "./parallel.ts";
+import { HandoffNotes } from "./handoffs.ts";
+import { PipelineService } from "./pipeline.ts";
 import { withRoleDefaults } from "./roles.ts";
 import { Store } from "./store.ts";
 import { SkillCatalog } from "./skills.ts";
@@ -62,6 +64,10 @@ export class TeamService {
   parallel: ParallelWork;
   /** Executable workflow graphs (src/workflow-graph.ts). */
   graphs: WorkflowGraphService;
+  /** Immutable Markdown handoff/attempt notes (src/handoffs.ts). */
+  handoffs: HandoffNotes;
+  /** Multi-stage plan/implement/review/adjudicate sample (src/pipeline.ts). */
+  pipelines: PipelineService;
   constructor(store: Store, skills: SkillCatalog) {
     this.store = store;
     this.approvals = new Approvals(store);
@@ -77,6 +83,8 @@ export class TeamService {
     this.locks = new LockRecovery(this);
     this.parallel = new ParallelWork(this);
     this.graphs = new WorkflowGraphService(this);
+    this.handoffs = new HandoffNotes(this);
+    this.pipelines = new PipelineService(this);
   }
   async saveAgent(input: unknown, id?: string) {
     const data = agentSchema.parse(withRoleDefaults(input));
@@ -189,15 +197,79 @@ export class TeamService {
       return edge;
     });
   }
-  saveRule(input: unknown) {
+  /**
+   * Create a rule, or replace rule `id` with the same validation as creation. Changing a rule's
+   * mode never reopens a required-review gate that was already planned: specialist triggers keep
+   * the mode they were planned with (src/orchestration.ts), so a mandatory requirement recorded
+   * for a task stays until its review approves. A mode change is recorded in the event.
+   */
+  saveRule(input: unknown, id?: string) {
+    const before = id ? this.store.get<Rule>("rule", id) : undefined;
     const data = ruleSchema.parse(input);
     this.store.get<Agent>("agent", data.agentId);
     if (data.targetId) this.store.get<Agent>("agent", data.targetId);
     return this.store.transaction(() => {
-      const rule = { ...data, id: randomUUID() };
+      const rule = { ...data, id: id ?? randomUUID() };
       this.store.put("rule", rule);
-      this.store.emit("rule.created", rule.id);
+      const modeFrom = before?.mode ?? "advisory",
+        modeTo = rule.mode ?? "advisory";
+      this.store.emit(
+        id ? "rule.updated" : "rule.created",
+        rule.id,
+        before && modeFrom !== modeTo ? { modeFrom, modeTo } : {},
+      );
       return rule;
+    });
+  }
+  /**
+   * Turns the Wolfram validation requirement on or off for an existing task. Same state rule as
+   * completion checks (never while running or finished); a `validation-gate` completion check needs
+   * the requirement, so it cannot be switched off underneath one.
+   */
+  setRequiresValidation(taskId: string, input: unknown) {
+    const data = z
+      .object({ requiresValidation: z.boolean() })
+      .strict()
+      .parse(input);
+    return this.store.transaction(() => {
+      const task = this.store.get<Task>("task", taskId);
+      assert(
+        ["queued", "failed", "interrupted", "blocked"].includes(task.status),
+        "task_started",
+        `Task is ${task.status}; the validation requirement can only change while a task is waiting, failed, interrupted or blocked`,
+        409,
+      );
+      assert(
+        data.requiresValidation ||
+          !(task.completionChecks ?? []).some(
+            (c) => c.type === "validation-gate",
+          ),
+        "validation_gate_check",
+        "Remove the validation-gate completion check before turning the validation requirement off",
+        409,
+      );
+      // Fail closed: once validation was attempted (or is running) and the gate is not open, the
+      // toggle must not become a way around a failed, inconclusive or stale result.
+      if (!data.requiresValidation && task.requiresValidation) {
+        assert(
+          !this.validation.activeRuns().some((r) => r.taskId === taskId),
+          "validation_running",
+          "A validation run for this task is in progress; wait for it or cancel it first",
+          409,
+        );
+        assert(
+          !this.validation.records(taskId).length ||
+            this.validation.gate(task).open,
+          "validation_not_passed",
+          "Validation was already attempted for this task and has not passed; the requirement cannot be switched off (fix the inputs and validate again, or create a new task)",
+          409,
+        );
+      }
+      if (data.requiresValidation) task.requiresValidation = true;
+      else delete task.requiresValidation;
+      this.store.put("task", task);
+      this.store.emit("task.updated", taskId, { agentId: task.agentId });
+      return this.taskState(taskId);
     });
   }
   permitted(from: string, to: string, kind: Edge["kind"]) {
@@ -352,6 +424,9 @@ export class TeamService {
           "Verify the model mapping before resuming this sample workflow",
         );
       }
+      // Pipeline sample: parallel resource access, caps and read-only roles were verified for the
+      // current configuration (src/pipeline.ts).
+      if (!paused) this.pipelines.assertReady(wf);
       wf.paused = paused;
       this.store.put("workflow", wf);
       this.store.emit(paused ? "workflow.paused" : "workflow.resumed", id);
@@ -539,6 +614,7 @@ export class TeamService {
           "agent_busy",
           "Agent session is running",
         );
+        this.pipelines.assertStart(task); // adjudication/assignment/read-only gates of the pipeline sample
         this.resources.acquire(task.id, task.agentId, task.workflowId);
         this.limits.recordTurn(task);
         // Run inspector: the settings this run actually started with (agent config may change later).
@@ -588,6 +664,7 @@ export class TeamService {
         this.flow(task, task.status === "completed" ? "result" : "failure");
       this.limits.onTransition(task);
       this.recovery.onTransition(task, from);
+      this.handoffs.onTransition(task); // immutable attempt note (workflows that opted in)
       if (task.status === "completed") this.orchestration.onTaskCompleted(task);
       return task;
     });

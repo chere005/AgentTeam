@@ -225,19 +225,14 @@ test("run inspector: timeline, wait explainer, transfers, previews, playground c
 
     // ---- canvas: open a connection to see its transfers -------------------------------------------
     await page.getByRole("button", { name: /^Team canvas/ }).click();
-    // `force` skips Playwright's stability check, so wait until the canvas has finished its initial
-    // fitView (the edge stops moving); a click on a still-moving edge can miss it under load.
+    // Dispatch the click on the edge element itself rather than at its bounding-box centre. A
+    // coordinate click was flaky in full-suite runs (2 of 3 runs once): the canvas keeps moving the
+    // edge after it looked stable (initial fitView once nodes are measured, cards growing as their
+    // data loads), so the centre could land on the empty pane. The React Flow onEdgeClick handler
+    // still runs; what this test checks is the dialog's transfer history.
     const edge = page.locator(".react-flow__edge").first();
     await expect(edge).toBeVisible();
-    await expect
-      .poll(async () => {
-        const a = await edge.boundingBox();
-        await page.waitForTimeout(120);
-        const b = await edge.boundingBox();
-        return !!a && !!b && JSON.stringify(a) === JSON.stringify(b);
-      })
-      .toBe(true);
-    await edge.click({ force: true });
+    await edge.dispatchEvent("click");
     const dialog = page.getByRole("dialog", { name: "Connection settings" });
     await expect(
       dialog.getByText("Transfers on this connection"),

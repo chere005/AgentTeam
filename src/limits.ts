@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { createContext, runInContext } from "node:vm";
 import { AppError, assert, type Task, type Workflow } from "./model.ts";
 import {
   DEFAULT_LIMITS,
@@ -10,6 +11,36 @@ import {
   type Limits,
 } from "./limits-schema.ts";
 import type { TeamService } from "./service.ts";
+
+/** Upper bound for one `output-matches` evaluation (the pattern is user input, the text agent output). */
+export const REGEX_CHECK_TIMEOUT_MS = 500;
+const regexContext = createContext({});
+/**
+ * Test a user-supplied pattern against untrusted text without letting catastrophic backtracking
+ * (e.g. `(a+)+$` against crafted output) block the backend's event loop: the match runs under a
+ * vm watchdog that interrupts it after `timeoutMs`. Returns "timeout" instead of a verdict then.
+ */
+export function boundedRegexTest(
+  pattern: string,
+  flags: string,
+  text: string,
+  timeoutMs = REGEX_CHECK_TIMEOUT_MS,
+): boolean | "timeout" {
+  const re = new RegExp(pattern, flags);
+  regexContext.re = re;
+  regexContext.text = text;
+  try {
+    return runInContext("re.test(text)", regexContext, {
+      timeout: timeoutMs,
+    }) as boolean;
+  } catch (e) {
+    if ((e as { code?: string }).code === "ERR_SCRIPT_EXECUTION_TIMEOUT")
+      return "timeout";
+    throw e;
+  } finally {
+    regexContext.re = regexContext.text = undefined;
+  }
+}
 import { canonical } from "./shared-common.ts";
 export type { Limits, CompletionCheck } from "./limits-schema.ts";
 
@@ -821,13 +852,20 @@ export class LimitsService {
           `Output is missing required JSON field(s): ${best.join(", ")}`,
         );
       }
-      if (check.type === "output-matches")
-        return new RegExp(check.pattern, check.flags).test(result)
+      if (check.type === "output-matches") {
+        const matched = boundedRegexTest(check.pattern, check.flags, result);
+        if (matched === "timeout")
+          return done(
+            false,
+            `Pattern /${check.pattern}/${check.flags} took longer than ${REGEX_CHECK_TIMEOUT_MS} ms on this output and was stopped (likely catastrophic backtracking); simplify the pattern`,
+          );
+        return matched
           ? done(true, "Output matches the required pattern")
           : done(
               false,
               `Output does not match /${check.pattern}/${check.flags}`,
             );
+      }
       if (check.type === "artifact-exists") {
         if (isAbsolute(check.path) || check.path.split(/[\\/]/).includes(".."))
           return done(

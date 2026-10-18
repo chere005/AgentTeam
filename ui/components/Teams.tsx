@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { X, Download, Upload, Copy, Trash2, Pencil, Plus } from "lucide-react";
 import { api, type TeamEvent } from "../api";
 import { starterTeams } from "./starterTeams";
+import { TeamPacks, applyInsertedGroups } from "./TeamPacks";
 import "./teams.css";
 
 export type Point = { x: number; y: number };
@@ -61,6 +62,7 @@ type Summary = {
 };
 type Source = { templateId: string } | { envelope: unknown };
 type InsertResult = {
+  groups?: { name: string; agentIds: string[] }[];
   layout: Record<string, Point>;
   agents: { id: string }[];
   warnings: string[];
@@ -105,7 +107,7 @@ function Dependencies({
   );
 }
 
-function Modal({
+export function Modal({
   title,
   eyebrow,
   close,
@@ -157,8 +159,10 @@ export function SaveTeamDialog({
   names,
   omittedAssistant,
   positions,
+  groups = [],
   close,
 }: {
+  groups?: { name: string; agentIds: string[] }[];
   agentIds: string[];
   names: string[];
   omittedAssistant: boolean;
@@ -186,6 +190,12 @@ export function SaveTeamDialog({
               .map((id) => [id, positions[id]]),
           ),
           includeAbsolutePaths: paths,
+          groups: groups
+            .map((g) => ({
+              name: g.name,
+              agentIds: g.agentIds.filter((id) => agentIds.includes(id)),
+            }))
+            .filter((g) => g.agentIds.length),
         }),
       );
     } catch (e) {
@@ -535,7 +545,7 @@ export function InsertTeamDialog({
 }
 
 /** Place inserted teams to the right of everything already on the canvas. */
-function nextOffset(agentIds: string[]): Point {
+export function nextOffset(agentIds: string[]): Point {
   try {
     const all: Record<string, Point> = JSON.parse(
       localStorage.getItem("agentteam.positions") ?? "{}",
@@ -549,7 +559,7 @@ function nextOffset(agentIds: string[]): Point {
 }
 
 /** Merge returned layout into the canvas' persisted positions. */
-function applyLayout(layout: Record<string, Point>) {
+export function applyLayout(layout: Record<string, Point>) {
   let current: Record<string, Point> = {};
   try {
     current = JSON.parse(localStorage.getItem("agentteam.positions") ?? "{}");
@@ -939,6 +949,12 @@ export function TeamLibrary({
           )}
         </div>
       </div>
+      <TeamPacks
+        events={events}
+        agentIds={agentIds}
+        act={act}
+        goCanvas={goCanvas}
+      />
       {inserting && source && detail && (
         <InsertTeamDialog
           source={source}
@@ -947,6 +963,7 @@ export function TeamLibrary({
           close={() => setInserting(false)}
           inserted={(r) => {
             applyLayout(r.layout);
+            applyInsertedGroups(r.groups, agentIds);
             setInserting(false);
             goCanvas();
           }}

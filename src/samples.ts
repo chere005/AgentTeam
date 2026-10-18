@@ -31,11 +31,26 @@ export type ModelCheck = {
   }[];
 };
 /** Stored (loosely) on the workflow document, like `coordination`. */
+/** What a non-lead agent's model must identify as (e.g. family "sonnet", version "5.5"). */
+export type ModelExpectation = {
+  label: string;
+  family: string;
+  version: string;
+  /** Effort the agent is configured with; checked against the model's advertised efforts. */
+  effort?: string;
+};
 export type WorkflowSetup = {
   sample: string;
   intendedLead: string;
   requiresModelVerification: boolean;
   modelCheck: ModelCheck;
+  /** Per-agent model expectations (pipeline sample); agents not listed keep the generic check. */
+  expectations?: Record<string, ModelExpectation>;
+  /** Extra resume gate (src/pipeline.ts): resource/parallel preflight bound to a fingerprint. */
+  requiresPreflight?: boolean;
+  preflight?: unknown;
+  /** Every stage attempt records an immutable handoff note (src/handoffs.ts). */
+  handoffNotes?: boolean;
 };
 
 const optionsSchema = z
@@ -196,6 +211,11 @@ export function createWolframSample(service: TeamService, input: unknown = {}) {
 export const isOpus55 = (s: string) =>
   /opus/i.test(s) && /(?<![\d.])5[.-]5(?![\d.])/.test(s);
 
+/** True when `s` names the model family at exactly that version (e.g. "claude-sonnet-5-5", "Sonnet 5.5"). */
+export const identifiesModel = (s: string, family: string, version: string) =>
+  new RegExp(family, "i").test(s) &&
+  new RegExp(`(?<![\\d.])${version.replace(/[.]/g, "[.-]")}(?![\\d.])`).test(s);
+
 /** Check the sample's agents against the models the installed harnesses advertise. */
 export function verifySampleModels(
   service: TeamService,
@@ -224,6 +244,7 @@ export function verifySampleModels(
     const runtime = runtimes?.find((r) => r.id === a.environment);
     const found = runtime?.models.find((m) => m.id === a.model);
     const isLead = id === wf.ownerId;
+    const expect = wf.setup.expectations?.[id];
     // Alias-only discovery (the Claude CLI lists just sonnet/opus/haiku) cannot advertise a
     // concrete id. An explicit Opus 5.5 id for the lead is then passed through unchanged and
     // surfaced as unadvertised; it is never swapped for an alias.
@@ -239,7 +260,50 @@ export function verifySampleModels(
       issues.push(`${a.name}: runtimes have not been discovered yet`);
     else if (!runtime?.installed)
       issues.push(`${a.name}: ${a.environment} is not installed or detected`);
-    else if (!found) {
+    else if (expect) {
+      // Explicit expectation (pipeline sample): the model must identify as the intended family and
+      // version. An explicit id that alias-only discovery cannot list is surfaced, never swapped.
+      const label = `${a.name}: ${a.model}`;
+      if (!found) {
+        if (
+          aliasOnly &&
+          identifiesModel(a.model, expect.family, expect.version)
+        )
+          warnings.push(
+            `${label} is not in ${a.environment}'s advertised aliases; it is passed to the CLI unchanged, which fails the task if the model is unavailable`,
+          );
+        else
+          issues.push(
+            `${a.name}: model ${a.model} is not advertised by ${a.environment}; expected ${expect.label}. Pick an advertised model (nothing is substituted automatically)`,
+          );
+      } else if (
+        expect.version &&
+        !identifiesModel(
+          `${found.id} ${found.name}`,
+          expect.family,
+          expect.version,
+        )
+      )
+        issues.push(
+          `${a.name}: ${found.id} (${found.name}) is not identifiably ${expect.label}; set the model explicitly`,
+        );
+      if (expect.effort) {
+        // The configured effort must be one the model advertises (never swapped for another).
+        const efforts = found?.efforts ?? [];
+        if (!a.effort)
+          issues.push(
+            `${a.name}: no effort configured (intended ${expect.effort})`,
+          );
+        else if (found && efforts.length && !efforts.includes(a.effort))
+          issues.push(
+            `${a.name}: ${a.model} does not advertise effort "${a.effort}" (advertised: ${efforts.join(", ")}); change the effort, nothing is substituted`,
+          );
+        else if (!found || !efforts.length)
+          warnings.push(
+            `${a.name}: effort "${a.effort}" cannot be verified (no advertised effort list for ${a.model}); it is passed unchanged`,
+          );
+      }
+    } else if (!found) {
       if (isLead && aliasOnly && isOpus55(a.model))
         warnings.push(
           `${a.name}: ${a.model} is not in ${a.environment}'s advertised aliases; it is passed to the CLI unchanged, which fails the task if the model is unavailable`,
@@ -269,8 +333,20 @@ export function verifySampleModels(
   return modelCheck;
 }
 
+/** Catalog entry for the multi-stage pipeline sample (created through POST /pipelines, src/pipeline.ts). */
+const PIPELINE_CATALOG = {
+  id: "plan-implement-review-pipeline",
+  name: "Opus plan → Sonnet workers → parallel reviews → adjudication → fixes → final reviews → report",
+  description:
+    "Paused until goal, workspace, model mappings (Opus 5.5, Sonnet 5.5, Fable 5.1, Codex max effort) and parallel resource access are configured and verified. Up to five workers per stage; immutable handoff notes. Create it with POST /pipelines.",
+};
 export function sampleCatalog() {
   return [
+    {
+      id: PIPELINE_CATALOG.id,
+      name: PIPELINE_CATALOG.name,
+      description: PIPELINE_CATALOG.description,
+    },
     {
       id: WOLFRAM_SAMPLE_ID,
       name: WOLFRAM_SAMPLE_NAME,

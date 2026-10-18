@@ -8,11 +8,9 @@ Updated October 18, 2026. This is the remaining work for the desktop application
 
 ## Current baseline
 
-**Continuation checkpoint:** see [docs/CONTINUATION.md](docs/CONTINUATION.md) for the current handoff: what exists, how it was verified, limitations and next steps. The multi-stage sample below is still unimplemented:
+**Continuation checkpoint:** see [docs/CONTINUATION.md](docs/CONTINUATION.md) for the current handoff: what exists, how it was verified, limitations and next steps. The multi-stage plan/implement/review/adjudicate sample (`src/pipeline.ts`, `src/handoffs.ts`) is implemented and fixture-tested only:
 
-- [ ] Create a paused sample: Opus 5.5 plan → Sonnet 5.5 implementation with up to five workers → parallel Codex max/Fable reviews → separate Fable adjudication → up to five additional Sonnet workers → parallel final reviews → concise Fable stage report.
-- [ ] Preserve immutable Markdown handoff/attempt notes across stages and retries, with a scrollable workflow history and references to the exact inputs consumed.
-- [ ] Make model mappings and worker caps configurable; validate provider availability and real parallel resource access before running the sample.
+- [ ] Run the pipeline sample once against real installed providers (Opus 5.5, Sonnet 5.5, Fable 5.1, Codex max effort; never run live yet). Confirm the real model ids and Codex's top effort name (the default `max` is blocked at verification if the install does not advertise it), that integration steps really merge worktrees, and that fix-worker worktrees (created after the first integration) contain the integrated result.
 
 The local application already has a three-pane layout; compact and detailed agent cards; a communication graph; agent configuration; persistent conversations; workflow tasks and dependencies; resource locks with waiting-time aging; skill inventories; a file browser; basic Git operations; and cross-platform packaging configuration.
 
@@ -101,9 +99,8 @@ References: [ACP protocol](https://agentclientprotocol.com/protocol/overview), [
 
 ## 4 Saved teams and reusable configurations — P1
 
-- [ ] Package reusable specialist teams with agents, lead, skills, internal rules, and required reviews; start with a Swift development pack alongside the existing starter gallery.
-- [ ] Add a versioned team-pack manifest with source attribution, licenses, pinned skill dependencies, supported harnesses/tools, and model mappings. Preview compatibility and installation changes before atomic insertion; never import credentials or silently grant permissions.
-- [ ] Support explicit pack updates with a configuration diff while preserving local customizations; check companion-skill licenses separately and retain required upstream notices.
+- [ ] Swift development pack: a skeleton exists (`assets/team-packs/swift-development`, manifest/agents/required review/groups; only bundled skill is `swift-expert`, nothing live-run). Remaining: a validated Swift workflow and live run, and the skills it lists as "not bundled — install separately" (Swift Testing/XCTest, SwiftUI accessibility, Xcode/simulator tooling, signing/release). Other specialist packs beyond Swift are not started.
+- [ ] Team packs: no UI for pack export/authoring, remote pack sources, or a signed/hashed pack feed; updates diff agents/connections/rules (not folders, canvas layout or groups) and never delete agents.
 - [ ] Save agent roles, instructions, models/effort, skills, limits, priorities, internal communication edges, routing rules, and relative layout.
 - [ ] Keep live sessions, credentials, running tasks, leases, and transient process state out of templates.
 - [ ] Provide a saved-team library with preview, rename, update/version, duplicate, insert, and delete. (UI built; only preview and insert are covered by the desktop test — rename/duplicate/delete/export/import UI and a starter-gallery insert are not yet exercised in the app; version bump is automatic on rename, no explicit update flow.)
@@ -135,12 +132,10 @@ Implemented and fixture-tested (see `docs/durable-execution.md`): immutable chec
 - [ ] Human-input steps exist as workflow-graph nodes (persisted approval record, free-text answer, answerable after restart); still open: agent- or provider-initiated free-form questions inside a running task with resume at the same point.
 - [ ] Verify resume with a live provider: the recorded provider session id is passed to Codex/Claude/ACP on resume, but only fixture adapters were exercised. Record ACP `session/load` support before relying on it.
 - [ ] Route AgentTeam-controlled teammate/tool invocations through the effect ledger when they exist (today the ledger covers provider runs, chat runs and ACP mutating tool calls).
-- [ ] Add a retry-policy editor (max attempts, backoff, automatic retry) to the Recovery panel; it is API-only (`PUT /tasks/:id/retry-policy`).
 - [ ] Decide the execution engine (XState or LangGraph) using the prototype task in section 3; the checkpoint/ledger entities are engine-agnostic.
 
 ## 8 Stopping conditions and usage limits — P1
 
-- [ ] Add a UI editor for per-task completion checks (backend, API `PUT /tasks/:id/completion-checks` and scheduler enforcement are done; only workflow limits have UI).
 - [ ] Verify token-usage parsing against live Codex/Claude/ACP output (fixture-tested only; Wolfram and ACP report no usage today, shown as unavailable).
 - [ ] Detect subscription-quota vs API-key access per provider; today cost is always shown as unavailable and tokens are never converted to dollars.
 
@@ -157,7 +152,6 @@ Implemented and fixture-tested (`src/inspector.ts`, `src/playground.ts`, `src/di
 
 Implemented and fixture-tested (`src/shared-state.ts`, `src/artifacts.ts`, `src/shared-routes.ts`, `ui/components/SharedState.tsx`; see `docs/durable-execution.md`). Remaining:
 
-- [ ] Add UI editors for field definitions (kind, schema, readers/writers), per-task state/context settings (`PUT /tasks/:id/state-config`: fresh memory, selected inputs, required writes) and checkpoint-based restore; today these are API-only and the UI is a read-only viewer.
 - [ ] Verify the `agentteam-state` structured-output block with a live provider (fixture-tested only) and add a provider-tool path (ACP/MCP) that writes state through `SharedStateService.write` with the same permission and version checks.
 
 ## 11 Conditional workflows and deterministic steps — P1
@@ -199,7 +193,7 @@ Implemented and verified on macOS with temp repos/local bare remotes (see `src/g
 
 - [ ] Make detailed cards' configuration summary (read-only grid added) visually verified at several widths, and verify the busy/failure/flow animations and `prefers-reduced-motion` behavior in a running app (CSS added in `canvas-cards.css`, only far-zoom card layout was inspected; large-graph "calm" mode above 40 agents is untested).
 - [ ] Attention inbox: awaiting-approval items are covered only by the pure `buildInbox` test (no e2e fixture for a pending approval), and "ready review" is a heuristic (completed task whose agent has an enabled outgoing review edge) because review state is per agent/git diff and not in the snapshot; consider a backend summary endpoint.
-- [ ] Group membership is stored in the renderer (localStorage), not in team entities or saved-team templates; decide whether groups should travel with saved teams.
+- [ ] Groups now travel with saved teams/packs (template schema v2, `groups`), but live canvas group membership is still renderer localStorage, not a team entity; the saved-team Save dialog group path is backend-tested only (the desktop test covers pack insert).
 
 ## 16 Mobile continuation — P2
 

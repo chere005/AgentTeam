@@ -17,8 +17,11 @@ import type { TeamService } from "./service.ts";
 import type { DetectedRuntime } from "./discovery.ts";
 
 export const TEAM_TEMPLATE_FORMAT = "agentteam.team-template";
-/** Highest schema version this build can read and the one it writes. */
-export const TEAM_TEMPLATE_SCHEMA_VERSION = 1;
+/**
+ * Highest schema version this build can read and the one it writes.
+ * v2 (additive) adds optional `groups` (canvas selection groups). v1 envelopes still read; groups default to [].
+ */
+export const TEAM_TEMPLATE_SCHEMA_VERSION = 2;
 
 const kindEnum = z.enum(["delegate", "consult", "review", "notify"]);
 const key = z.string().min(1).max(64);
@@ -87,6 +90,13 @@ const externalDependency = z
   })
   .strict();
 
+const templateGroup = z
+  .object({
+    name: z.string().trim().min(1).max(40),
+    agentKeys: z.array(key).min(1).max(200),
+  })
+  .strict();
+
 export const teamTemplateSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
@@ -97,11 +107,21 @@ export const teamTemplateSchema = z
     rules: z.array(templateRule).default([]),
     externalDependencies: z.array(externalDependency).default([]),
     includesAbsolutePaths: z.boolean().default(false),
+    /** Canvas selection groups (schema v2); membership is by agent key and exclusive. */
+    groups: z.array(templateGroup).max(50).default([]),
   })
   .strict()
   .superRefine((t, ctx) => {
     const keys = new Set(t.agents.map((a) => a.key));
     const bad = (message: string) => ctx.addIssue({ code: "custom", message });
+    const grouped = new Set<string>();
+    for (const g of t.groups) {
+      for (const k of g.agentKeys) {
+        if (!keys.has(k)) bad(`Group ${g.name} references unknown agent ${k}`);
+        if (grouped.has(k)) bad(`Agent ${k} is in more than one group`);
+        grouped.add(k);
+      }
+    }
     if (keys.size !== t.agents.length) bad("Duplicate agent keys");
     const parents = new Map(t.agents.map((a) => [a.key, a.parentKey]));
     for (const a of t.agents) {
@@ -164,6 +184,18 @@ const createSchema = z
     /** Canvas coordinates by agent id (held by the UI); normalized to be relative. */
     positions: z.record(z.string(), point).default({}),
     includeAbsolutePaths: z.boolean().default(false),
+    /** Canvas groups (renderer state) to keep with the team: agent ids per named group. */
+    groups: z
+      .array(
+        z
+          .object({
+            name: z.string().trim().min(1).max(40),
+            agentIds: z.array(z.string()).min(1).max(200),
+          })
+          .strict(),
+      )
+      .max(50)
+      .default([]),
   })
   .strict();
 const insertSchema = z
@@ -206,7 +238,7 @@ export type Preview = {
   counts: { agents: number; edges: number; rules: number };
 };
 
-const SECRET_PATTERN =
+export const SECRET_PATTERN =
   /(sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:api[_-]?key|secret|password|token)\s*[:=]\s*\S{8,})/i;
 
 export function checkCompatibility(envelopeInput: unknown): TeamTemplate {
@@ -356,6 +388,15 @@ export class TeamTemplates {
       rules,
       externalDependencies: external,
       includesAbsolutePaths: data.includeAbsolutePaths,
+      // Membership outside the saved selection is dropped; emptied groups disappear.
+      groups: data.groups
+        .map((g) => ({
+          name: g.name,
+          agentKeys: g.agentIds
+            .map((id) => keyOf.get(id))
+            .filter((k): k is string => Boolean(k)),
+        }))
+        .filter((g) => g.agentKeys.length),
     });
   }
 
@@ -615,8 +656,23 @@ export class TeamTemplates {
     return p;
   }
 
-  /** Insert the whole team atomically: validation failure or any error leaves nothing behind. */
-  async insert(input: unknown) {
+  /**
+   * Insert the whole team atomically: validation failure or any error leaves nothing behind.
+   * `inTransaction` (used by team packs) runs synchronously inside the same transaction, after the
+   * entities are written, so related records commit or roll back together with the team.
+   */
+  async insert(
+    input: unknown,
+    inTransaction?: (
+      result: {
+        agents: Agent[];
+        edges: Edge[];
+        rules: Rule[];
+        idMap: Record<string, string>;
+      },
+      template: TeamTemplate,
+    ) => void,
+  ) {
     const opts = insertSchema.parse(input);
     const t = this.resolve(opts);
     const { mapped, problems } = await this.mapWorkspaces(t, opts);
@@ -706,7 +762,12 @@ export class TeamTemplates {
         idMap: Object.fromEntries(ids),
         externalDependencies: t.externalDependencies,
         warnings: p.warnings,
+        groups: t.groups.map((g) => ({
+          name: g.name,
+          agentIds: g.agentKeys.map((k) => ids.get(k)!),
+        })),
       };
+      inTransaction?.(result, t);
       this.store.emit("team.inserted", agents[0].id, {
         template: t.name,
         agentIds: agents.map((a) => a.id),

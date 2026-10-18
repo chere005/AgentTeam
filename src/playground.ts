@@ -23,6 +23,7 @@ import {
   type TimelineEntry,
 } from "./inspector.ts";
 import { Redactor } from "./redact.ts";
+import { boundedRegexTest } from "./limits.ts";
 import { AppError, agentSchema, assert } from "./model.ts";
 import type { Agent, Edge, Rule, Task } from "./model.ts";
 
@@ -746,7 +747,7 @@ function evaluate(
     if (e.resultMatches) {
       let ok = false;
       try {
-        ok = new RegExp(e.resultMatches).test(o.result);
+        ok = boundedRegexTest(e.resultMatches, "", o.result) === true;
       } catch {
         /* invalid pattern fails the check */
       }

@@ -1,0 +1,43 @@
+.team-packs {
+  margin-top: 28px;
+  border-top: 1px solid #303b4d;
+  padding-top: 8px;
+}
+.pack-list {
+  gap: 8px;
+}
+.pack-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  border: 1px solid #303b4d;
+  border-radius: 9px;
+  background: #1a2330;
+  padding: 11px;
+}
+.pack-item p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #aab7c8;
+}
+.pack-item small {
+  display: block;
+  color: #8193a9;
+}
+.pack-diff {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 6px 0;
+}
+.pack-diff pre {
+  margin: 2px 0 0;
+  max-height: 140px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 11px;
+  background: #151c27;
+  border-radius: 6px;
+  padding: 6px;
+}

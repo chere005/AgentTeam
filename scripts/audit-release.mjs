@@ -213,6 +213,16 @@ for (const f of templates) {
 }
 notes.push(`team templates: ${templates.length}`);
 
+// 4b. Team packs: pack license and every referenced companion skill's license/notice and pins are
+// checked separately; a pack referencing a skill without license text fails. (AGENTTEAM_AUDIT_ASSETS
+// points the pack audit at another assets directory; used by tests.)
+{
+  const { auditTeamPacks } = await import("../src/team-pack-audit.ts");
+  const r = auditTeamPacks(process.env.AGENTTEAM_AUDIT_ASSETS ?? at("assets"));
+  for (const f of r.failures) fail(f);
+  notes.push(`team packs: ${r.packs} packs, ${r.skills} skill references`);
+}
+
 // 5. Workflow YAML sanity
 const wfDir = at(".github", "workflows");
 for (const f of readdirSync(wfDir).filter((f) => /\.ya?ml$/.test(f))) {

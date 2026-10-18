@@ -18,7 +18,10 @@ First functional desktop release for macOS, Windows and Linux.
 - Required validation gate: tasks that require validation wait for an immutable record of a real Wolfram kernel run with passing assertions for their exact inputs (at most two concurrent runs). A paused Wolfram-validated sample workflow is included.
 - Per-workflow limits (runtime, turns, handoffs, retries, spawned agents, reported tokens, children, delegation depth) that pause the workflow and abort running tasks when tripped, plus backend-enforced task completion checks.
 - Code review with staged/unstaged and branch compare views, line comments that go outdated when code changes, per-file reviewed marks and an approve/request-changes decision.
-- Portable team templates with export/import, atomic insertion with ID remapping, and four bundled starter teams.
+- Portable team templates with export/import, atomic insertion with ID remapping, and four bundled starter teams; template schema v2 keeps canvas groups (v1 files still import).
+- Team packs: versioned manifests with attribution, pack and companion-skill licenses checked separately, pinned skills, harness/tool/model compatibility, a grant-acknowledged atomic install and explicit three-way updates that never overwrite local edits. Bundled Swift development pack (skeleton).
+- Paused multi-stage pipeline sample (Opus plan → Sonnet workers → parallel Codex/Fable reviews → separate Fable adjudication → Sonnet fixes → final reviews → Fable report) with configurable models and 1-5 workers per stage, a verified resume gate, and immutable handoff notes in a scrollable history. Fixture-tested only.
+- Task settings editors: validation requirement, completion checks, retry policy, state/context settings, shared-state field definitions and checkpoint restore, and in-place rule editing.
 - Runtime diagnostics, reset/rescan, a capability table for each adapter, and a readiness gate that holds direct-CLI work until runtime discovery has settled.
 - Provider timeouts and output limits configurable through `AGENTTEAM_{CHAT,TASK}_*` environment variables.
 - Isolated Git worktrees: create, attach, optional setup command, inventory, archive and remove without losing uncommitted work.
@@ -31,7 +34,7 @@ First functional desktop release for macOS, Windows and Linux.
 - Skills, tools and knowledge: on-demand skill selection with recorded reasons and context cost, user-accepted skill updates, an effective-instructions preview, an MCP tool registry with grants and a metadata-only connection test, and cited knowledge sources from attached folders.
 - File-level access rules and exclusions, one queue ordering for tasks and chat runs with visible wait reasons, per-task declared lock paths, guided parallel assignments with conflict detection, per-repository Git serialization across worktrees, and draining leases after a crash.
 - Executable workflow graphs: task, command, condition, human-input, fan-out/join and bounded-loop steps with static validation, confirmed and confined command steps, an immutable executed path and retry from the failed step.
-- Durable checkpoints and an effect ledger: interrupted tasks resume after a restart without re-running completed work; uncertain external effects wait for your decision; permission requests survive a restart; per-task retry policy with backoff (API only for now).
+- Durable checkpoints and an effect ledger: interrupted tasks resume after a restart without re-running completed work; uncertain external effects wait for your decision; permission requests survive a restart; per-task retry policy with backoff.
 
 ## Install and first run
 
@@ -45,6 +48,6 @@ The Codex adapter is read-only; Claude is currently tool-free chat. Wolfram uses
 
 Attached-folder access rules and resource locks govern AgentTeam operations. They do not sandbox external editors, native apps or independently launched CLI sessions. The Access pane distinguishes provider access from AgentTeam access.
 
-Restart recovery is fixture- and crash-simulation-tested; resuming a provider session has not been verified against live providers. Worktree and development-server handling is verified on macOS only, and servers that daemonize themselves are not stopped. The validation gate and sample were tested with a fake kernel; the opt-in real-kernel smoke test has not been run, and nothing has run against live providers. Token usage appears only when providers report it, and cost is shown as unavailable. Windows command-shim launching is fixture-tested only. There are no versioned database migrations or backup/restore tools yet.
+Restart recovery is fixture- and crash-simulation-tested; resuming a provider session has not been verified against live providers. Worktree and development-server handling is verified on macOS only, and servers that daemonize themselves are not stopped. The validation gate and sample were tested with a fake kernel; the opt-in real-kernel smoke test has not been run, and nothing has run against live providers. The pipeline sample has never run against live providers; its default model ids and Codex's "max" effort are unconfirmed. Token usage appears only when providers report it, and cost is shown as unavailable. Windows command-shim launching is fixture-tested only. There are no versioned database migrations or backup/restore tools yet.
 
 Provider runtimes, accounts and subscriptions are not included. Pull is fast-forward only by default and merges/rebases are not started from the UI (their conflicts can be resolved there); pull-request status is recorded manually. Teammate-invocation tools are defined but not yet exposed to provider runs. See the repository README for all current limits and test instructions.

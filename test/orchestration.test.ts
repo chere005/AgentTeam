@@ -1153,3 +1153,47 @@ test("HTTP: a hand-completed review never opens a mandatory gate without an attr
   assert.deepEqual((ev.data as any).actor, { type: "user", name: "Sean" });
   assert.equal((ev.data as any).mandatory, true);
 });
+
+test("editing a mandatory rule to advisory (PUT /rules/:id path) never reopens an existing gate", async () => {
+  const x = await mandatoryFixture();
+  const { service, store, finish, code, subject, dependent, dba } = x;
+  // Downgrade (and then disable) the rule after the requirement was planned for the subject.
+  const advisory = service.saveRule(
+    {
+      agentId: dba.id,
+      scope: "intake",
+      priority: 10,
+      mode: "advisory",
+      specialty: "database",
+      kind: "review",
+      match: { changedFilesAny: ["**/migrations/**"] },
+    },
+    x.rule.id,
+  );
+  assert.equal(advisory.id, x.rule.id);
+  assert.equal(store.list("rule").length, 1);
+  const updated = store
+    .history(0, 1000)
+    .filter((e) => e.type === "rule.updated" && e.entityId === x.rule.id)
+    .at(-1)!;
+  assert.deepEqual(updated.data, { modeFrom: "mandatory", modeTo: "advisory" });
+  await finish(subject.id, "implemented the migration");
+  // The recorded mandatory requirement still holds: dependents stay blocked until it approves.
+  assert.equal(service.taskState(dependent.id).waitReason, "review-required");
+  assert.equal(
+    code(() => service.transitionTask(dependent.id, { status: "running" })),
+    "review_required",
+  );
+  const { id: _id, ...fields } = advisory;
+  service.saveRule({ ...fields, enabled: false }, x.rule.id);
+  assert.equal(
+    service.orchestration.gate(store.get("task", subject.id)).open,
+    false,
+  );
+  // Only the required review's approval opens it.
+  await finish(x.reviewOf().id, APPROVE);
+  assert.equal(
+    service.orchestration.gate(store.get("task", subject.id)).open,
+    true,
+  );
+});

@@ -48,7 +48,19 @@ export const completionCheckSchema = z.discriminatedUnion("type", [
         .regex(/^[imsu]*$/)
         .default(""),
     })
-    .strict(),
+    .strict()
+    // Refuse a pattern that does not compile when it is saved, not when the task finishes.
+    .superRefine((c, ctx) => {
+      try {
+        new RegExp(c.pattern, c.flags);
+      } catch (e) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["pattern"],
+          message: `Invalid regular expression: ${(e as Error).message}`,
+        });
+      }
+    }),
   z
     .object({
       type: z.literal("artifact-exists"),

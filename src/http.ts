@@ -1,10 +1,11 @@
 import { DevelopmentService } from "./development.ts";
 import { DevServerService } from "./devserver-service.ts";
 import { createHash } from "node:crypto";
-import { isAbsolute } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { RuntimeDiscovery } from "./discovery.ts";
 import { runtimeCapabilities } from "./capabilities.ts";
 import { TeamTemplates } from "./teams.ts";
+import { TeamPacks } from "./team-packs.ts";
 import {
   createWolframSample,
   sampleCatalog,
@@ -22,7 +23,7 @@ import { TeamService } from "./service.ts";
 import { RunManager } from "./runtime.ts";
 import { WorkspaceService } from "./workspaces.ts";
 import { ReviewService } from "./reviews.ts";
-import { recommendations } from "./config.ts";
+import { recommendations, projectRoot } from "./config.ts";
 import { recoveryRoute } from "./recovery-routes.ts";
 import { WorkspaceExtras } from "./workspace-routes.ts";
 import { createInspector } from "./inspector-routes.ts";
@@ -30,6 +31,7 @@ import { createAssistantRoutes } from "./assistant-routes.ts";
 import { sharedRoute } from "./shared-routes.ts";
 import { graphRoute } from "./workflow-graph.ts";
 import { accessRoute } from "./access-routes.ts";
+import { pipelineRoute } from "./pipeline-routes.ts";
 import { capabilityRoute } from "./capability-routes.ts";
 import { orchestrationRoute } from "./orchestration.ts";
 import {
@@ -78,6 +80,11 @@ export function createApi(
   const development = new DevelopmentService(service);
   const devservers = new DevServerService(service);
   const teams = new TeamTemplates(service, () => discovery.runtimes);
+  const packs = new TeamPacks(service, teams, () =>
+    join(projectRoot, "assets"),
+  );
+  // The scheduler sweep assigns the pipeline's fix workers (worktrees) without any route call.
+  service.pipelines.worktrees = development.worktrees;
   const reviews = new ReviewService(service, workspaces);
   const extras = new WorkspaceExtras(
     store,
@@ -278,6 +285,17 @@ export function createApi(
         () => body(req),
       );
       if (accessed) return send(accessed.data, accessed.status);
+      const piped = await pipelineRoute(
+        service,
+        {
+          worktrees: development.worktrees,
+          runtimes: () => discovery.runtimes,
+        },
+        method,
+        url,
+        () => body(req),
+      );
+      if (piped) return send(piped.data, piped.status);
       const graphed = await graphRoute(service, method, url, () => body(req));
       if (graphed) return send(graphed.data, graphed.status);
       const sharedResult = await sharedRoute(service, method, url, () =>
@@ -626,6 +644,15 @@ export function createApi(
         return send(service.saveEdge(await body(req)), 201);
       if (method === "GET" && path === "/rules")
         return send(store.list("rule"));
+      if (method === "PUT" && (match = path.match(/^\/rules\/([^/]+)$/)))
+        return send(service.saveRule(await body(req), id(match[1])));
+      if (
+        method === "PUT" &&
+        (match = path.match(/^\/tasks\/([^/]+)\/requires-validation$/))
+      )
+        return send(
+          service.setRequiresValidation(id(match[1]), await body(req)),
+        );
       if (method === "POST" && path === "/rules")
         return send(service.saveRule(await body(req)), 201);
       if (method === "POST" && path === "/routing/preview")
@@ -724,6 +751,12 @@ export function createApi(
                 .strict()
                 .parse(rawOverride);
         const taskId = id(match[1]);
+        // Notes of handoff-enabled workflows record this as a user action, not an agent run.
+        const byUser = <T>(fn: () => T) =>
+          service.handoffs.asUser(
+            { reason: override?.reason, by: override?.by },
+            fn,
+          );
         if (change?.status !== "completed") {
           if (override)
             throw new AppError(
@@ -731,8 +764,17 @@ export function createApi(
               "override_not_applicable",
               "humanOverride is only accepted when completing a review task",
             );
-          return send(service.transitionTask(taskId, change));
+          return send(byUser(() => service.transitionTask(taskId, change)));
         }
+        // The pipeline sample's separate adjudication is a gate like a required review: completing
+        // it by hand needs an explicit, attributed override (recorded in its immutable note).
+        const adjudication = service.pipelines.isAdjudication(taskId);
+        if (adjudication && !override)
+          throw new AppError(
+            409,
+            "adjudication_override_required",
+            "Completing the pipeline adjudication by hand replaces the adjudicator's decision; send humanOverride {reason, by?} to record that explicitly",
+          );
         // Manual completion runs the same gates as the scheduler: declared completion checks for
         // exactly this result text (evaluated against the agent's active folder, else the app cwd),
         // then the task's structured output (required shared-state writes), committed atomically
@@ -750,9 +792,15 @@ export function createApi(
         const output = await service.shared.prepare(task, result);
         return send(
           store.transaction(() => {
-            service.orchestration.recordManualCompletion(taskId, override);
+            if (adjudication)
+              store.emit("pipeline.adjudication_override", taskId, {
+                workflowId: task.workflowId,
+                actor: { type: "user", name: override!.by ?? null },
+                reason: override!.reason,
+              });
+            else service.orchestration.recordManualCompletion(taskId, override);
             service.shared.commit(task, output);
-            return service.transitionTask(taskId, change);
+            return byUser(() => service.transitionTask(taskId, change));
           }),
         );
       }
@@ -839,6 +887,26 @@ export function createApi(
         return send(
           verifySampleModels(service, id(match[1]), discovery.runtimes),
         );
+      if (path === "/team-packs" || path.startsWith("/team-packs/")) {
+        const t = path.split("/").slice(2).map(id);
+        if (method === "GET" && !t.length) return send(packs.library());
+        if (method === "GET" && t[0] === "installed" && !t[1])
+          return send(packs.installed());
+        if (method === "POST" && t[0] === "preview" && !t[1])
+          return send(await packs.preview(await body(req)));
+        if (method === "POST" && t[0] === "install" && !t[1])
+          return send(await packs.install(await body(req)), 201);
+        if (method === "GET" && t[0] === "bundled" && t[1] && !t[2])
+          return send(packs.bundled(t[1]));
+        if (t[0] === "installed" && t[1] && t.length === 3) {
+          if (method === "POST" && t[2] === "update-preview")
+            return send(await packs.updatePreview(t[1], await body(req)));
+          if (method === "POST" && t[2] === "update")
+            return send(await packs.update(t[1], await body(req)));
+          if (method === "GET" && t[2] === "attribution")
+            return send(packs.attribution(t[1]));
+        }
+      }
       if (path === "/teams" || path.startsWith("/teams/")) {
         const t = path.split("/").slice(2).map(id);
         if (method === "GET" && !t.length) return send(teams.list());

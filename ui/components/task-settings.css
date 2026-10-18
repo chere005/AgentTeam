@@ -1,0 +1,73 @@
+.task-settings {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 8px 0;
+}
+.task-settings > summary {
+  cursor: pointer;
+  font-size: 12px;
+}
+.task-section {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding: 8px 0;
+  font-size: 12px;
+}
+.task-section label {
+  margin: 0;
+}
+.task-section input[type="text"],
+.task-section input:not([type]),
+.task-section input[inputmode],
+.task-section select,
+.task-section textarea {
+  width: 100%;
+}
+.task-section fieldset {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 6px 8px;
+}
+.task-grid {
+  display: grid;
+  gap: 8px;
+}
+.task-sub {
+  display: grid;
+  gap: 4px;
+}
+.task-saved {
+  background: rgba(60, 140, 90, 0.2);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin: 0;
+}
+.perm-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.perm-table th,
+.perm-table td {
+  text-align: left;
+  font-weight: normal;
+  padding: 2px 6px;
+}
+.perm-table thead th {
+  opacity: 0.7;
+}
+.rule:has(.form-card) {
+  flex-wrap: wrap;
+}
+.rule .form-card {
+  flex-basis: 100%;
+}
+.rule .form-card button {
+  font-size: 12px;
+}
+.task-settings-toggle {
+  font-size: 12px;
+}

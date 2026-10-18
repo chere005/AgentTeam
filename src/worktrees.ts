@@ -35,7 +35,12 @@ async function run(cwd: string, args: string[]): Promise<GitResult> {
     const r = await exec(
       "git",
       ["-C", cwd, "-c", "core.hooksPath=" + devNull, ...args],
-      { timeout: 120000, maxBuffer: 8_000_000 },
+      {
+        timeout: 120000,
+        maxBuffer: 8_000_000,
+        // `status` of a listed worktree must not take the optional index.lock (see git-workflow.ts).
+        env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+      },
     );
     return { ok: true, out: r.stdout, err: r.stderr };
   } catch (e: any) {

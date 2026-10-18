@@ -1,0 +1,283 @@
+{
+  "format": "agentteam.team-pack",
+  "manifestVersion": 1,
+  "pack": {
+    "id": "swift-development",
+    "name": "Swift development",
+    "version": "0.1.0",
+    "description": "Skeleton team for Swift and Apple-platform work: a lead, an implementer, a test engineer, a mandatory code reviewer and an advisory concurrency specialist. Uses the one Swift skill AgentTeam bundles; other wanted skills are listed as not bundled.",
+    "status": "skeleton",
+    "source": {
+      "name": "AgentTeam (this repository)",
+      "license": "MIT",
+      "licenseFile": "LICENSE.txt"
+    },
+    "notices": [
+      "Companion skill swift-expert is published by its upstream author under the MIT License. Its license text is retained at assets/skills/jeffallan--swift-expert/UPSTREAM-LICENSE.txt and its license is independent of this pack's license."
+    ],
+    "limitations": [
+      "Skeleton only: roles, rules and required reviews are structure, not a validated Swift workflow; no live run of this team has been exercised.",
+      "The only bundled Swift skill is swift-expert (execution not validated). It covers SwiftUI, concurrency, protocol-oriented design and testing patterns as reference material, not as tools.",
+      "No Xcode, xcodebuild, Swift Package Manager or simulator tooling is configured; agents have no declared tools. Builds and tests happen only if the harness itself permits running commands, and agents must report actual command output.",
+      "No dedicated skills are bundled for Swift Testing/XCTest, SwiftUI accessibility audits, Xcode build tooling or App Store signing and release; see the not-bundled entries.",
+      "Model choices are not pinned; pick models for each harness when installing.",
+      "Wolfram is not a supported harness for this pack."
+    ]
+  },
+  "harnesses": [
+    {
+      "environment": "claude",
+      "support": "format-compatible",
+      "note": "The bundled Swift skill uses the native skill format; execution not validated."
+    },
+    {
+      "environment": "codex",
+      "support": "format-compatible",
+      "note": "The bundled Swift skill is format-compatible; execution not validated."
+    }
+  ],
+  "tools": [],
+  "modelMappings": [
+    {
+      "environment": "claude",
+      "templateModel": "default",
+      "note": "Uses the harness default. Map it to a model you have access to when installing."
+    },
+    {
+      "environment": "codex",
+      "templateModel": "default",
+      "note": "Uses the harness default. Map it to a model you have access to when installing."
+    }
+  ],
+  "skills": [
+    {
+      "bundled": true,
+      "id": "curated:jeffallan--swift-expert",
+      "name": "swift-expert",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "revision": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "sha256": "a50b57faf2eda7b2113b291f1b26f8fdcf431c86b355280e142db4a25bc1cd83",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt"
+    },
+    {
+      "bundled": false,
+      "name": "Swift Testing / XCTest skill",
+      "purpose": "Dedicated guidance for writing and running Swift Testing or XCTest suites.",
+      "note": "not bundled — install separately"
+    },
+    {
+      "bundled": false,
+      "name": "SwiftUI accessibility audit skill",
+      "purpose": "Checklist-driven accessibility review of SwiftUI views.",
+      "note": "not bundled — install separately"
+    },
+    {
+      "bundled": false,
+      "name": "Xcode build and simulator tooling",
+      "purpose": "Building, testing and launching apps through xcodebuild or the simulator.",
+      "note": "not bundled — install separately"
+    },
+    {
+      "bundled": false,
+      "name": "App Store signing and release skill",
+      "purpose": "Code signing, provisioning and App Store submission steps.",
+      "note": "not bundled — install separately"
+    }
+  ],
+  "template": {
+    "name": "Swift development",
+    "description": "Lead, implementer, test engineer, required reviewer and concurrency specialist for Swift projects (skeleton).",
+    "version": 1,
+    "agents": [
+      {
+        "key": "lead",
+        "name": "Swift Lead",
+        "role": "Plans the work, delegates and writes the final summary",
+        "environment": "claude",
+        "model": "default",
+        "effort": null,
+        "schedulingPriority": 60,
+        "maxConcurrentInvocations": null,
+        "instructions": "Restate the goal and the acceptance criteria. Delegate implementation to the Swift Implementer and tests to the Swift Test Engineer through AgentTeam only. Changes to Swift files are held for the required review by the Swift Reviewer; do not summarize a change as done until that review approved it. Report only commands and results that actually ran; if no build or test could run, say so plainly.",
+        "tools": [],
+        "skills": [],
+        "workspaces": [
+          {
+            "slot": "project",
+            "label": "Swift project (read-only)",
+            "access": "read",
+            "active": true
+          }
+        ],
+        "parentKey": null,
+        "position": { "x": 310, "y": 0 }
+      },
+      {
+        "key": "implementer",
+        "name": "Swift Implementer",
+        "role": "Implements Swift and SwiftUI changes in the project",
+        "environment": "codex",
+        "model": "default",
+        "effort": null,
+        "schedulingPriority": 50,
+        "maxConcurrentInvocations": null,
+        "instructions": "Make the smallest change that meets the acceptance criteria and follow the project's existing style and module layout. Load the Swift skill on demand when you need SwiftUI, concurrency or protocol-oriented guidance. List every file you changed and what you could not verify. Never claim a build or test passed without the command output.",
+        "tools": [],
+        "skills": [
+          {
+            "id": "curated:jeffallan--swift-expert",
+            "mode": "on-demand",
+            "allowUnverified": false
+          }
+        ],
+        "workspaces": [
+          {
+            "slot": "project",
+            "label": "Swift project",
+            "access": "write",
+            "active": true
+          }
+        ],
+        "parentKey": "lead",
+        "position": { "x": 0, "y": 220 }
+      },
+      {
+        "key": "tester",
+        "name": "Swift Test Engineer",
+        "role": "Writes and runs tests for the changed behavior",
+        "environment": "codex",
+        "model": "default",
+        "effort": null,
+        "schedulingPriority": 50,
+        "maxConcurrentInvocations": null,
+        "instructions": "Write focused tests for the behavior that changed, using whichever test framework the project already uses. Run them only if the environment allows commands, and record the exact command and its output as evidence. If tests could not run, mark the result unverified instead of passing.",
+        "tools": [],
+        "skills": [
+          {
+            "id": "curated:jeffallan--swift-expert",
+            "mode": "on-demand",
+            "allowUnverified": false
+          }
+        ],
+        "workspaces": [
+          {
+            "slot": "project",
+            "label": "Swift project",
+            "access": "write",
+            "active": true
+          }
+        ],
+        "parentKey": "lead",
+        "position": { "x": 310, "y": 220 }
+      },
+      {
+        "key": "reviewer",
+        "name": "Swift Reviewer",
+        "role": "Required reviewer for every change to Swift files",
+        "environment": "claude",
+        "model": "default",
+        "effort": null,
+        "schedulingPriority": 55,
+        "maxConcurrentInvocations": null,
+        "instructions": "Review the supplied change for correctness, API design, memory ownership, error handling and test coverage. Answer with one JSON object with verdict (approve, request-changes or inconclusive), findings and evidence naming the files and lines you inspected. Approve only what you actually read; use inconclusive when you could not inspect enough.",
+        "tools": [],
+        "skills": [
+          {
+            "id": "curated:jeffallan--swift-expert",
+            "mode": "on-demand",
+            "allowUnverified": false
+          }
+        ],
+        "workspaces": [
+          {
+            "slot": "project",
+            "label": "Swift project (read-only)",
+            "access": "read",
+            "active": true
+          }
+        ],
+        "parentKey": "lead",
+        "position": { "x": 620, "y": 220 }
+      },
+      {
+        "key": "concurrency",
+        "name": "Swift Concurrency Specialist",
+        "role": "Advisory specialist for async/await, actors and Sendable issues",
+        "environment": "claude",
+        "model": "default",
+        "effort": null,
+        "schedulingPriority": 50,
+        "maxConcurrentInvocations": null,
+        "instructions": "Look only at concurrency: actor isolation, Sendable conformance, main-actor use, task lifetimes and data races. Explain each concern with the code involved and a suggested fix. Your advice is advisory and does not replace the required review.",
+        "tools": [],
+        "skills": [
+          {
+            "id": "curated:jeffallan--swift-expert",
+            "mode": "on-demand",
+            "allowUnverified": false
+          }
+        ],
+        "workspaces": [
+          {
+            "slot": "project",
+            "label": "Swift project (read-only)",
+            "access": "read",
+            "active": true
+          }
+        ],
+        "parentKey": "lead",
+        "position": { "x": 930, "y": 220 }
+      }
+    ],
+    "edges": [
+      { "from": "lead", "to": "implementer", "kind": "delegate", "bidirectional": false, "enabled": true },
+      { "from": "lead", "to": "tester", "kind": "delegate", "bidirectional": false, "enabled": true },
+      { "from": "lead", "to": "reviewer", "kind": "delegate", "bidirectional": false, "enabled": true },
+      { "from": "lead", "to": "concurrency", "kind": "consult", "bidirectional": false, "enabled": true },
+      { "from": "implementer", "to": "reviewer", "kind": "review", "bidirectional": false, "enabled": true },
+      { "from": "implementer", "to": "concurrency", "kind": "consult", "bidirectional": false, "enabled": true },
+      { "from": "tester", "to": "reviewer", "kind": "review", "bidirectional": false, "enabled": true }
+    ],
+    "rules": [
+      {
+        "agentKey": "reviewer",
+        "scope": "intake",
+        "priority": 10,
+        "enabled": true,
+        "mode": "mandatory",
+        "specialty": "swift-review",
+        "kind": "review",
+        "match": {
+          "textIncludes": [],
+          "tagsAny": [],
+          "changedFilesAny": ["**/*.swift"],
+          "catchAll": false
+        }
+      },
+      {
+        "agentKey": "concurrency",
+        "scope": "intake",
+        "priority": 20,
+        "enabled": true,
+        "mode": "advisory",
+        "specialty": "swift-concurrency",
+        "kind": "consult",
+        "match": {
+          "textIncludes": ["actor", "async", "await", "Sendable", "MainActor", "data race"],
+          "tagsAny": [],
+          "changedFilesAny": [],
+          "catchAll": false
+        }
+      }
+    ],
+    "externalDependencies": [],
+    "includesAbsolutePaths": false,
+    "groups": [
+      {
+        "name": "Swift team",
+        "agentKeys": ["lead", "implementer", "tester", "reviewer", "concurrency"]
+      }
+    ]
+  }
+}
