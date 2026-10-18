@@ -264,7 +264,41 @@ export class TeamService {
   }
   pauseWorkflow(id: string, paused: boolean) {
     return this.store.transaction(() => {
-      const wf = this.store.get<Workflow>("workflow", id);
+      const wf = this.store.get<
+        Workflow & {
+          setup?: {
+            requiresModelVerification?: boolean;
+            modelCheck?: {
+              verified: boolean;
+              resolved: {
+                agentId: string;
+                environment: string;
+                model: string;
+              }[];
+            };
+          };
+        }
+      >("workflow", id);
+      // Samples stay paused until their model mapping was verified and still covers every
+      // participating agent (owner and task agents) with an unchanged environment and model.
+      if (!paused && wf.setup?.requiresModelVerification) {
+        const check = wf.setup.modelCheck;
+        const ids = new Set([wf.ownerId]);
+        for (const t of this.store.list<Task>("task"))
+          if (t.workflowId === id) ids.add(t.agentId);
+        assert(
+          check?.verified &&
+            [...ids].every((agentId) => {
+              const r = check.resolved.find((x) => x.agentId === agentId);
+              const a = this.store.get<Agent>("agent", agentId);
+              return (
+                !!r && a.model === r.model && a.environment === r.environment
+              );
+            }),
+          "models_unverified",
+          "Verify the model mapping before resuming this sample workflow",
+        );
+      }
       wf.paused = paused;
       this.store.put("workflow", wf);
       this.store.emit(paused ? "workflow.paused" : "workflow.resumed", id);

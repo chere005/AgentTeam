@@ -319,3 +319,127 @@ test("ACP settings, permissions and conversation delivery", async () => {
     await rm(directory, { recursive: true, force: true });
   }
 });
+test("team templates: save selection, library preview and mapped insert", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentteam-teams-ui-"));
+  const project = join(directory, "project");
+  const target = join(directory, "target");
+  await mkdir(project);
+  await mkdir(target);
+  const app = await electron.launch({
+    args: [".", ...(process.platform === "linux" ? ["--no-sandbox"] : [])],
+    env: { ...process.env, AGENTTEAM_DATA_DIR: directory, AGENTTEAM_TEST: "1" },
+  });
+  try {
+    const page = await app.firstWindow();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await expect(
+      page.getByText("Workspace connected", { exact: true }),
+    ).toBeVisible();
+    await page.evaluate(async (folder) => {
+      const call = (m: string, p: string, b?: unknown) =>
+        window.agentteam.request(m, p, b);
+      const make = (name: string, extra: object = {}) =>
+        call("POST", "/agents", { name, environment: "codex", ...extra });
+      const alpha = await make("Alpha Dev", {
+        workspaces: [{ path: folder, access: "write", active: true }],
+      });
+      const beta = await make("Beta Review");
+      const outside = await make("Outside Helper");
+      await call("POST", "/edges", {
+        from: alpha.id,
+        to: beta.id,
+        kind: "review",
+      });
+      await call("POST", "/edges", {
+        from: outside.id,
+        to: beta.id,
+        kind: "consult",
+      });
+    }, project);
+    await page.reload();
+    await page
+      .getByRole("button", { name: "Team canvas", exact: true })
+      .click();
+    await expect(page.locator(".agent-card")).toHaveCount(4);
+    const saveButton = page.getByRole("button", {
+      name: "Save as team",
+      exact: true,
+    });
+    await expect(saveButton).toBeDisabled();
+    await page
+      .locator(".react-flow__node")
+      .filter({ hasText: "Alpha Dev" })
+      .click();
+    await page
+      .locator(".react-flow__node")
+      .filter({ hasText: "Beta Review" })
+      .click({ modifiers: ["ControlOrMeta"] });
+    await saveButton.click();
+    const save = page.getByRole("dialog", { name: "Save as team" });
+    await expect(save).toContainText("Alpha Dev, Beta Review");
+    await expect(
+      save.getByLabel("Include absolute folder paths"),
+    ).not.toBeChecked();
+    await save.getByLabel("Team name").fill("Pair");
+    await save.getByRole("button", { name: "Save team", exact: true }).click();
+    await expect(save.getByTestId("external-dependencies")).toContainText(
+      "Outside Helper",
+    );
+    await save.getByRole("button", { name: "Done", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Saved teams", exact: true })
+      .first()
+      .click();
+    await page
+      .getByRole("list", { name: "Saved teams" })
+      .getByRole("button", { name: /Pair/ })
+      .click();
+    await expect(page.getByTestId("preview-issues")).toContainText(
+      "needs a directory mapping",
+    );
+    await expect(page.getByTestId("external-dependencies")).toContainText(
+      "Outside Helper",
+    );
+    await page.getByRole("button", { name: "Insert…", exact: true }).click();
+    const insert = page.getByRole("dialog", { name: /Insert/ });
+    await expect(
+      insert.getByRole("button", { name: "Insert team", exact: true }),
+    ).toBeDisabled();
+    await expect(insert.getByTestId("insert-issues")).toContainText(
+      "needs a directory mapping",
+    );
+    await insert
+      .getByLabel("Allow environments that are not installed")
+      .check();
+    await insert.getByLabel(/Folder for Alpha Dev/).fill(target);
+    await expect(insert.getByText("No blocking issues.")).toBeVisible();
+    await insert
+      .getByRole("button", { name: "Insert team", exact: true })
+      .click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.locator(".agent-card")).toHaveCount(6);
+    await expect(
+      page.locator(".agent-card").filter({ hasText: "Alpha Dev" }),
+    ).toHaveCount(2);
+    const snapshot = await page.evaluate(() =>
+      window.agentteam.request("GET", "/snapshot"),
+    );
+    const copies = snapshot.agents.filter((a: any) => a.name === "Alpha Dev");
+    expect(copies).toHaveLength(2);
+    expect(
+      copies.some((a: any) => a.workspaces[0].path.endsWith("target")),
+    ).toBe(true);
+    const positions = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem("agentteam.positions") ?? "{}"),
+    );
+    const inserted = copies.find((a: any) =>
+      a.workspaces[0].path.endsWith("target"),
+    );
+    expect(positions[inserted.id].x).toBeGreaterThan(0);
+    expect(errors).toEqual([]);
+  } finally {
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

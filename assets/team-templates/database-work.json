@@ -1,0 +1,115 @@
+{
+  "format": "agentteam.team-template",
+  "schemaVersion": 1,
+  "template": {
+    "name": "Database work",
+    "description": "Schema design, migration authoring and query review. Instructions forbid touching production data; map a project folder that holds migrations.",
+    "agents": [
+      {
+        "key": "architect",
+        "name": "Database Architect",
+        "role": "Designs schemas and migration plans",
+        "environment": "claude",
+        "model": "default",
+        "effort": null,
+        "schedulingPriority": 50,
+        "maxConcurrentInvocations": null,
+        "instructions": "Propose schema and migration changes with the reasoning and trade-offs. Hand concrete migration work to the Migration Engineer and ask the Query Reviewer to check access patterns. Never connect to or modify production databases, and never put credentials in files or messages.",
+        "tools": [],
+        "skills": [],
+        "workspaces": [
+          {
+            "slot": "project",
+            "label": "Project",
+            "access": "read",
+            "active": false
+          }
+        ],
+        "parentKey": null,
+        "position": {
+          "x": 310,
+          "y": 0
+        }
+      },
+      {
+        "key": "migrator",
+        "name": "Migration Engineer",
+        "role": "Writes and tests migrations against disposable databases",
+        "environment": "codex",
+        "model": "default",
+        "effort": null,
+        "schedulingPriority": 50,
+        "maxConcurrentInvocations": null,
+        "instructions": "Write migrations with a matching rollback where the tool supports it. Test only against a disposable or local database. Report the exact commands run and their output. Do not store connection strings or passwords in the repository.",
+        "tools": [],
+        "skills": [],
+        "workspaces": [
+          {
+            "slot": "project",
+            "label": "Project (migrations)",
+            "access": "write",
+            "active": true
+          }
+        ],
+        "parentKey": "architect",
+        "position": {
+          "x": 0,
+          "y": 200
+        }
+      },
+      {
+        "key": "query-reviewer",
+        "name": "Query Reviewer",
+        "role": "Reviews queries, indexes and migration safety read-only",
+        "environment": "claude",
+        "model": "default",
+        "effort": null,
+        "schedulingPriority": 50,
+        "maxConcurrentInvocations": null,
+        "instructions": "Review queries and migrations for correctness, locking behavior, missing indexes and data-loss risk. Do not edit files. Mark claims you could not verify as unverified.",
+        "tools": [],
+        "skills": [],
+        "workspaces": [
+          {
+            "slot": "project",
+            "label": "Project (read-only)",
+            "access": "read",
+            "active": false
+          }
+        ],
+        "parentKey": "architect",
+        "position": {
+          "x": 620,
+          "y": 200
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "architect",
+        "to": "migrator",
+        "kind": "delegate",
+        "bidirectional": false,
+        "enabled": true
+      },
+      {
+        "from": "migrator",
+        "to": "query-reviewer",
+        "kind": "review",
+        "bidirectional": false,
+        "enabled": true
+      },
+      {
+        "from": "architect",
+        "to": "query-reviewer",
+        "kind": "consult",
+        "bidirectional": false,
+        "enabled": true
+      }
+    ],
+    "version": 1,
+    "rules": [],
+    "externalDependencies": [],
+    "includesAbsolutePaths": false
+  }
+}

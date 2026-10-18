@@ -1,4 +1,7 @@
 import { test } from "node:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import assert from "node:assert/strict";
 import { Store } from "../src/store.ts";
 import { SkillCatalog } from "../src/skills.ts";
@@ -357,3 +360,104 @@ test(
     assert.equal(bad.status, "fail");
   },
 );
+
+test("restart mid-run leaves no record, gate closed, and slots cleared on startup", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agentteam-val-restart-"));
+  const file = join(dir, "db.sqlite");
+  try {
+    const store = new Store(file),
+      service = new TeamService(store, new SkillCatalog([]));
+    const runner = new FakeRunner();
+    // A kernel run that never settles: the process "dies" while it is in flight.
+    runner.handler = () => new Promise<KernelResult>(() => undefined);
+    service.validation = new ValidationService(store, service.resources, {
+      runner,
+    });
+    const lead = await service.saveAgent({ name: "L", environment: "codex" });
+    const wf = service.workflow({
+      name: "W",
+      goal: "G",
+      ownerId: lead.id,
+      completionCriteria: "D",
+    });
+    const t = service.task({
+      workflowId: wf.id,
+      agentId: lead.id,
+      title: "S",
+      completionCriteria: "D",
+      requiresValidation: true,
+    });
+    const run = service.validation.start(t.id, spec());
+    run.done.catch(() => undefined);
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(service.validation.activeRuns()[0].state, "running");
+    assert.equal(service.resources.slotCount("wolfram-validation"), 1);
+    assert.equal(service.validation.records(t.id).length, 0);
+    store.db.close();
+
+    // "Restart": reopen the same database with fresh services.
+    const store2 = new Store(file),
+      service2 = new TeamService(store2, new SkillCatalog([]));
+    assert.equal(service2.resources.slotCount("wolfram-validation"), 0);
+    assert.equal(service2.validation.activeRuns().length, 0);
+    assert.equal(service2.validation.records(t.id).length, 0);
+    const task = store2.get<Task>("task", t.id);
+    const gate = service2.validation.gate(task);
+    assert.equal(gate.open, false);
+    assert.equal(gate.reason, "missing");
+    assert.equal(gate.attemptsUsed, 0);
+    assert.equal(service2.taskState(t.id).waitReason, "validation-required");
+    assert.throws(() => service2.transitionTask(t.id, { status: "running" }), {
+      code: "validation_required",
+    });
+    store2.db.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("cancelled run, then a restart, keeps the gate closed without consuming an attempt", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agentteam-val-cancel-"));
+  const file = join(dir, "db.sqlite");
+  try {
+    const store = new Store(file),
+      service = new TeamService(store, new SkillCatalog([]));
+    const runner = new FakeRunner();
+    runner.run = ({ signal }: { signal: AbortSignal }) =>
+      new Promise<KernelResult>((resolve) =>
+        signal.addEventListener("abort", () => resolve(ok({ exitCode: 1 }))),
+      );
+    service.validation = new ValidationService(store, service.resources, {
+      runner,
+    });
+    const lead = await service.saveAgent({ name: "L", environment: "codex" });
+    const wf = service.workflow({
+      name: "W",
+      goal: "G",
+      ownerId: lead.id,
+      completionCriteria: "D",
+    });
+    const t = service.task({
+      workflowId: wf.id,
+      agentId: lead.id,
+      title: "S",
+      completionCriteria: "D",
+      requiresValidation: true,
+    });
+    const { runId, done } = service.validation.start(t.id, spec());
+    await new Promise((r) => setTimeout(r, 10));
+    service.validation.cancel(runId);
+    assert.equal((await done).status, "cancelled");
+    store.db.close();
+    const store2 = new Store(file),
+      service2 = new TeamService(store2, new SkillCatalog([]));
+    const gate = service2.validation.gate(store2.get<Task>("task", t.id));
+    assert.equal(gate.open, false);
+    assert.equal(gate.reason, "cancelled");
+    assert.equal(gate.attemptsUsed, 0);
+    assert.equal(service2.resources.slotCount("wolfram-validation"), 0);
+    store2.db.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

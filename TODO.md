@@ -24,13 +24,11 @@ At this checkpoint, type checking and the production build pass. All 43 backend 
 
 ## Wolfram-validated math/physics sample — next sample workflow
 
-- [ ] Add a paused, configurable problem-solving workflow led by Opus 5.5; verify the model mapping before execution.
 - [ ] Whenever mathematical reasoning/calculation is needed, invoke one or two Wolfram agents (hard concurrency cap of two) to derive and independently validate the result where appropriate.
 - [ ] Require executable Wolfram Language validation code and actual kernel execution; agent agreement, generated code, or prose alone must never satisfy the gate.
-- [ ] Save each validation explicitly: problem/claim, assumptions/domains/units, derivation, `.wl` source, actual inputs/outputs, kernel version, assertions/test report, tolerances and precision where numeric, and pass/fail/inconclusive status. Distinguish symbolic proof from numerical evidence.
 - [ ] Block every dependent reasoning step until its exact mathematical inputs pass validation. Failure, unresolved symbolic conditions, missing kernel, timeout, disagreement, or changed inputs keep the gate closed and trigger bounded correction/revalidation.
-- [ ] Show validation state and blockers in the workflow UI; preserve all attempts and scrollable Markdown notes with links to saved mathematical evidence. Finish with a concise answer stating the validated scope and any remaining limitations.
-- [ ] Test the gate with correct and deliberately incorrect math, stale evidence, cancellation/restart, unavailable Wolfram runtime, and the two-agent limit; include a real-kernel smoke test before claiming end-to-end validation.
+- [ ] Validation state, blockers, attempts and scrollable Markdown notes are in the workflow UI; still open: links from notes to evidence records, and checking the final-answer step with a real Opus run (sample exists, paused; nothing run live).
+- [ ] Remaining: real-kernel smoke test (`AGENTTEAM_WOLFRAM_SMOKE=1`, never run yet) before claiming end-to-end validation. Fake-kernel tests cover wrong/correct math, stale evidence, cancellation/restart, unavailable runtime and the two-run cap.
 
 ## 1 Complete the current development tools — P0
 
@@ -132,14 +130,10 @@ References: [ACP protocol](https://agentclientprotocol.com/protocol/overview), [
 - [ ] Package reusable specialist teams with agents, lead, skills, internal rules, and required reviews; start with a Swift development pack alongside the existing starter gallery.
 - [ ] Add a versioned team-pack manifest with source attribution, licenses, pinned skill dependencies, supported harnesses/tools, and model mappings. Preview compatibility and installation changes before atomic insertion; never import credentials or silently grant permissions.
 - [ ] Support explicit pack updates with a configuration diff while preserving local customizations; check companion-skill licenses separately and retain required upstream notices.
-- [ ] Select a group of agents on the canvas and save it as a named team.
 - [ ] Save agent roles, instructions, models/effort, skills, limits, priorities, internal communication edges, routing rules, and relative layout.
-- [ ] Include only relationships inside the selection, or explicitly identify external dependencies that need remapping.
 - [ ] Keep live sessions, credentials, running tasks, leases, and transient process state out of templates.
-- [ ] Provide a saved-team library with preview, rename, update/version, duplicate, insert, and delete.
-- [ ] Insert fresh agents with new IDs and correctly remap parents, internal edges, rule targets, and coordinates.
+- [ ] Provide a saved-team library with preview, rename, update/version, duplicate, insert, and delete. (UI built; only preview and insert are covered by the desktop test — rename/duplicate/delete/export/import UI and a starter-gallery insert are not yet exercised in the app; version bump is automatic on rename, no explicit update flow.)
 - [ ] Prompt for workspace/resource mappings when inserting a team; copying absolute paths must be explicit.
-- [ ] Validate missing skills, unsupported environments, models, and tools before insertion; avoid partially created teams.
 - [ ] Preserve the single global Team Assistant rule when saving/inserting groups.
 - [ ] Export/import portable team configurations with a schema version, compatibility checks, and no secrets.
 - [ ] Add a small starter gallery: implementation/review, database work, research, and Wolfram computation teams.

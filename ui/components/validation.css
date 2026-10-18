@@ -1,0 +1,94 @@
+.gate-badge.open {
+  background: #224539;
+  color: #9bdfc1;
+}
+.gate-badge.closed {
+  background: #4a2f2f;
+  color: #f0b4b4;
+}
+.validation-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  margin: 10px 0;
+  display: grid;
+  gap: 8px;
+}
+.validation-panel h4 {
+  margin: 0;
+  font-size: 12px;
+}
+.validation-panel .cap {
+  color: var(--muted);
+  font-size: 11px;
+}
+.validation-panel .blocker {
+  color: #f0b4b4;
+  font-size: 12px;
+  margin: 0;
+}
+.validation-record {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px;
+}
+.validation-record pre {
+  max-height: 180px;
+  overflow: auto;
+}
+.validation-record dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 3px 10px;
+  margin: 6px 0;
+  font-size: 11px;
+}
+.validation-record dt {
+  color: var(--muted);
+}
+.validation-record dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.validation-notes {
+  max-height: 160px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.validation-notes h3,
+.validation-notes h4,
+.validation-notes h5,
+.validation-notes h6 {
+  margin: 6px 0 2px;
+  font-size: 12px;
+}
+.validation-notes p {
+  margin: 4px 0;
+}
+.validation-form {
+  display: grid;
+  gap: 6px;
+}
+.validation-form textarea {
+  min-height: 60px;
+  font-family: ui-monospace, monospace;
+}
+.gate-summary {
+  display: grid;
+  gap: 3px;
+  font-size: 11px;
+  margin: 6px 0;
+}
+.status-pass {
+  background: #224539;
+  color: #9bdfc1;
+}
+.status-fail,
+.status-inconclusive,
+.status-cancelled,
+.status-stale {
+  background: #4a2f2f;
+  color: #f0b4b4;
+}

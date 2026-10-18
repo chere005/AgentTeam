@@ -4,6 +4,11 @@ import { isAbsolute } from "node:path";
 import { RuntimeDiscovery } from "./discovery.ts";
 import { TeamTemplates } from "./teams.ts";
 import {
+  createWolframSample,
+  sampleCatalog,
+  verifySampleModels,
+} from "./samples.ts";
+import {
   createServer,
   type IncomingMessage,
   type ServerResponse,
@@ -607,6 +612,16 @@ export function createApi(
         });
         return;
       }
+      if (method === "GET" && path === "/samples") return send(sampleCatalog());
+      if (method === "POST" && path === "/samples/wolfram-validated-reasoning")
+        return send(createWolframSample(service, await body(req)), 201);
+      if (
+        method === "POST" &&
+        (match = path.match(/^\/samples\/workflows\/([^/]+)\/verify-models$/))
+      )
+        return send(
+          verifySampleModels(service, id(match[1]), discovery.runtimes),
+        );
       if (path === "/teams" || path.startsWith("/teams/")) {
         const t = path.split("/").slice(2).map(id);
         if (method === "GET" && !t.length) return send(teams.list());

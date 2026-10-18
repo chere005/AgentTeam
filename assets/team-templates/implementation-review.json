@@ -1,0 +1,108 @@
+{
+  "format": "agentteam.team-template",
+  "schemaVersion": 1,
+  "template": {
+    "name": "Implementation and review",
+    "description": "A lead who splits work, an implementer who changes code, and a reviewer who checks it read-only. Map each agent to a project folder and choose models before inserting.",
+    "agents": [
+      {
+        "key": "lead",
+        "name": "Lead",
+        "role": "Plans the work and decides when it is done",
+        "environment": "claude",
+        "model": "default",
+        "effort": null,
+        "schedulingPriority": 50,
+        "maxConcurrentInvocations": null,
+        "instructions": "Break the request into small tasks for the Implementer. Ask the Reviewer to check each finished change. Report what was done and what was not verified.",
+        "tools": [],
+        "skills": [],
+        "workspaces": [],
+        "parentKey": null,
+        "position": {
+          "x": 310,
+          "y": 0
+        }
+      },
+      {
+        "key": "implementer",
+        "name": "Implementer",
+        "role": "Makes focused code changes and runs the project's own checks",
+        "environment": "codex",
+        "model": "default",
+        "effort": null,
+        "schedulingPriority": 50,
+        "maxConcurrentInvocations": null,
+        "instructions": "Make the smallest change that satisfies the task. Run the project's existing tests or build before reporting. State which checks you ran and their results; do not claim a check passed unless you ran it.",
+        "tools": [],
+        "skills": [],
+        "workspaces": [
+          {
+            "slot": "project",
+            "label": "Project",
+            "access": "write",
+            "active": true
+          }
+        ],
+        "parentKey": "lead",
+        "position": {
+          "x": 0,
+          "y": 200
+        }
+      },
+      {
+        "key": "reviewer",
+        "name": "Reviewer",
+        "role": "Reviews changes for correctness and risk without editing files",
+        "environment": "claude",
+        "model": "default",
+        "effort": null,
+        "schedulingPriority": 50,
+        "maxConcurrentInvocations": null,
+        "instructions": "Read the change and the surrounding code. List concrete problems with file and line, ordered by severity. Do not edit files. Say clearly when you could not verify something.",
+        "tools": [],
+        "skills": [],
+        "workspaces": [
+          {
+            "slot": "project",
+            "label": "Project (read-only)",
+            "access": "read",
+            "active": false
+          }
+        ],
+        "parentKey": "lead",
+        "position": {
+          "x": 620,
+          "y": 200
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "lead",
+        "to": "implementer",
+        "kind": "delegate",
+        "bidirectional": false,
+        "enabled": true
+      },
+      {
+        "from": "lead",
+        "to": "reviewer",
+        "kind": "delegate",
+        "bidirectional": false,
+        "enabled": true
+      },
+      {
+        "from": "implementer",
+        "to": "reviewer",
+        "kind": "review",
+        "bidirectional": false,
+        "enabled": true
+      }
+    ],
+    "version": 1,
+    "rules": [],
+    "externalDependencies": [],
+    "includesAbsolutePaths": false
+  }
+}

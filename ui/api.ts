@@ -1,5 +1,6 @@
 import type { Agent, Edge, Rule, Session, Task, Workflow } from "../src/model";
-export type { Agent, Edge, Rule, Session, Task, Workflow };
+import type { WorkflowSetup } from "../src/samples";
+export type { Agent, Edge, Rule, Session, Task, Workflow, WorkflowSetup };
 export type Activity = {
   agentId: string;
   state: string;
@@ -12,7 +13,12 @@ export type Snapshot = {
   agents: Agent[];
   edges: Edge[];
   rules: Rule[];
-  workflows: (Workflow & { tasks: Task[]; status: string })[];
+  workflows: (Workflow & {
+    tasks: Task[];
+    status: string;
+    /** Present on sample workflows (src/samples.ts). */
+    setup?: WorkflowSetup;
+  })[];
   sessions: Session[];
   activity: Activity[];
   liveExecution: boolean;

@@ -1,5 +1,12 @@
 import { WorktreeSetup, DevelopmentPreview } from "./Development";
 import { ChangesReview } from "./ChangesReview";
+import {
+  GateBadge,
+  SampleSetup,
+  TaskValidation,
+  WolframSampleButton,
+  WorkflowGateSummary,
+} from "./Validation";
 import { HarnessSettings } from "./HarnessSettings";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -361,6 +368,7 @@ export function Workflows(p: PaneProps) {
     [taskAgent, setTaskAgent] = useState(""),
     [invoke, setInvoke] = useState(""),
     [deps, setDeps] = useState<string[]>([]),
+    [needsValidation, setNeedsValidation] = useState(false),
     [routeText, setRouteText] = useState(""),
     [route, setRoute] = useState<any>(null),
     [rule, setRule] = useState(false),
@@ -376,10 +384,13 @@ export function Workflows(p: PaneProps) {
           <span className="eyebrow">ORCHESTRATION</span>
           <h2>Workflows</h2>
         </div>
-        <button title="New workflow" onClick={() => setCreating(!creating)}>
-          <Plus size={16} />
-          New
-        </button>
+        <div className="row">
+          <WolframSampleButton act={p.act} />
+          <button title="New workflow" onClick={() => setCreating(!creating)}>
+            <Plus size={16} />
+            New
+          </button>
+        </div>
       </div>
       <div className="summary-grid">
         <div>
@@ -474,6 +485,8 @@ export function Workflows(p: PaneProps) {
             </span>
           </div>
           <p>{w.goal}</p>
+          <SampleSetup workflow={w} act={p.act} />
+          <WorkflowGateSummary tasks={w.tasks} />
           <div className="progress">
             <span
               style={{
@@ -510,6 +523,7 @@ export function Workflows(p: PaneProps) {
                     {p.data.agents.find((a) => a.id === t.agentId)?.name}
                   </small>
                 </span>
+                <GateBadge task={t} />
                 <span className="badge">{t.status}</span>
               </summary>
               <p>{t.instructions}</p>
@@ -523,6 +537,11 @@ export function Workflows(p: PaneProps) {
                 </p>
               )}
               {t.result && <pre>{t.result}</pre>}
+              <TaskValidation
+                task={t}
+                liveExecution={p.data.liveExecution}
+                act={p.act}
+              />
               <div className="row">
                 {t.status === "failed" && (
                   <button
@@ -589,10 +608,12 @@ export function Workflows(p: PaneProps) {
                     instructions: title,
                     completionCriteria: criteria,
                     dependsOn: deps,
+                    ...(needsValidation ? { requiresValidation: true } : {}),
                     ...(invoke ? { invokedBy: invoke } : {}),
                   });
                   setTaskFor("");
                   setTitle("");
+                  setNeedsValidation(false);
                 });
               }}
             >
@@ -640,6 +661,14 @@ export function Workflows(p: PaneProps) {
                   value={criteria}
                   onChange={(e) => setCriteria(e.target.value)}
                 />
+              </label>
+              <label className="inline">
+                <input
+                  type="checkbox"
+                  checked={needsValidation}
+                  onChange={(e) => setNeedsValidation(e.target.checked)}
+                />
+                Requires Wolfram validation before it can run
               </label>
               {w.tasks.map((t) => (
                 <label className="inline" key={t.id}>

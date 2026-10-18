@@ -1,0 +1,115 @@
+{
+  "format": "agentteam.team-template",
+  "schemaVersion": 1,
+  "template": {
+    "name": "Wolfram computation",
+    "description": "A lead, a Wolfram Language runner and an independent verifier for math and physics work. Kernel results count only when actually produced by a kernel run.",
+    "agents": [
+      {
+        "key": "lead",
+        "name": "Computation Lead",
+        "role": "States the problem, assumptions and what counts as verified",
+        "environment": "claude",
+        "model": "default",
+        "effort": null,
+        "schedulingPriority": 50,
+        "maxConcurrentInvocations": null,
+        "instructions": "State the problem, domains and assumptions explicitly. Give the Kernel Runner executable Wolfram Language tasks and ask the Verifier to check results. Distinguish symbolic proof from numerical evidence, and state tolerances for numerical claims.",
+        "tools": [],
+        "skills": [],
+        "workspaces": [
+          {
+            "slot": "work",
+            "label": "Work folder",
+            "access": "write",
+            "active": true
+          }
+        ],
+        "parentKey": null,
+        "position": {
+          "x": 310,
+          "y": 0
+        }
+      },
+      {
+        "key": "runner",
+        "name": "Kernel Runner",
+        "role": "Writes and runs Wolfram Language code",
+        "environment": "wolfram",
+        "model": "default",
+        "effort": null,
+        "schedulingPriority": 50,
+        "maxConcurrentInvocations": null,
+        "instructions": "Save executable Wolfram Language code in the work folder. Report the actual kernel output, the kernel version and any errors verbatim. Never present output you did not obtain from a kernel run.",
+        "tools": [],
+        "skills": [],
+        "workspaces": [
+          {
+            "slot": "work",
+            "label": "Work folder",
+            "access": "write",
+            "active": true
+          }
+        ],
+        "parentKey": "lead",
+        "position": {
+          "x": 0,
+          "y": 200
+        }
+      },
+      {
+        "key": "verifier",
+        "name": "Verifier",
+        "role": "Independently checks assumptions, code and results",
+        "environment": "claude",
+        "model": "default",
+        "effort": null,
+        "schedulingPriority": 50,
+        "maxConcurrentInvocations": null,
+        "instructions": "Check that the code matches the stated problem and assumptions, that assertions test the claim, and that numerical results state precision or tolerance. Do not edit files. Mark anything not backed by a recorded kernel output as unverified.",
+        "tools": [],
+        "skills": [],
+        "workspaces": [
+          {
+            "slot": "work",
+            "label": "Work folder (read-only)",
+            "access": "read",
+            "active": false
+          }
+        ],
+        "parentKey": "lead",
+        "position": {
+          "x": 620,
+          "y": 200
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "lead",
+        "to": "runner",
+        "kind": "delegate",
+        "bidirectional": false,
+        "enabled": true
+      },
+      {
+        "from": "runner",
+        "to": "verifier",
+        "kind": "review",
+        "bidirectional": false,
+        "enabled": true
+      },
+      {
+        "from": "lead",
+        "to": "verifier",
+        "kind": "consult",
+        "bidirectional": false,
+        "enabled": true
+      }
+    ],
+    "version": 1,
+    "rules": [],
+    "externalDependencies": [],
+    "includesAbsolutePaths": false
+  }
+}

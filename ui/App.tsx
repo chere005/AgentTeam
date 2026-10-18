@@ -27,6 +27,7 @@ import {
   type Agent,
 } from "./api";
 import { Resources } from "./components/Resources";
+import { TeamLibrary } from "./components/Teams";
 import { TeamCanvas } from "./components/TeamCanvas";
 import { AgentEditor } from "./components/AgentEditor";
 import {
@@ -45,7 +46,8 @@ export type Panel =
   | "skills"
   | "settings"
   | "activity"
-  | "resources";
+  | "resources"
+  | "teams";
 const panels: { id: Panel; name: string; icon: typeof Network }[] = [
   { id: "chat", name: "Conversations", icon: MessageSquare },
   { id: "team", name: "Team canvas", icon: Network },
@@ -53,6 +55,7 @@ const panels: { id: Panel; name: string; icon: typeof Network }[] = [
   { id: "workspace", name: "Workspace", icon: FolderOpen },
   { id: "skills", name: "Skills library", icon: Library },
   { id: "resources", name: "Resources", icon: Network },
+  { id: "teams", name: "Saved teams", icon: Library },
   { id: "activity", name: "Activity", icon: Activity },
   { id: "settings", name: "Settings", icon: Settings },
 ];
@@ -166,6 +169,18 @@ export default function App() {
         return <Preferences {...props} />;
       case "resources":
         return <Resources {...props} />;
+      case "teams":
+        return (
+          <TeamLibrary
+            events={events}
+            act={act}
+            agentIds={data.agents.map((a) => a.id)}
+            goCanvas={() => {
+              setMain("team");
+              void refresh();
+            }}
+          />
+        );
       case "activity":
         return <ActivityLog events={events} data={data} />;
     }

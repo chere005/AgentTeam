@@ -29,7 +29,9 @@ import {
   Bell,
   X,
   Trash2,
+  Users,
 } from "lucide-react";
+import { SaveTeamDialog } from "./Teams";
 import {
   api,
   saved,
@@ -205,6 +207,7 @@ export function TeamCanvas(p: Props) {
       id?: string;
     } | null>(null),
     [now, setNow] = useState(Date.now()),
+    [savingTeam, setSavingTeam] = useState(false),
     [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(
       null,
     );
@@ -240,6 +243,7 @@ export function TeamCanvas(p: Props) {
       p.data.agents.map((a, i) => ({
         id: a.id,
         type: "agent",
+        selected: old.find((n) => n.id === a.id)?.selected,
         position: old.find((n) => n.id === a.id)?.position ??
           positions[a.id] ?? { x: (i % 3) * 310, y: Math.floor(i / 3) * 270 },
         data: {
@@ -312,6 +316,14 @@ export function TeamCanvas(p: Props) {
           <GitBranch size={15} />
           Arrange
         </button>
+        <button
+          title="Select agents (Ctrl/Cmd-click or Shift-drag), then save them as a reusable team"
+          disabled={!nodes.some((n) => n.selected)}
+          onClick={() => setSavingTeam(true)}
+        >
+          <Users size={15} />
+          Save as team
+        </button>
         <div className="grow" />
         <span className="connection-hint">
           Connect two agents to choose how they work together
@@ -383,6 +395,34 @@ export function TeamCanvas(p: Props) {
         Drag handles to connect · Double-click to configure · Right-click to
         open · Select a connection and Delete to remove
       </div>
+      {savingTeam && (
+        <SaveTeamDialog
+          agentIds={nodes
+            .filter(
+              (n) =>
+                n.selected &&
+                p.data.agents.find((a) => a.id === n.id)?.kind !==
+                  "team-assistant",
+            )
+            .map((n) => n.id)}
+          names={nodes
+            .filter(
+              (n) =>
+                n.selected &&
+                p.data.agents.find((a) => a.id === n.id)?.kind !==
+                  "team-assistant",
+            )
+            .map((n) => p.data.agents.find((a) => a.id === n.id)?.name ?? n.id)}
+          omittedAssistant={nodes.some(
+            (n) =>
+              n.selected &&
+              p.data.agents.find((a) => a.id === n.id)?.kind ===
+                "team-assistant",
+          )}
+          positions={Object.fromEntries(nodes.map((n) => [n.id, n.position]))}
+          close={() => setSavingTeam(false)}
+        />
+      )}
       {connection && (
         <div
           className="modal-backdrop"

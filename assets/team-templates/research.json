@@ -1,0 +1,108 @@
+{
+  "format": "agentteam.team-template",
+  "schemaVersion": 1,
+  "template": {
+    "name": "Research",
+    "description": "A lead, a source gatherer and a fact checker for question-driven research. Uses only whatever sources each environment can actually reach.",
+    "agents": [
+      {
+        "key": "lead",
+        "name": "Research Lead",
+        "role": "Frames the question and writes the final summary",
+        "environment": "claude",
+        "model": "default",
+        "effort": null,
+        "schedulingPriority": 50,
+        "maxConcurrentInvocations": null,
+        "instructions": "Restate the question and what a good answer needs. Ask the Gatherer for sources and the Fact Checker to test key claims. Write a summary that separates established facts from uncertain ones and cites where each came from.",
+        "tools": [],
+        "skills": [],
+        "workspaces": [
+          {
+            "slot": "notes",
+            "label": "Notes folder",
+            "access": "write",
+            "active": true
+          }
+        ],
+        "parentKey": null,
+        "position": {
+          "x": 310,
+          "y": 0
+        }
+      },
+      {
+        "key": "gatherer",
+        "name": "Source Gatherer",
+        "role": "Collects and summarizes relevant material",
+        "environment": "claude",
+        "model": "default",
+        "effort": null,
+        "schedulingPriority": 50,
+        "maxConcurrentInvocations": null,
+        "instructions": "Collect material relevant to the question from the sources you can actually access, including files in the mapped folder. Record where each item came from. If you cannot reach a source, say so rather than guessing.",
+        "tools": [],
+        "skills": [],
+        "workspaces": [
+          {
+            "slot": "notes",
+            "label": "Notes folder (read-only)",
+            "access": "read",
+            "active": false
+          }
+        ],
+        "parentKey": "lead",
+        "position": {
+          "x": 0,
+          "y": 200
+        }
+      },
+      {
+        "key": "checker",
+        "name": "Fact Checker",
+        "role": "Tests the important claims against the collected sources",
+        "environment": "codex",
+        "model": "default",
+        "effort": null,
+        "schedulingPriority": 50,
+        "maxConcurrentInvocations": null,
+        "instructions": "For each key claim, check it against the recorded sources and mark it supported, contradicted or unverified. Do not add new claims of your own.",
+        "tools": [],
+        "skills": [],
+        "workspaces": [],
+        "parentKey": "lead",
+        "position": {
+          "x": 620,
+          "y": 200
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "lead",
+        "to": "gatherer",
+        "kind": "delegate",
+        "bidirectional": false,
+        "enabled": true
+      },
+      {
+        "from": "lead",
+        "to": "checker",
+        "kind": "review",
+        "bidirectional": false,
+        "enabled": true
+      },
+      {
+        "from": "gatherer",
+        "to": "checker",
+        "kind": "notify",
+        "bidirectional": false,
+        "enabled": true
+      }
+    ],
+    "version": 1,
+    "rules": [],
+    "externalDependencies": [],
+    "includesAbsolutePaths": false
+  }
+}
