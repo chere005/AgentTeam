@@ -72,10 +72,17 @@ export function createWolframSample(service: TeamService, input: unknown = {}) {
   const problem = o.problem.trim() || PROBLEM_PLACEHOLDER;
   return store.transaction(() => {
     const createdAt = new Date().toISOString();
+    // The sample gets its own team (src/team-spaces.ts), which becomes the active team.
+    const team = service.teamSpaces.createInTx(
+      WOLFRAM_SAMPLE_NAME,
+      "Paused sample: Opus plan with Wolfram-validated reasoning",
+    );
+    service.teamSpaces.activateInTx(team.id);
     const mkAgent = (data: object): Agent => {
       const parsed = agentSchema.parse(data);
       const agent: Agent = {
         ...parsed,
+        teamId: team.id,
         id: randomUUID(),
         control: "team",
         createdAt,

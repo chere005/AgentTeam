@@ -18,6 +18,7 @@ import { LockRecovery } from "./lock-recovery.ts";
 import { ParallelWork } from "./parallel.ts";
 import { HandoffNotes } from "./handoffs.ts";
 import { PipelineService } from "./pipeline.ts";
+import { TeamSpaces } from "./team-spaces.ts";
 import { withRoleDefaults } from "./roles.ts";
 import { Store } from "./store.ts";
 import { SkillCatalog } from "./skills.ts";
@@ -68,6 +69,8 @@ export class TeamService {
   handoffs: HandoffNotes;
   /** Multi-stage plan/implement/review/adjudicate sample (src/pipeline.ts). */
   pipelines: PipelineService;
+  /** Team containers and the active team (src/team-spaces.ts); presentation/ownership only. */
+  teamSpaces: TeamSpaces;
   constructor(store: Store, skills: SkillCatalog) {
     this.store = store;
     this.approvals = new Approvals(store);
@@ -85,10 +88,29 @@ export class TeamService {
     this.graphs = new WorkflowGraphService(this);
     this.handoffs = new HandoffNotes(this);
     this.pipelines = new PipelineService(this);
+    this.teamSpaces = new TeamSpaces(this);
   }
+  /**
+   * Create (no `id`) or replace an agent. `teamId` is accepted next to the agent fields: a new
+   * agent joins it (default: the active team); on update it moves the agent, absent keeps the
+   * agent's team. The Team Assistant is global and never gets a team.
+   */
   async saveAgent(input: unknown, id?: string) {
-    const data = agentSchema.parse(withRoleDefaults(input));
-    const previous = id ? this.store.get<Agent>("agent", id) : undefined;
+    const { teamId: rawTeam, ...fields } = (
+      input && typeof input === "object" ? input : {}
+    ) as Record<string, unknown>;
+    const data = agentSchema.parse(
+      withRoleDefaults(input && typeof input === "object" ? fields : input),
+    );
+    const previous = id
+      ? this.store.get<Agent & { teamId?: string }>("agent", id)
+      : undefined;
+    const teamId =
+      data.kind === "team-assistant"
+        ? undefined
+        : previous && rawTeam === undefined
+          ? previous.teamId
+          : this.teamSpaces.forCreate(rawTeam);
     if (id)
       assert(
         !this.store
@@ -169,6 +191,7 @@ export class TeamService {
       );
     const agent: Agent = {
       ...data,
+      ...(teamId ? { teamId } : {}),
       id: id ?? randomUUID(),
       control: previous?.control ?? "team",
       createdAt: previous?.createdAt ?? new Date().toISOString(),
@@ -179,19 +202,49 @@ export class TeamService {
       return agent;
     });
   }
+  /**
+   * Create or replace a communication edge. An edge between agents of different teams (a
+   * cross-team link) needs an explicit `crossTeam: true` when it is created or re-pointed; it is
+   * stored with that marker. Permissions are evaluated exactly like any other edge (`permitted`).
+   */
   saveEdge(input: unknown, id?: string) {
-    if (id) this.store.get<Edge>("edge", id);
-    const data = edgeSchema.parse(input);
-    this.store.get<Agent>("agent", data.from);
-    this.store.get<Agent>("agent", data.to);
+    const before = id ? this.store.get<Edge>("edge", id) : undefined;
+    const { crossTeam, ...fields } = (
+      input && typeof input === "object" ? input : {}
+    ) as Record<string, unknown>;
+    const data = edgeSchema.parse(
+      input && typeof input === "object" ? fields : input,
+    );
+    const from = this.store.get<Agent>("agent", data.from);
+    const to = this.store.get<Agent>("agent", data.to);
     assert(
       data.from !== data.to,
       "self_edge",
       "Edges must connect different agents",
       400,
     );
+    const teamFrom = this.teamSpaces.teamOfAgent(from),
+      teamTo = this.teamSpaces.teamOfAgent(to);
+    const cross = !!teamFrom && !!teamTo && teamFrom !== teamTo;
+    const repointed =
+      !before ||
+      new Set([before.from, before.to]).size !==
+        new Set([before.from, before.to, data.from, data.to]).size;
+    if (cross && repointed)
+      assert(
+        crossTeam === true,
+        "cross_team_edge",
+        "These agents belong to different teams. Create a cross-team link explicitly (crossTeam: true) if they should communicate.",
+        409,
+      );
     return this.store.transaction(() => {
-      const edge = { ...data, id: id ?? randomUUID() };
+      const edge: Edge = {
+        ...data,
+        ...(cross && (crossTeam === true || before?.crossTeam)
+          ? { crossTeam: true }
+          : {}),
+        id: id ?? randomUUID(),
+      };
       this.store.put("edge", edge);
       this.store.emit(id ? "edge.updated" : "edge.created", edge.id);
       return edge;
@@ -358,11 +411,29 @@ export class TeamService {
       matches,
     };
   }
+  /**
+   * Create a workflow. `teamId` may be given next to the workflow fields; otherwise the workflow
+   * joins its owner's team (or the active team when the owner is the global Team Assistant).
+   */
   workflow(input: unknown) {
-    const data = workflowSchema.parse(input);
-    this.store.get<Agent>("agent", data.ownerId);
+    const { teamId: rawTeam, ...fields } = (
+      input && typeof input === "object" ? input : {}
+    ) as Record<string, unknown>;
+    const data = workflowSchema.parse(
+      input && typeof input === "object" ? fields : input,
+    );
+    const owner = this.store.get<Agent>("agent", data.ownerId);
+    const teamId =
+      rawTeam !== undefined
+        ? this.teamSpaces.forCreate(rawTeam)
+        : (this.teamSpaces.teamOfAgent(owner) ?? this.teamSpaces.active());
     return this.store.transaction(() => {
-      const workflow: Workflow = { ...data, id: randomUUID(), paused: false };
+      const workflow: Workflow = {
+        ...data,
+        teamId,
+        id: randomUUID(),
+        paused: false,
+      };
       this.store.put("workflow", workflow);
       this.store.emit("workflow.created", workflow.id);
       return workflow;
@@ -734,6 +805,30 @@ export class TeamService {
         .map((t) => t.id),
       capacity: this.capacity(id),
     };
+  }
+  /**
+   * Same rule as DELETE /agents: an agent with tasks, sessions, child agents or owned workflows
+   * cannot be deleted. `leaving` ignores children that are being deleted together with it.
+   */
+  agentInUse(aid: string, leaving: ReadonlySet<string> = new Set()) {
+    return (
+      this.store.list<Task>("task").some((t) => t.agentId === aid) ||
+      this.store.list<Session>("session").some((s) => s.agentId === aid) ||
+      this.store
+        .list<Agent>("agent")
+        .some((a) => a.parentId === aid && !leaving.has(a.id)) ||
+      this.store.list<Workflow>("workflow").some((w) => w.ownerId === aid)
+    );
+  }
+  /** Inside a transaction: delete an agent and its edges/rules (caller checked `agentInUse`). */
+  removeAgentInTx(aid: string) {
+    this.store.remove("agent", aid);
+    for (const e of this.store.list<Edge>("edge"))
+      if (e.from === aid || e.to === aid) this.store.remove("edge", e.id);
+    for (const r of this.store.list<Rule>("rule"))
+      if (r.agentId === aid || r.targetId === aid)
+        this.store.remove("rule", r.id);
+    this.store.emit("agent.deleted", aid);
   }
   capacity(id: string) {
     const agent = this.store.get<Agent>("agent", id);

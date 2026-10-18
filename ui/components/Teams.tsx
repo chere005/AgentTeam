@@ -59,9 +59,13 @@ type Summary = {
   version: number;
   agents: number;
   updatedAt: string;
+  /** Live team the selection was saved from (library metadata only). */
+  sourceTeam?: { id: string; name: string };
 };
 type Source = { templateId: string } | { envelope: unknown };
 type InsertResult = {
+  teamId: string;
+  teamName: string;
   groups?: { name: string; agentIds: string[] }[];
   layout: Record<string, Point>;
   agents: { id: string }[];
@@ -308,15 +312,21 @@ export function InsertTeamDialog({
   source,
   template,
   agentIds,
+  team,
   close,
   inserted,
 }: {
   source: Source;
   agentIds: string[];
   template: TemplateView;
+  /** The active team: the alternative destination to a new team of its own. */
+  team?: { id: string; name: string };
   close: () => void;
   inserted: (r: InsertResult) => void;
 }) {
+  // Default: the template gets its own new team (named after it, made unique by the backend).
+  const [destination, setDestination] = useState<"new" | "current">("new"),
+    [teamName, setTeamName] = useState(template.name.slice(0, 80));
   const [mapping, setMapping] = useState<Record<string, string>>({}),
     [models, setModels] = useState<Record<string, string>>({}),
     [unknownModels, setUnknownModels] = useState(false),
@@ -348,7 +358,9 @@ export function InsertTeamDialog({
     ),
     allowUnknownModels: unknownModels,
     allowUninstalledEnvironments: uninstalled,
-    offset: nextOffset(agentIds),
+    ...(destination === "current" && team
+      ? { teamId: team.id, offset: nextOffset(agentIds) }
+      : { teamName: teamName.trim() || template.name, offset: { x: 0, y: 0 } }),
   });
   const latest = useRef(0);
   useEffect(() => {
@@ -400,13 +412,45 @@ export function InsertTeamDialog({
               disabled={!preview?.ok || busy}
               onClick={() => void insert()}
             >
-              Insert team
+              {destination === "new" ? "Insert as new team" : "Insert team"}
             </button>
           </div>
         </>
       }
     >
       {template.description && <p className="hint">{template.description}</p>}
+      <h3>Destination</h3>
+      <div className="team-slots" role="radiogroup" aria-label="Destination">
+        <label className="inline team-check">
+          <input
+            type="radio"
+            name="insert-destination"
+            checked={destination === "new"}
+            onChange={() => setDestination("new")}
+          />
+          <span>
+            A new team of its own (becomes the active team)
+            <input
+              aria-label="New team name"
+              value={teamName}
+              maxLength={80}
+              disabled={destination !== "new"}
+              onChange={(e) => setTeamName(e.target.value)}
+            />
+          </span>
+        </label>
+        {team && (
+          <label className="inline team-check">
+            <input
+              type="radio"
+              name="insert-destination"
+              checked={destination === "current"}
+              onChange={() => setDestination("current")}
+            />
+            <span>Add to the active team “{team.name}”</span>
+          </label>
+        )}
+      </div>
       <h3>Folders</h3>
       {slots.length ? (
         <div className="team-slots">
@@ -575,9 +619,12 @@ export function TeamLibrary({
   act,
   goCanvas,
   agentIds,
+  team,
 }: {
   events: TeamEvent[];
   agentIds: string[];
+  /** Active team (insert destination alternative); the library itself is global. */
+  team?: { id: string; name: string };
   act: (fn: () => Promise<unknown>) => Promise<void>;
   goCanvas: () => void;
 }) {
@@ -713,6 +760,7 @@ export function TeamLibrary({
                     <b>{t.name}</b>
                     <small>
                       {t.agents} agents · v{t.version}
+                      {t.sourceTeam ? ` · from ${t.sourceTeam.name}` : ""}
                     </small>
                   </button>
                 </li>
@@ -960,10 +1008,11 @@ export function TeamLibrary({
           source={source}
           template={detail}
           agentIds={agentIds}
+          team={team}
           close={() => setInserting(false)}
           inserted={(r) => {
             applyLayout(r.layout);
-            applyInsertedGroups(r.groups, agentIds);
+            applyInsertedGroups(r.groups, agentIds, r.teamId);
             setInserting(false);
             goCanvas();
           }}

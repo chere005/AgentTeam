@@ -18,10 +18,10 @@ import type { TeamService } from "./service.ts";
 
 /**
  * Run inspector API (behind the bearer-token check in http.ts):
- *   GET  /inspector/timeline?agentId&workflowId&taskId&severity&minSeverity&type&q&file&after&limit
+ *   GET  /inspector/timeline?agentId&workflowId&teamId&taskId&severity&minSeverity&type&q&file&after&limit
  *   GET  /inspector/tasks/:id/waiting      structured "why is this waiting?" reasons
  *   GET  /inspector/agents/:id/waiting     same reason list for an agent (all its pending work)
- *   GET  /inspector/waiting                headline per queued/interrupted/blocked task
+ *   GET  /inspector/waiting?teamId         headline per queued/interrupted/blocked task
  *   GET  /inspector/transfers?edgeId&taskId&workflowId   request/response/duration/rule per transfer
  *   POST /inspector/preview                {route, access?} routing + access decisions
  *   POST /inspector/access-preview         access decisions only
@@ -77,12 +77,16 @@ export function createInspector(
         ),
       };
     }
-    if (method === "GET" && path === "/inspector/waiting")
+    if (method === "GET" && path === "/inspector/waiting") {
+      // Optional `teamId`: tasks of that team's workflows only.
+      const teamIndex = query.teamId ? service.teamSpaces.index() : null;
       return {
         data: service.store
           .list<Task>("task")
-          .filter((t) =>
-            ["queued", "interrupted", "blocked"].includes(t.status),
+          .filter(
+            (t) =>
+              ["queued", "interrupted", "blocked"].includes(t.status) &&
+              (!teamIndex || teamIndex.task.get(t.id) === query.teamId),
           )
           .map((t) => {
             const e = explainWaiting(service, ctx, { taskId: t.id });
@@ -96,6 +100,7 @@ export function createInspector(
             };
           }),
       };
+    }
     if (method === "GET" && path === "/inspector/transfers")
       return {
         data: transfers(

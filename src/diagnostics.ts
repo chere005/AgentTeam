@@ -108,9 +108,14 @@ export function bundleContent(
     redactor.string((s ?? "").slice(0, n));
   const agents = store.list<Agent>("agent");
   const name = (id: string) => agents.find((a) => a.id === id)?.name ?? id;
+  const spaces = service.teamSpaces;
   const config = {
+    // Team containers (src/team-spaces.ts): id and name only.
+    teams: spaces.list().map((t) => ({ id: t.id, name: t.name })),
+    activeTeamId: spaces.active(),
     agents: agents.map((a) => ({
       id: a.id,
+      teamId: spaces.teamOfAgent(a),
       name: a.name,
       kind: a.kind,
       environment: a.environment,
@@ -149,6 +154,7 @@ export function bundleContent(
   };
   const workflows = store.list<Workflow>("workflow").map((w) => ({
     id: w.id,
+    teamId: spaces.teamOfWorkflow(w),
     name: w.name,
     goal: digest(w.goal ?? ""),
     paused: w.paused,
@@ -244,6 +250,7 @@ export function bundleContent(
     runtimes: options.runtimes ? options.runtimes() : undefined,
   };
   const counts = {
+    teams: config.teams.length,
     agents: agents.length,
     tasks: tasks.length,
     workflows: workflows.length,

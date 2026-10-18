@@ -34,6 +34,7 @@ import { accessRoute } from "./access-routes.ts";
 import { pipelineRoute } from "./pipeline-routes.ts";
 import { capabilityRoute } from "./capability-routes.ts";
 import { orchestrationRoute } from "./orchestration.ts";
+import { teamSpaceRoute, teamIdSchema } from "./team-spaces.ts";
 import {
   AppError,
   type Agent,
@@ -310,6 +311,10 @@ export function createApi(
         body(req),
       );
       if (orchestrated) return send(orchestrated.data, orchestrated.status);
+      const teamed = await teamSpaceRoute(service, method, url, () =>
+        body(req),
+      );
+      if (teamed) return send(teamed.data, teamed.status);
       if (method === "GET" && path === "/approvals")
         return send(service.approvals.list());
       if (method === "POST" && (match = path.match(/^\/approvals\/([^/]+)$/))) {
@@ -389,20 +394,29 @@ export function createApi(
         return send(
           service.resources.configureWorkflow(id(match[1]), await body(req)),
         );
-      if (method === "GET" && path === "/snapshot")
+      if (method === "GET" && path === "/snapshot") {
+        // Unfiltered (every team); `teamId` is resolved on agents (null = the global Team
+        // Assistant) and workflows so the UI can filter to the active team (src/team-spaces.ts).
+        const spaces = service.teamSpaces;
         return send({
-          agents: store.list<Agent>("agent"),
+          agents: store
+            .list<Agent>("agent")
+            .map((a) => ({ ...a, teamId: spaces.teamOfAgent(a) })),
           edges: store.list("edge"),
           rules: store.list("rule"),
-          workflows: store
-            .list<Workflow>("workflow")
-            .map((w) => service.workflowStatus(w.id)),
+          workflows: store.list<Workflow>("workflow").map((w) => ({
+            ...service.workflowStatus(w.id),
+            teamId: spaces.teamOfWorkflow(w),
+          })),
           sessions: store.list("session"),
           activity: store
             .list<Agent>("agent")
             .map((a) => service.activity(a.id)),
           liveExecution: runs.enabled,
+          teams: spaces.summaries(),
+          activeTeamId: spaces.active(),
         });
+      }
       if (method === "PUT" && path === "/execution") {
         const data = z
           .object({ enabled: z.boolean() })
@@ -426,26 +440,13 @@ export function createApi(
       if (method === "DELETE" && (match = path.match(/^\/agents\/([^/]+)$/))) {
         const aid = id(match[1]);
         store.get("agent", aid);
-        if (
-          store.list<any>("task").some((t) => t.agentId === aid) ||
-          store.list<Session>("session").some((s) => s.agentId === aid) ||
-          store.list<Agent>("agent").some((a) => a.parentId === aid) ||
-          store.list<Workflow>("workflow").some((w) => w.ownerId === aid)
-        )
+        if (service.agentInUse(aid))
           throw new AppError(
             409,
             "agent_in_use",
             "Agents with sessions, tasks, child agents or workflows cannot be deleted",
           );
-        store.transaction(() => {
-          store.remove("agent", aid);
-          for (const e of store.list<any>("edge"))
-            if (e.from === aid || e.to === aid) store.remove("edge", e.id);
-          for (const r of store.list<any>("rule"))
-            if (r.agentId === aid || r.targetId === aid)
-              store.remove("rule", r.id);
-          store.emit("agent.deleted", aid);
-        });
+        store.transaction(() => service.removeAgentInTx(aid));
         return send({ status: "deleted" });
       }
       if (method === "GET" && path === "/health")
@@ -832,7 +833,16 @@ export function createApi(
           .int()
           .min(0)
           .parse(url.searchParams.get("after") ?? "0");
-        return send(store.history(after));
+        // Optional `teamId`: only events attributed to that team (src/team-spaces.ts eventTeams).
+        const team = url.searchParams.get("teamId");
+        if (team === null) return send(store.history(after));
+        const teamId = teamIdSchema.parse(team);
+        const index = service.teamSpaces.index();
+        return send(
+          store
+            .history(after)
+            .filter((e) => service.teamSpaces.eventTeams(e, index).has(teamId)),
+        );
       }
       if (method === "GET" && path === "/events/stream") {
         let after = z.coerce

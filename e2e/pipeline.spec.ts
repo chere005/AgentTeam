@@ -147,9 +147,12 @@ test("pipeline sample: configure, verify before resume, handoff history across a
     await form2.getByLabel("Fix workers").selectOption("2");
     await form2.getByLabel("Codex reviewer effort").fill("high");
     await form2.getByRole("button", { name: "Create paused pipeline" }).click();
+    // Each pipeline sample gets its own team; the second one is now the active team.
+    await expect(page.getByTestId("active-team-name")).toHaveText(/ 2$/);
+    await expect(page.locator(".workflow")).toHaveCount(1);
     const pipeline2 = page
       .locator(".workflow")
-      .nth(1)
+      .first()
       .getByLabel("Pipeline", { exact: true });
     await expect(pipeline2).toBeVisible();
     await pipeline2.getByRole("button", { name: "Prepare and verify" }).click();

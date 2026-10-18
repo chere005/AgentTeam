@@ -20,6 +20,7 @@ type Reason = {
 type Overview = {
   leases: {
     id: string;
+    agentId: string;
     agent: string;
     kind: string;
     scope: string;
@@ -33,6 +34,7 @@ type Overview = {
     id: string;
     kind: "task" | "chat";
     title: string;
+    agentId: string;
     agent: string;
     position: number;
     priorityLabel: string;
@@ -86,14 +88,29 @@ export function Cooperation({
     void load();
   }, [events]);
   if (!o) return null;
+  // Active team only; ordering, leases and fairness are global, so other teams' share is counted.
+  const mine = new Set(data.agents.map((a) => a.id));
+  const queue = o.queue.filter((q) => mine.has(q.agentId)),
+    leases = o.leases.filter((l) => mine.has(l.agentId)),
+    shared = o.shared.filter((s) => s.agents.some((a) => mine.has(a.agentId))),
+    drivers = o.external.drivers.filter((d) => mine.has(d.agentId));
+  const otherQueued = o.queue.length - queue.length,
+    otherLeases = o.leases.length - leases.length;
   return (
     <div className="coop-section" data-testid="cooperation">
       <h3>
         <Clock size={15} /> Queue: tasks and chat runs
       </h3>
       <p className="hint">{o.fairness}</p>
-      {o.queue.length ? (
-        o.queue.map((q) => (
+      {otherQueued > 0 && (
+        <p className="hint" data-testid="other-team-queue">
+          Positions are global: {otherQueued} entr
+          {otherQueued === 1 ? "y" : "ies"} of other teams also wait in this
+          queue.
+        </p>
+      )}
+      {queue.length ? (
+        queue.map((q) => (
           <div className="coop-item" key={q.id} data-testid="queue-entry">
             <b>
               #{q.position} · {q.title}
@@ -122,8 +139,14 @@ export function Cooperation({
         <p className="hint">The queue is empty.</p>
       )}
       <h3>Current owners</h3>
-      {o.leases.length ? (
-        o.leases.map((l) => (
+      {otherLeases > 0 && (
+        <p className="hint">
+          {otherLeases} lease(s) are held by agents of other teams (locks are
+          global).
+        </p>
+      )}
+      {leases.length ? (
+        leases.map((l) => (
           <div className="coop-item" key={l.id} data-testid="lease-owner">
             <b>{l.agent}</b>
             <span className="coop-tag">{l.kind}</span>
@@ -181,8 +204,8 @@ export function Cooperation({
       <h3>
         <Share2 size={15} /> Resources shared by several agents
       </h3>
-      {o.shared.length ? (
-        o.shared.map((s) => (
+      {shared.length ? (
+        shared.map((s) => (
           <div className="coop-item" key={s.path} data-testid="shared-resource">
             <code className="full-path">{s.path}</code>
             <span className="coop-tag">{s.kind}</span>
@@ -203,7 +226,7 @@ export function Cooperation({
         <p className="hint">No folder is attached to more than one agent.</p>
       )}
       <ParallelWork data={data} events={events} act={act} />
-      {o.external.drivers.map((d) => (
+      {drivers.map((d) => (
         <ExternalNotice
           key={d.agentId}
           holder={d.label.startsWith("Interactive") ? "cli" : "native"}

@@ -355,9 +355,10 @@ export class Playground {
       const byName = new Map<string, Agent>();
       for (const a of liveAgents) {
         const patch = req.overrides.agents[a.name] ?? {};
-        const { id, createdAt, control, ...rest } = a;
+        const { id, createdAt, control, teamId, ...rest } = a;
         void createdAt;
         void control;
+        void teamId;
         const parsed = agentSchema.parse({ ...rest, ...patch });
         const workspaces = a.workspaces.length
           ? [

@@ -53,6 +53,7 @@ import {
   type Group,
 } from "../groups";
 import "./canvas-cards.css";
+import { teamKey, MAIN_TEAM_ID } from "../team-view";
 import { accessLabel, accessTitle } from "../access-view";
 import {
   api,
@@ -300,6 +301,22 @@ function FlowEdge(props: EdgeProps) {
 const nodeTypes = { agent: Card, group: GroupNode },
   edgeTypes = { flow: FlowEdge };
 export function TeamCanvas(p: Props) {
+  // Groups and the viewport are remembered per team (Main keeps the legacy keys); the App
+  // remounts the canvas (key = team id) when the active team changes.
+  const teamId = p.data.activeTeamId ?? MAIN_TEAM_ID,
+    teamName = p.data.teamView?.team.name ?? "this team",
+    crossTeam = p.data.teamView?.crossTeam ?? [],
+    otherAgents = (p.data.teamView?.otherAgents ?? []).filter(
+      (a) => a.kind !== "team-assistant",
+    ),
+    teamNames = new Map(
+      (p.data.teamView?.teams ?? []).map((t) => [t.id, t.name]),
+    );
+  const groupsKey = teamKey("groups", teamId),
+    viewportKey = teamKey("viewport", teamId);
+  const allAgents = p.data.teamView?.allAgents ?? p.data.agents;
+  const agentName = (id: string) =>
+    allAgents.find((a) => a.id === id)?.name ?? "Unknown agent";
   const [simple, setSimple] = useState(() => saved("simpleCards", true)),
     [nodes, setNodes] = useState<Node[]>([]),
     [connection, setConnection] = useState<{
@@ -309,12 +326,14 @@ export function TeamCanvas(p: Props) {
       bidirectional: boolean;
       enabled: boolean;
       id?: string;
+      /** Explicit link to an agent of another team (sent as crossTeam: true). */
+      crossTeam?: boolean;
     } | null>(null),
     [now, setNow] = useState(Date.now()),
     [savingTeam, setSavingTeam] = useState(false),
     [groups, setGroups] = useState<Group[]>(() =>
       sanitizeGroups(
-        saved("groups", []),
+        saved(groupsKey, []),
         p.data.agents.map((a) => a.id),
       ),
     ),
@@ -332,6 +351,10 @@ export function TeamCanvas(p: Props) {
     window.addEventListener("agentteam:inspect-edge", open);
     return () => window.removeEventListener("agentteam:inspect-edge", open);
   }, [p.data.edges]);
+  const openCrossTeam = (edgeId: string) => {
+    const link = crossTeam.find((x) => x.edge.id === edgeId);
+    if (link) setConnection({ ...link.edge, crossTeam: true });
+  };
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
@@ -339,7 +362,7 @@ export function TeamCanvas(p: Props) {
   // Restored once: a saved viewport wins over fitView so the canvas reopens where it was left.
   const [viewport] = useState(() => {
     const v = saved<{ x: number; y: number; zoom: number } | null>(
-      "viewport",
+      viewportKey,
       null,
     );
     return v &&
@@ -387,7 +410,7 @@ export function TeamCanvas(p: Props) {
     });
   }, [agentIdKey]);
   useEffect(() => {
-    persist("groups", groups);
+    persist(groupsKey, groups);
   }, [groups]);
   const hidden = useMemo(() => hiddenAgents(groups), [groups]);
   useEffect(() => {
@@ -612,7 +635,27 @@ export function TeamCanvas(p: Props) {
             : null,
         }}
       />
-      <div className="canvas" aria-label="Team canvas">
+      {crossTeam.length > 0 && (
+        <div
+          className="cross-team-strip"
+          role="group"
+          aria-label="Cross-team links"
+          data-testid="cross-team-links"
+        >
+          <span className="cross-team-badge">CROSS-TEAM</span>
+          {crossTeam.map((x) => (
+            <button
+              key={x.edge.id}
+              title="Communication link to an agent of another team; enforced like every other connection"
+              onClick={() => openCrossTeam(x.edge.id)}
+            >
+              {agentName(x.edge.from)} → {agentName(x.edge.to)} (
+              {x.outsideTeamName})
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="canvas" aria-label={`Team canvas: ${teamName}`}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -663,7 +706,7 @@ export function TeamCanvas(p: Props) {
           }
           deleteKeyCode={["Backspace", "Delete"]}
           onInit={setFlow}
-          onMoveEnd={(_, v) => persist("viewport", v)}
+          onMoveEnd={(_, v) => persist(viewportKey, v)}
           {...(viewport ? { defaultViewport: viewport } : { fitView: true })}
           minZoom={0.15}
           maxZoom={2}
@@ -673,13 +716,21 @@ export function TeamCanvas(p: Props) {
           <Controls />
           <MiniMap nodeColor="#344c51" maskColor="#10141cbb" />
         </ReactFlow>
-        {!p.data.agents.length && (
-          <div className="canvas-empty">
-            <h2>Build your team</h2>
-            <p>Add agents, then draw connections between their handles.</p>
-            <button className="primary" onClick={p.add}>
-              Create first agent
-            </button>
+        {!p.data.agents.some((a) => a.kind !== "team-assistant") && (
+          <div className="canvas-empty" data-testid="canvas-empty">
+            <h2>No agents in {teamName}</h2>
+            <p>
+              Add agents to this team, insert a saved team, or switch teams in
+              the top bar. Agents of other teams keep working while hidden.
+            </p>
+            <div className="row center">
+              <button className="primary" onClick={p.add}>
+                Create first agent
+              </button>
+              {p.openTeams && (
+                <button onClick={p.openTeams}>Insert a saved team</button>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -742,18 +793,42 @@ export function TeamCanvas(p: Props) {
               </button>
             </header>
             <div className="modal-content">
+              {connection.crossTeam && (
+                <p className="hint" data-testid="cross-team-note">
+                  <span className="cross-team-badge">CROSS-TEAM</span> This link
+                  connects agents of different teams. It is enforced exactly
+                  like any other connection (permissions, locks, limits and
+                  gates stay global).
+                </p>
+              )}
+              {connection.crossTeam && !connection.id && (
+                <label>
+                  Agent in another team
+                  <select
+                    aria-label="Agent in another team"
+                    value={connection.to}
+                    onChange={(e) =>
+                      setConnection({ ...connection, to: e.target.value })
+                    }
+                  >
+                    <option value="">Choose an agent…</option>
+                    {otherAgents.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name} ({teamNames.get(a.teamId ?? "") ?? "Main team"}
+                        )
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <div className="connection-pair">
-                <span>
-                  {p.data.agents.find((a) => a.id === connection.from)?.name}
-                </span>
+                <span>{agentName(connection.from)}</span>
                 {connection.bidirectional ? (
                   <ArrowLeftRight size={20} />
                 ) : (
                   <ArrowRight size={20} />
                 )}
-                <span>
-                  {p.data.agents.find((a) => a.id === connection.to)?.name}
-                </span>
+                <span>{connection.to ? agentName(connection.to) : "…"}</span>
               </div>
               <h3>What can they do together?</h3>
               <div
@@ -820,10 +895,7 @@ export function TeamCanvas(p: Props) {
                   }
                 >
                   <ArrowRight size={17} />
-                  <span>
-                    Only{" "}
-                    {p.data.agents.find((a) => a.id === connection.from)?.name}
-                  </span>
+                  <span>Only {agentName(connection.from)}</span>
                 </button>
                 <button
                   className={connection.bidirectional ? "selected" : ""}
@@ -883,6 +955,7 @@ export function TeamCanvas(p: Props) {
                 <button onClick={() => setConnection(null)}>Cancel</button>
                 <button
                   className="primary"
+                  disabled={!connection.to}
                   onClick={() =>
                     void p.act(async () => {
                       const { id, ...input } = connection;
@@ -895,7 +968,11 @@ export function TeamCanvas(p: Props) {
                     })
                   }
                 >
-                  {connection.id ? "Save connection" : "Connect agents"}
+                  {connection.id
+                    ? "Save connection"
+                    : connection.crossTeam
+                      ? "Create cross-team link"
+                      : "Connect agents"}
                 </button>
               </div>
             </footer>
@@ -914,6 +991,22 @@ export function TeamCanvas(p: Props) {
           >
             {[
               ["Chat in AgentTeam", () => p.chat(menu.id)],
+              ...(otherAgents.length
+                ? [
+                    [
+                      "Link to an agent in another team…",
+                      () =>
+                        setConnection({
+                          from: menu.id,
+                          to: "",
+                          kind: "delegate",
+                          bidirectional: false,
+                          enabled: true,
+                          crossTeam: true,
+                        }),
+                    ],
+                  ]
+                : []),
               [
                 "Configure agent",
                 () => p.edit(p.data.agents.find((a) => a.id === menu.id)!),

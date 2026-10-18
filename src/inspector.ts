@@ -382,6 +382,8 @@ export const timelineFilterSchema = z
   .object({
     agentId: z.string().optional(),
     workflowId: z.string().optional(),
+    /** Only entries attributed to this team (its agents, workflows, tasks; src/team-spaces.ts). */
+    teamId: z.string().max(64).optional(),
     taskId: z.string().optional(),
     sessionId: z.string().optional(),
     correlationId: z.string().optional(),
@@ -429,6 +431,7 @@ export function buildTimeline(
     .filter(Boolean);
   const minRank = f.minSeverity ? SEVERITY_ORDER.indexOf(f.minSeverity) : 0;
   const q = f.q?.toLowerCase();
+  const teamIndex = f.teamId ? service.teamSpaces.index() : null;
   const matched: TimelineEntry[] = [];
   for (const e of allEvents(service, f.after)) {
     const d = asRecord(e.data);
@@ -436,6 +439,14 @@ export function buildTimeline(
     const k = classify(e, d);
     if (f.agentId && !c.agentIds.includes(f.agentId)) continue;
     if (f.workflowId && c.workflowId !== f.workflowId) continue;
+    if (
+      teamIndex &&
+      !(c.workflowId
+        ? teamIndex.workflow.get(c.workflowId) === f.teamId
+        : c.agentIds.some((a) => teamIndex.agent.get(a) === f.teamId) ||
+          service.teamSpaces.eventTeams(e, teamIndex).has(f.teamId!))
+    )
+      continue;
     if (f.taskId && c.taskId !== f.taskId) continue;
     if (f.sessionId && c.sessionId !== f.sessionId) continue;
     if (f.correlationId && c.correlationId !== f.correlationId) continue;

@@ -74,6 +74,7 @@ import {
   type Snapshot,
   type TeamEvent,
 } from "../api";
+import { eventVisible } from "../team-view";
 /** Comma-separated declared task paths from the task form. */
 const declaredPaths = (text: string) =>
   text
@@ -181,8 +182,11 @@ export function Chat(p: PaneProps) {
     return (
       <div className="empty">
         <MessageSquare size={32} />
-        <h2>Your team starts here</h2>
-        <p>Create an agent to start a conversation.</p>
+        <h2>No agents in {p.data.teamView?.team.name ?? "this team"}</h2>
+        <p>
+          Create an agent in this team, or switch teams in the top bar, to start
+          a conversation.
+        </p>
       </div>
     );
   return (
@@ -521,6 +525,8 @@ export function Workflows(p: PaneProps) {
                 goal,
                 ownerId: p.selected,
                 completionCriteria: criteria,
+                // New workflows belong to the active team.
+                teamId: p.data.activeTeamId,
               });
               setCreating(false);
               setName("");
@@ -565,9 +571,10 @@ export function Workflows(p: PaneProps) {
       {!p.data.workflows.length && !creating && (
         <div className="empty compact">
           <ListTodoIcon />
-          <h3>Room for your next project</h3>
+          <h3>No workflows in {p.data.teamView?.team.name ?? "this team"}</h3>
           <p>
             Create a workflow, add tasks, and watch the team move them forward.
+            Other teams’ workflows are listed when you switch to that team.
           </p>
           <button onClick={() => setCreating(true)}>Create workflow</button>
         </div>
@@ -1169,7 +1176,11 @@ export function Workspace(p: PaneProps) {
   if (!agent)
     return (
       <div className="empty">
-        <p>Select an agent.</p>
+        <p>
+          {p.data.agents.length
+            ? "Select an agent."
+            : `No agents in ${p.data.teamView?.team.name ?? "this team"}.`}
+        </p>
       </div>
     );
   return (
@@ -1654,9 +1665,14 @@ export function ActivityLog({
       .then(setHistory)
       .catch(() => {});
   }, []);
+  // Only the active team's activity (and global events); other teams keep working unseen here,
+  // but their running/attention counts stay visible in the team switcher.
+  const index = data.teamView?.index;
   const combined = [
     ...new Map([...history, ...events].map((e) => [e.seq, e])).values(),
-  ].sort((a, b) => b.seq - a.seq);
+  ]
+    .filter((e) => !index || eventVisible(index, data.activeTeamId, e))
+    .sort((a, b) => b.seq - a.seq);
   return (
     <div className="scroll section">
       <span className="eyebrow">LIVE ACTIVITY</span>
@@ -1683,7 +1699,7 @@ export function ActivityLog({
             <div>
               <b>{e.type.replaceAll(".", " · ")}</b>
               <small>
-                {data.agents.find(
+                {(data.teamView?.allAgents ?? data.agents).find(
                   (a) => a.id === e.data?.agentId || a.id === e.entityId,
                 )?.name ?? ""}{" "}
                 {new Date(e.createdAt).toLocaleTimeString()}

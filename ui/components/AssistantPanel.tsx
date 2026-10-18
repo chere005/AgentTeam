@@ -22,6 +22,8 @@ type Proposal = {
   source: { type: "user" | "assistant" };
   createdAt: string;
   expiresAt: string;
+  /** "kind:id" of every pre-existing entity the proposal touches (team filter). */
+  base?: Record<string, string | null>;
 };
 type Detail = {
   proposal: Proposal;
@@ -60,8 +62,22 @@ const show = (v: unknown) =>
   typeof v === "string" ? v : JSON.stringify(v ?? null);
 const err = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-function Proposals({ events }: { events: TeamEvent[] }) {
-  const [list, setList] = useState<Proposal[]>([]);
+/** Team of a proposal: null when it touches only the active team or global/new entities. */
+function otherTeamOf(p: Proposal, data: Snapshot): string | null {
+  const index = data.teamView?.index;
+  if (!index) return null;
+  for (const key of Object.keys(p.base ?? {})) {
+    const team = index.get(key.slice(key.indexOf(":") + 1));
+    if (team && team !== data.activeTeamId) return team;
+  }
+  return null;
+}
+
+function Proposals({ events, data }: { events: TeamEvent[]; data: Snapshot }) {
+  const [all, setList] = useState<Proposal[]>([]);
+  // The Team Assistant is global; its proposals are shown in the team they change.
+  const list = all.filter((p) => !otherTeamOf(p, data));
+  const elsewhere = all.length - list.length;
   const [sel, setSel] = useState("");
   const [detail, setDetail] = useState<Detail | null>(null);
   const [audit, setAudit] = useState<Audit[]>([]);
@@ -135,6 +151,12 @@ function Proposals({ events }: { events: TeamEvent[] }) {
         <div role="alert" className="limit-error">
           {error}
         </div>
+      )}
+      {elsewhere > 0 && (
+        <p className="hint" data-testid="proposals-elsewhere">
+          {elsewhere} proposal(s) change other teams; switch to that team to
+          review them.
+        </p>
       )}
       <ul className="proposal-list" data-testid="proposal-list">
         {list.map((p) => (
@@ -398,8 +420,17 @@ function CoordinationCard({ c, reload }: { c: Coord; reload: () => void }) {
   );
 }
 
-function Coordination({ events }: { events: TeamEvent[] }) {
-  const [rows, setRows] = useState<Coord[]>([]);
+function Coordination({
+  events,
+  data,
+}: {
+  events: TeamEvent[];
+  data: Snapshot;
+}) {
+  const [all, setRows] = useState<Coord[]>([]);
+  const rows = all.filter((c) =>
+    data.workflows.some((w) => w.id === c.workflowId),
+  );
   const last = events.length ? events[events.length - 1].seq : 0;
   const load = useCallback(async () => {
     try {
@@ -414,7 +445,11 @@ function Coordination({ events }: { events: TeamEvent[] }) {
   return (
     <section className="assist-section" aria-label="Background coordination">
       <h3>Background coordination</h3>
-      {!rows.length && <p className="hint">No workflows yet.</p>}
+      {!rows.length && (
+        <p className="hint">
+          No workflows in {data.teamView?.team.name ?? "this team"}.
+        </p>
+      )}
       {rows.map((c) => (
         <CoordinationCard key={c.workflowId} c={c} reload={() => void load()} />
       ))}
@@ -449,14 +484,15 @@ function Inspection() {
 
 export function AssistantPanel({
   events,
+  data,
 }: {
   data: Snapshot;
   events: TeamEvent[];
 }) {
   return (
     <div className="assistant-panel scroll section">
-      <Proposals events={events} />
-      <Coordination events={events} />
+      <Proposals events={events} data={data} />
+      <Coordination events={events} data={data} />
       <Inspection />
     </div>
   );

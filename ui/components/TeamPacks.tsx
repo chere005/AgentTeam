@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Upload } from "lucide-react";
 import { api, persist, saved } from "../api";
+import { teamKey, MAIN_TEAM_ID } from "../team-view";
 import { createGroup, sanitizeGroups } from "../groups";
 import { Modal, applyLayout, nextOffset, type Point } from "./Teams";
 import "./team-packs.css";
@@ -127,12 +128,15 @@ const NOT_BUNDLED = "not bundled — install separately";
 export function applyInsertedGroups(
   groups: { name: string; agentIds: string[] }[] | undefined,
   allAgentIds: string[],
+  /** Canvas groups are stored per team: the team the agents were inserted into. */
+  teamId: string = MAIN_TEAM_ID,
 ) {
   if (!groups?.length) return;
+  const key = teamKey("groups", teamId);
   const ids = [
     ...new Set([...allAgentIds, ...groups.flatMap((g) => g.agentIds)]),
   ];
-  let current = sanitizeGroups(saved("groups", []), ids);
+  let current = sanitizeGroups(saved(key, []), ids);
   for (const g of groups)
     current = createGroup(
       current,
@@ -140,7 +144,7 @@ export function applyInsertedGroups(
       g.agentIds,
       "group-" + Math.random().toString(36).slice(2, 10),
     );
-  persist("groups", current);
+  persist(key, current);
 }
 
 export function TeamPacks({
@@ -312,9 +316,9 @@ export function TeamPacks({
           close={() => setDialog(null)}
           done={(r) => {
             applyLayout(r.layout);
-            applyInsertedGroups(r.groups, agentIds);
+            applyInsertedGroups(r.groups, agentIds, r.teamId);
             setDialog(null);
-            setNotice("Pack installed.");
+            setNotice(`Pack installed into its own team “${r.teamName}”.`);
             goCanvas();
           }}
         />
@@ -350,6 +354,8 @@ function PackDialog({
   done: (r: {
     layout: Record<string, Point>;
     groups?: { name: string; agentIds: string[] }[];
+    teamId: string;
+    teamName: string;
   }) => void;
 }) {
   const [mapping, setMapping] = useState<Record<string, string>>({}),
@@ -395,7 +401,8 @@ function PackDialog({
       done(
         await api("/team-packs/install", "POST", {
           ...body(),
-          offset: nextOffset(agentIds),
+          // The pack gets its own new team, so its layout starts at the origin.
+          offset: { x: 0, y: 0 },
         }),
       );
     } catch (e) {

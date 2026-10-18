@@ -73,19 +73,67 @@ export function useInbox(data: Snapshot) {
   return { items, dismiss };
 }
 
+type OtherTeamItem = InboxItem & { teamId: string; teamName: string };
 export function InboxPane({
   items,
+  others = [],
+  teamName,
   dismiss,
   open,
 }: {
+  /** Items of the active team (and global ones such as approvals without a team). */
   items: InboxItem[];
+  /** Items of other teams: listed separately; opening one switches the active team first. */
+  others?: OtherTeamItem[];
+  teamName?: string;
   dismiss: (id: string) => void;
-  open: (item: InboxItem) => void;
+  open: (item: InboxItem | OtherTeamItem) => void;
 }) {
+  const row = (item: InboxItem | OtherTeamItem, other: boolean) => (
+    <li
+      key={item.id}
+      className={"inbox-item " + item.kind}
+      data-testid={other ? "inbox-other-item" : "inbox-item"}
+      data-kind={item.kind}
+    >
+      <div className="grow">
+        <span className="eyebrow">{kindLabel[item.kind]}</span>
+        {other && (
+          <span className="inbox-team-label">
+            {" "}
+            · {(item as OtherTeamItem).teamName}
+          </span>
+        )}
+        <b>{item.title}</b>
+        <small>{item.detail}</small>
+      </div>
+      <button
+        onClick={() => open(item)}
+        aria-label={
+          other
+            ? `Switch to ${(item as OtherTeamItem).teamName} and open: ${item.title}`
+            : undefined
+        }
+      >
+        {other
+          ? "Switch & open"
+          : item.target === "workspace"
+            ? "Open review"
+            : "Open"}
+      </button>
+      <button
+        className="icon"
+        aria-label={`Dismiss: ${item.title}`}
+        onClick={() => dismiss(item.id)}
+      >
+        <X size={15} />
+      </button>
+    </li>
+  );
   return (
     <section className="inbox pane-content scroll" aria-label="Attention inbox">
       <div className="inbox-head">
-        <h2>Attention inbox</h2>
+        <h2>Attention inbox{teamName ? ` · ${teamName}` : ""}</h2>
         <span className="badge" data-testid="inbox-count">
           {items.length}
         </span>
@@ -93,7 +141,7 @@ export function InboxPane({
       {!items.length ? (
         <div className="empty" role="status">
           <InboxIcon size={30} />
-          <h3>Nothing needs your attention</h3>
+          <h3>Nothing in {teamName ?? "this team"} needs your attention</h3>
           <p>
             Approvals, failed or blocked tasks, limit trips and ready reviews
             appear here.
@@ -101,31 +149,16 @@ export function InboxPane({
         </div>
       ) : (
         <ul className="inbox-list" aria-label="Items needing attention">
-          {items.map((item) => (
-            <li
-              key={item.id}
-              className={"inbox-item " + item.kind}
-              data-testid="inbox-item"
-              data-kind={item.kind}
-            >
-              <div className="grow">
-                <span className="eyebrow">{kindLabel[item.kind]}</span>
-                <b>{item.title}</b>
-                <small>{item.detail}</small>
-              </div>
-              <button onClick={() => open(item)}>
-                {item.target === "workspace" ? "Open review" : "Open"}
-              </button>
-              <button
-                className="icon"
-                aria-label={`Dismiss: ${item.title}`}
-                onClick={() => dismiss(item.id)}
-              >
-                <X size={15} />
-              </button>
-            </li>
-          ))}
+          {items.map((item) => row(item, false))}
         </ul>
+      )}
+      {others.length > 0 && (
+        <div className="inbox-other-team">
+          <h3>Other teams ({others.length})</h3>
+          <ul className="inbox-list" aria-label="Items in other teams">
+            {others.map((item) => row(item, true))}
+          </ul>
+        </div>
       )}
     </section>
   );

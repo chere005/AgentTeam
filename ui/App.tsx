@@ -1,5 +1,5 @@
 import { PendingApprovals } from "./components/Connections";
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import {
   Network,
   MessageSquare,
@@ -47,7 +47,9 @@ import {
   ActivityLog,
 } from "./components/Panes";
 import { InboxPane, useInbox } from "./components/Inbox";
-import { LayoutMenu } from "./components/LayoutMenu";
+import { LayoutMenu, rememberedLayout } from "./components/LayoutMenu";
+import { TeamSwitcher, TeamNotice } from "./components/TeamSwitcher";
+import { filterSnapshot, itemTeam, teamIndex } from "./team-view";
 import { DialogFocusManager, ShortcutHelp } from "./components/A11y";
 import { focusables } from "./components/A11y";
 import { clampWidth, sanitizeLayout, type PaneLayout } from "./workspace";
@@ -119,19 +121,55 @@ export default function App() {
   const [selected, setSelected] = useState(() => saved("selected", "")),
     [editor, setEditor] = useState<Agent | "new" | null>(null),
     [search, setSearch] = useState("");
-  const inbox = useInbox(data);
+  // One team at a time: every pane gets the active team's slice of the (unfiltered) snapshot.
+  const view = useMemo(() => filterSnapshot(data, data.activeTeamId), [data]);
+  const teamId = view.activeTeamId,
+    team = view.teamView.team;
+  const [notice, setNotice] = useState("");
+  const shownTeam = useRef<string | null>(null),
+    switching = useRef<string | null>(null);
+  const allInbox = useInbox(data);
+  // Inbox: the active team's items (and global ones); other teams' items are listed separately
+  // and opening one switches the team first.
+  const inbox = useMemo(() => {
+    const index = teamIndex(data);
+    const tagged = allInbox.items.map((item) => ({
+      item,
+      team: itemTeam(index, item),
+    }));
+    return {
+      items: tagged
+        .filter((x) => x.team === null || x.team === teamId)
+        .map((x) => x.item),
+      others: tagged
+        .filter((x) => x.team !== null && x.team !== teamId)
+        .map((x) => ({
+          ...x.item,
+          teamId: x.team!,
+          teamName:
+            data.teams.find((t) => t.id === x.team)?.name ?? "another team",
+        })),
+      dismiss: allInbox.dismiss,
+    };
+  }, [allInbox, data, teamId]);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
   const refresh = useCallback(async () => {
     try {
-      const next = await api("/snapshot");
+      const next: Snapshot = await api("/snapshot");
+      // The active team changed without the switcher (a sample, template or pack created its own
+      // team, or the team was deleted): say so visibly.
+      const nextTeam = filterSnapshot(next, next.activeTeamId).teamView.team;
+      if (
+        shownTeam.current !== null &&
+        shownTeam.current !== nextTeam.id &&
+        switching.current !== nextTeam.id
+      )
+        setNotice(`Now showing team “${nextTeam.name}”.`);
+      shownTeam.current = nextTeam.id;
+      switching.current = null;
       setData(next);
-      setSelected((id) =>
-        next.agents.some((a: Agent) => a.id === id)
-          ? id
-          : (next.agents[0]?.id ?? ""),
-      );
       setReady(true);
     } catch (e) {
       setError(String(e));
@@ -162,6 +200,18 @@ export default function App() {
       refreshTimer.current = setTimeout(() => void refresh(), 80);
     });
   }, [refresh]);
+  // Keep the selection inside the active team.
+  useEffect(() => {
+    if (!ready) return;
+    setSelected((id) =>
+      view.agents.some((a) => a.id === id) ? id : (view.agents[0]?.id ?? ""),
+    );
+  }, [view, ready]);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(""), 12_000);
+    return () => clearTimeout(timer);
+  }, [notice]);
   useEffect(() => {
     persist("layoutVersion", 2);
     persist("selected", selected);
@@ -206,7 +256,37 @@ export default function App() {
       setShowRight(true);
     }
   };
-  const openInbox = (item: InboxItem) => {
+  /** Team management from the switcher: errors go to the toast and keep the form open. */
+  const teamAction = async (fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      throw e;
+    }
+  };
+  /** Make `id` the active team (persisted by the backend); never pauses or cancels any work. */
+  const switchTeam = (id: string, why?: string) => {
+    if (id === teamId) return;
+    const name = data.teams.find((t) => t.id === id)?.name ?? "team";
+    switching.current = id;
+    shownTeam.current = id;
+    setData((d) => ({ ...d, activeTeamId: id }));
+    setNotice(why ?? `Switched to team “${name}”.`);
+    // Each team remembers its own layout preset.
+    const layout = rememberedLayout(id);
+    if (layout) applyLayout(layout);
+    void act(() => api("/team-spaces/active", "PUT", { teamId: id }));
+  };
+  const openInbox = (
+    item: InboxItem & { teamId?: string; teamName?: string },
+  ) => {
+    if (item.teamId && item.teamId !== teamId)
+      switchTeam(
+        item.teamId,
+        `Switched to team “${item.teamName}” to show: ${item.title}`,
+      );
     if (item.agentId) setSelected(item.agentId);
     if (item.target === "chat") {
       setRightPinned(false);
@@ -258,6 +338,11 @@ export default function App() {
       } else if (mod && e.shiftKey && e.key.toLowerCase() === "n") {
         e.preventDefault();
         setEditor("new");
+      } else if (mod && e.shiftKey && e.key.toLowerCase() === "t") {
+        e.preventDefault();
+        document
+          .querySelector<HTMLButtonElement>('[data-testid="team-switcher"]')
+          ?.click();
       } else if (mod && e.shiftKey && e.key.toLowerCase() === "i") {
         e.preventDefault();
         setRight("inbox");
@@ -270,10 +355,10 @@ export default function App() {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, []);
-  const agent = data.agents.find((a) => a.id === selected);
+  const agent = view.agents.find((a) => a.id === selected);
   function pane(id: Panel, side: string) {
     const props = {
-      data,
+      data: view,
       selected,
       setSelected,
       act,
@@ -285,6 +370,7 @@ export default function App() {
       case "team":
         return (
           <TeamCanvas
+            key={teamId}
             {...props}
             add={() => setEditor("new")}
             openTeams={() => setMain("teams")}
@@ -309,7 +395,8 @@ export default function App() {
           <TeamLibrary
             events={events}
             act={act}
-            agentIds={data.agents.map((a) => a.id)}
+            agentIds={view.agents.map((a) => a.id)}
+            team={{ id: team.id, name: team.name }}
             goCanvas={() => {
               setMain("team");
               void refresh();
@@ -320,6 +407,8 @@ export default function App() {
         return (
           <InboxPane
             items={inbox.items}
+            others={inbox.others}
+            teamName={team.name}
             dismiss={inbox.dismiss}
             open={openInbox}
           />
@@ -328,21 +417,21 @@ export default function App() {
         return <Capabilities {...props} />;
       case "inspector":
         return (
-          <Inspector data={data} events={events} openChat={props.openChat} />
+          <Inspector data={view} events={events} openChat={props.openChat} />
         );
       case "assistant":
-        return <AssistantPanel data={data} events={events} />;
+        return <AssistantPanel data={view} events={events} />;
       case "graphs":
         return (
           <WorkflowGraphs
-            data={data}
+            data={view}
             events={events}
             act={act}
             goCanvas={() => setMain("team")}
           />
         );
       case "activity":
-        return <ActivityLog events={events} data={data} />;
+        return <ActivityLog events={events} data={view} />;
     }
   }
   function paneHeader(
@@ -393,16 +482,54 @@ export default function App() {
             <Network size={20} />
           </span>
           <b>AgentTeam</b>
-          <span className="version">LOCAL WORKSPACE</span>
         </div>
+        {ready && (
+          <TeamSwitcher
+            teams={data.teams}
+            active={team}
+            switchTo={(id) => switchTeam(id)}
+            create={(name) =>
+              teamAction(async () => {
+                const created = await api("/team-spaces", "POST", {
+                  name,
+                });
+                switching.current = created.id;
+                await api("/team-spaces/active", "PUT", {
+                  teamId: created.id,
+                });
+                setNotice(`Created team “${created.name}”; it is now active.`);
+              })
+            }
+            rename={(id, name) =>
+              teamAction(() => api("/team-spaces/" + id, "PUT", { name }))
+            }
+            remove={(id, options) =>
+              teamAction(async () => {
+                const r = await api("/team-spaces/" + id, "DELETE", options);
+                switching.current = r.moveTo;
+                const dest =
+                  data.teams.find((t) => t.id === r.moveTo)?.name ?? "Main";
+                setNotice(
+                  `Deleted team “${team.name}”. ${r.agents === "delete" ? "Its agents were deleted" : "Its agents were moved"}; its workflows moved to “${dest}”.`,
+                );
+              })
+            }
+          />
+        )}
         <div className="top-status">
           <span className={"dot " + (data.liveExecution ? "green" : "")} />
           {data.liveExecution ? "Execution enabled" : "Execution paused"}
           <span className="divider" />
-          {data.activity.filter((a) => a.state === "processing").length} active
+          {view.activity.filter((a) => a.state === "processing").length} active
+          in team
         </div>
         <div className="row">
-          <LayoutMenu current={current} apply={applyLayout} />
+          <LayoutMenu
+            key={teamId}
+            teamId={teamId}
+            current={current}
+            apply={applyLayout}
+          />
           <button
             className="icon topbar-inbox"
             aria-label={`Attention inbox, ${inbox.items.length} item${inbox.items.length === 1 ? "" : "s"}`}
@@ -452,6 +579,7 @@ export default function App() {
           </button>
         </div>
       </header>
+      {notice && <TeamNotice text={notice} dismiss={() => setNotice("")} />}
       <div className="body">
         {showLeft && (
           <aside className="navigation" aria-label="Workspace navigation">
@@ -469,7 +597,7 @@ export default function App() {
                     <p.icon size={18} />
                     {p.name}
                     {p.id === "workflows" && (
-                      <span className="count">{data.workflows.length}</span>
+                      <span className="count">{view.workflows.length}</span>
                     )}
                     {p.id === "inbox" && inbox.items.length > 0 && (
                       <span className="nav-badge">{inbox.items.length}</span>
@@ -478,7 +606,9 @@ export default function App() {
                 ))}
             </nav>
             <div className="nav-section row between">
-              YOUR TEAM
+              <span className="nav-team-name" title={team.name}>
+                {team.name.toUpperCase()}
+              </span>
               <button
                 className="icon"
                 aria-label="Add agent"
@@ -497,8 +627,15 @@ export default function App() {
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
-            <div className="agent-list" role="group" aria-label="Agents">
-              {data.agents
+            <div
+              className="agent-list"
+              role="group"
+              aria-label={`Agents in ${team.name}`}
+            >
+              {!view.agents.length && (
+                <p className="team-empty-note">No agents in {team.name}.</p>
+              )}
+              {view.agents
                 .filter((a) =>
                   a.name.toLowerCase().includes(search.toLowerCase()),
                 )
@@ -527,7 +664,7 @@ export default function App() {
                     <span
                       className={
                         "dot " +
-                        (data.activity.find((x) => x.agentId === a.id)
+                        (view.activity.find((x) => x.agentId === a.id)
                           ?.state === "processing"
                           ? "green pulse"
                           : "")
@@ -617,7 +754,8 @@ export default function App() {
           {ready ? "Workspace connected" : "Connecting"}
         </span>
         <span>
-          {data.agents.length} agents · {data.edges.length} connections
+          {team.name}: {view.agents.length} agents · {view.edges.length}{" "}
+          connections
         </span>
         <span>
           {agent?.name ?? "No agent selected"}
@@ -644,13 +782,14 @@ export default function App() {
       {editor && (
         <AgentEditor
           agent={editor === "new" ? undefined : editor}
-          data={data}
+          data={view}
           close={() => setEditor(null)}
           save={async (input) => {
+            // A new agent joins the active team; an edit keeps the agent's team.
             await api(
               editor === "new" ? "/agents" : "/agents/" + editor.id,
               editor === "new" ? "POST" : "PUT",
-              input,
+              editor === "new" ? { ...(input as object), teamId } : input,
             );
             await refresh();
             setEditor(null);

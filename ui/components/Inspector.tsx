@@ -150,6 +150,8 @@ function Timeline(p: Props) {
     qs({
       ...f,
       minSeverity: f.minSeverity === "debug" ? "" : f.minSeverity,
+      // Only the active team's entries (src/team-spaces.ts).
+      teamId: p.data.activeTeamId ?? "",
       limit: "400",
     });
   // Live events nudge a reload so the timeline follows the run.
@@ -350,7 +352,12 @@ function Waiting(p: Props) {
       headline: string;
       codes: string[];
     }[]
-  >("/inspector/waiting", [p.events.length], []);
+  >(
+    "/inspector/waiting" +
+      (p.data.activeTeamId ? "?teamId=" + enc(p.data.activeTeamId) : ""),
+    [p.events.length],
+    [],
+  );
   const [target, setTarget] = useState<{
     kind: "tasks" | "agents";
     id: string;

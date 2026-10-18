@@ -651,6 +651,13 @@ async function dryRun(service: TeamService, ops: Op[]) {
     for (const kind of COPY_KINDS)
       for (const entity of service.store.list<{ id: string }>(kind))
         sandboxStore.put(kind, entity);
+    // Teams and the active team decide where new agents land and which links are cross-team.
+    for (const team of service.store.list<{ id: string }>("team-space"))
+      sandboxStore.put("team-space", team);
+    sandboxStore.put("settings", {
+      id: "active-team",
+      teamId: service.teamSpaces.active(),
+    });
     const sandbox = new TeamService(sandboxStore, service.skills);
     // Stop at the first failure: later ops usually depend on earlier ones.
     let index = 0;

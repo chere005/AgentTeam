@@ -5,8 +5,21 @@ Updated October 18, 2026. Read with `AGENTS.md` (rules), `CLAUDE.md` (commands a
 ## Repository state
 
 - Repository `/Users/scheren/CLAUDIO/AgentTeam`, public remote https://github.com/chere005/AgentTeam, branch `main`.
-- Last commit `c7a7792` (assistant proposals, skills/tool registry, access rules, parallel coordination, workflow graphs). On top of it is an **uncommitted** change set from three parallel workstreams plus a review pass (see below). Nothing of it is committed or pushed; commit only when the user asks.
+- Last commit `47ccc1e` (pipeline sample, team packs, task/rule/state editors, test-stability fixes). On top of it is the **uncommitted** active-team switcher (below). Nothing of it is committed or pushed; commit only when the user asks.
 - Package version 0.1.0. No release tag or published artifacts are established by this handoff.
+
+## Active-team switcher (uncommitted, this session)
+
+User request: only one team or workflow set should be visible at a time. Design (details in `CLAUDE.md`, `src/team-spaces.ts` header):
+
+- One database; agents/workflows get an optional `teamId` (missing = Main team, so old data is read through defaults, no migration write). Team Assistant is global. Active team is a backend setting (survives restarts, lets a sample/template/pack activate its own team).
+- Creation: agent form → active team; workflow → given team or owner's; Wolfram sample, pipeline sample, template insert (default new team named after the template; the insert dialog can choose the active team instead), pack install (new team named after the pack; pack updates add agents to the pack's team) → own new team (unique name), activated; the UI shows a notice whenever the active team changes for a reason other than the switcher.
+- Policy unchanged and global. Cross-team edges need explicit `crossTeam: true` (canvas context menu "Link to an agent in another team…"), shown in a "CROSS-TEAM" strip on both teams' canvases; moving an agent keeps its edges working (they become cross-team).
+- UI: `TeamSwitcher` in the top bar (name, status dot, running/attention chips, "+N elsewhere" for other teams, menu with per-team counts, New/Rename/Delete, keyboard and Mod+Shift+T); every pane gets the filtered view; inbox lists other teams' items separately and "Switch & open" switches first; per-team canvas groups/viewport and layout presets.
+- Tests: `test/team-spaces.test.ts` (8), assertions added to `test/team-packs.test.ts` and `test/pipeline.test.ts`; `e2e/teams.spec.ts` (3); updated `e2e/desktop.spec.ts` (insert into active team), `e2e/pipeline.spec.ts` (second pipeline is its own team), `e2e/team-packs.spec.ts` (per-team groups key, pack team active), `e2e/workspace-ux.spec.ts` (switcher first in tab order).
+- Open items are in `TODO.md` section 15 (no move-agent UI, some views stay global).
+- Also fixed: `e2e/task-editors.spec.ts` "routing rule editing" was racy (deleting the target agent deletes the rule, and the debounced snapshot refresh unmounts the open form; failed 2 of 6 repeats); the delete and the save now happen in one step and the test waits for the error before the refresh (8 of 8 repeats passed).
+- Checks after this change (macOS): `npm run typecheck` passed; `npm test` twice: 373 tests, 372 passed, 0 failed, 1 skipped (opt-in Wolfram smoke) each time (in 2 of ~11 earlier runs one unrelated timing test failed once: "Git workflow locks key on the common git dir…" and once an unidentified one); `npm run build` passed; `npm run test:ui` twice: 37 of 37 passed; prettier clean; `node scripts/audit-release.mjs` passed. Screenshots of the open switcher and a filtered canvas were inspected.
 
 ## What exists (all fixture-tested; see limitations)
 

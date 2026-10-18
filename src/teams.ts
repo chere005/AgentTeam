@@ -172,6 +172,8 @@ export type TeamTemplateEnvelope = {
 };
 export type StoredTemplate = TeamTemplate & {
   id: string;
+  /** Live team the selection was saved from (library metadata; not part of the export). */
+  sourceTeam?: { id: string; name: string };
   createdAt: string;
   updatedAt: string;
 };
@@ -211,8 +213,18 @@ const insertSchema = z
     allowUnknownModels: z.boolean().default(false),
     allowUninstalledEnvironments: z.boolean().default(false),
     offset: point.default({ x: 0, y: 0 }),
+    /**
+     * Destination team (src/team-spaces.ts). Default: a new team named after the template (or
+     * `teamName`), made unique, which becomes the active team. `teamId` inserts into an existing
+     * team instead.
+     */
+    teamId: z.string().min(1).max(64).optional(),
+    teamName: z.string().trim().min(1).max(80).optional(),
   })
   .strict()
+  .refine((v) => !(v.teamId && v.teamName), {
+    message: "Provide at most one of teamId or teamName",
+  })
   .refine((v) => Boolean(v.templateId) !== Boolean(v.envelope), {
     message: "Provide exactly one of templateId or envelope",
   });
@@ -403,9 +415,28 @@ export class TeamTemplates {
   create(input: unknown): StoredTemplate {
     const template = this.build(input);
     const now = new Date().toISOString();
+    // Library metadata only (never exported): the live team the selection was saved from.
+    const spaces = this.service.teamSpaces;
+    const from = new Set(
+      createSchema
+        .parse(input)
+        .agentIds.map((id) => {
+          try {
+            return spaces.teamOfAgent(this.store.get<Agent>("agent", id));
+          } catch {
+            return null;
+          }
+        })
+        .filter((t): t is string => !!t),
+    );
+    const sourceTeam =
+      from.size === 1
+        ? (({ id, name }) => ({ id, name }))(spaces.get([...from][0]))
+        : undefined;
     return this.store.transaction(() => {
       const stored = {
         ...template,
+        ...(sourceTeam ? { sourceTeam } : {}),
         id: randomUUID(),
         createdAt: now,
         updatedAt: now,
@@ -423,6 +454,7 @@ export class TeamTemplates {
       version: t.version,
       agents: t.agents.length,
       updatedAt: t.updatedAt,
+      ...(t.sourceTeam ? { sourceTeam: t.sourceTeam } : {}),
     }));
   }
   get(id: string) {
@@ -475,7 +507,13 @@ export class TeamTemplates {
   }
 
   export(id: string): TeamTemplateEnvelope {
-    const { id: _id, createdAt, updatedAt, ...template } = this.get(id);
+    const {
+      id: _id,
+      createdAt,
+      updatedAt,
+      sourceTeam,
+      ...template
+    } = this.get(id);
     return {
       format: TEAM_TEMPLATE_FORMAT,
       schemaVersion: TEAM_TEMPLATE_SCHEMA_VERSION,
@@ -502,7 +540,7 @@ export class TeamTemplates {
 
   private resolve(opts: z.output<typeof insertSchema>): TeamTemplate {
     if (opts.templateId) {
-      const { id, createdAt, updatedAt, ...template } = this.get(
+      const { id, createdAt, updatedAt, sourceTeam, ...template } = this.get(
         opts.templateId,
       );
       return teamTemplateSchema.parse(template);
@@ -693,6 +731,11 @@ export class TeamTemplates {
         "duplicate_assistant",
         "Only one team assistant is allowed",
       );
+      const spaces = this.service.teamSpaces;
+      const team = opts.teamId
+        ? spaces.get(spaces.forCreate(opts.teamId))
+        : spaces.createInTx(opts.teamName ?? t.name, t.description);
+      spaces.activateInTx(team.id);
       const ids = new Map(t.agents.map((a) => [a.key, randomUUID()]));
       const createdAt = new Date().toISOString();
       const layout: Record<string, { x: number; y: number }> = {};
@@ -721,7 +764,7 @@ export class TeamTemplates {
           x: a.position.x + opts.offset.x,
           y: a.position.y + opts.offset.y,
         };
-        return { ...data, id, control: "team", createdAt };
+        return { ...data, teamId: team.id, id, control: "team", createdAt };
       });
       const edges: Edge[] = t.edges.map((e) => ({
         ...edgeSchema.parse({
@@ -755,6 +798,8 @@ export class TeamTemplates {
         this.store.emit("rule.created", r.id);
       }
       const result = {
+        teamId: team.id,
+        teamName: team.name,
         agents,
         edges,
         rules,

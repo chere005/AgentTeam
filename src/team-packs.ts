@@ -67,6 +67,8 @@ const installSchema = z
     /** Must be true to install a pack that lists grants (write access, tools, skills, required reviews). */
     acknowledgeGrants: z.boolean().default(false),
     allowDuplicate: z.boolean().default(false),
+    /** Name of the new team the pack is installed into (default: the pack name, made unique). */
+    teamName: z.string().trim().min(1).max(80).optional(),
   })
   .strict()
   .refine(oneSource, { message: "Provide exactly one of packId or manifest" });
@@ -409,6 +411,7 @@ export class TeamPacks {
         allowUnknownModels: opts.allowUnknownModels,
         allowUninstalledEnvironments: opts.allowUninstalledEnvironments,
         offset: opts.offset,
+        teamName: opts.teamName ?? m.pack.name,
       },
       (r, t) => {
         const now = new Date().toISOString();
@@ -729,6 +732,10 @@ export class TeamPacks {
       const created: Agent[] = [];
       const createdKey = new Map<string, string>();
       const now = new Date().toISOString();
+      const packTeam = Object.values(r.ids.agents)
+        .map((id) => localAgents.get(id))
+        .map((a) => (a ? this.service.teamSpaces.teamOfAgent(a) : null))
+        .find((t): t is string => !!t);
 
       // Agents: adds first so dependent parents/edges/rules can resolve them.
       for (const c of report.changes.filter(
@@ -753,6 +760,8 @@ export class TeamPacks {
         });
         const agent: Agent = {
           ...data,
+          // Agents added by an update join the team of the pack's installed agents.
+          ...(packTeam ? { teamId: packTeam } : {}),
           id: randomUUID(),
           control: "team",
           createdAt: now,

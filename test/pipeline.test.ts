@@ -93,6 +93,13 @@ async function toIntegrated(w: any) {
 test("sample is created paused with the stage structure, caps and read-only roles; nothing runs", async (t) => {
   const w = await world(t);
   assert.equal(w.wf.status, "paused");
+  // The sample gets its own (active) team holding every stage agent and the workflow.
+  const teamId = (w.wf as { teamId?: string }).teamId!;
+  assert.ok(teamId && teamId !== "main");
+  assert.equal(w.service.teamSpaces.active(), teamId);
+  assert.ok(
+    w.store.list<Agent>("agent").every((a: Agent) => a.teamId === teamId),
+  );
   const r = w.rec();
   assert.equal(r.tasks.implement.length, 2);
   assert.equal(r.tasks.fix.length, 2);

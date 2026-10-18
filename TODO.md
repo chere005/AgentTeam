@@ -191,6 +191,8 @@ Implemented and verified on macOS with temp repos/local bare remotes (see `src/g
 
 ## 15 Layout and interaction quality — P1
 
+- [ ] Active-team switcher (`src/team-spaces.ts`, `ui/team-view.ts`, `TeamSwitcher.tsx`): no UI to move an existing agent or workflow to another team (API `POST /team-spaces/:id/members` only); the approval popup, the diagnostic bundle and the Resources "shared resources" choice list stay global; the Run inspector's Transfers/Playground sections use the team's agents but the backend `/inspector/transfers` is not team-filtered; the switcher was checked at one window width only (screenshots at the default test window size).
+
 - [ ] Make detailed cards' configuration summary (read-only grid added) visually verified at several widths, and verify the busy/failure/flow animations and `prefers-reduced-motion` behavior in a running app (CSS added in `canvas-cards.css`, only far-zoom card layout was inspected; large-graph "calm" mode above 40 agents is untested).
 - [ ] Attention inbox: awaiting-approval items are covered only by the pure `buildInbox` test (no e2e fixture for a pending approval), and "ready review" is a heuristic (completed task whose agent has an enabled outgoing review edge) because review state is per agent/git diff and not in the snapshot; consider a backend summary endpoint.
 - [ ] Groups now travel with saved teams/packs (template schema v2, `groups`), but live canvas group membership is still renderer localStorage, not a team entity; the saved-team Save dialog group path is backend-tested only (the desktop test covers pack insert).

@@ -30,6 +30,25 @@ export function Resources({
   const paths = [
     ...new Set(data.agents.flatMap((a) => a.workspaces.map((w) => w.path))),
   ];
+  // Active team only. Locks, priorities and queues are global, so other teams' holders are
+  // still summarised (they can make this team's agents wait).
+  const mine = new Set(data.agents.map((a) => a.id)),
+    everyone = data.teamView?.allAgents ?? data.agents,
+    nameOf = (id: string) => everyone.find((a) => a.id === id)?.name ?? id,
+    teamName = data.teamView?.team.name ?? "this team";
+  const ownResources = (state?.resources ?? []).filter(
+      (r: any) =>
+        paths.includes(r.path) ||
+        r.priorities.some((v: any) => mine.has(v.agentId)),
+    ),
+    leases = (state?.leases ?? []).filter((l: any) => mine.has(l.agentId)),
+    otherLeases = (state?.leases ?? []).filter(
+      (l: any) => !mine.has(l.agentId),
+    ),
+    chatQueue = (state?.chatQueue ?? []).filter((q: any) =>
+      mine.has(q.agentId),
+    ),
+    queue = (state?.queue ?? []).filter((q: any) => mine.has(q.agentId));
   function edit(r: any) {
     setAdding(true);
     setEditing(r.id);
@@ -147,7 +166,7 @@ export function Resources({
         </form>
       )}
       <div className="resource-list">
-        {state?.resources.map((r: any) => (
+        {ownResources.map((r: any) => (
           <article className="settings-card" key={r.id}>
             <div className="row between">
               <div className="row">
@@ -161,16 +180,19 @@ export function Resources({
               {r.priorities
                 .map(
                   (v: any) =>
-                    `${data.agents.find((a) => a.id === v.agentId)?.name}: ${priorityName(v.priority)}`,
+                    `${nameOf(v.agentId)}: ${priorityName(v.priority)}`,
                 )
                 .join(" · ") || "Uses each agent’s default priority"}
             </small>
           </article>
         ))}
+        {state && !ownResources.length && (
+          <p className="hint">No named resources used by {teamName}.</p>
+        )}
       </div>
       <h3>Currently holding resources</h3>
-      {state?.leases.length ? (
-        state.leases.map((l: any) => (
+      {leases.length ? (
+        leases.map((l: any) => (
           <div className="lease" key={l.id}>
             <div className="row">
               <span className="dot green pulse" />
@@ -187,14 +209,31 @@ export function Resources({
           </div>
         ))
       ) : (
-        <p className="hint">No active resource holders.</p>
+        <p className="hint">No active resource holders in {teamName}.</p>
+      )}
+      {otherLeases.length > 0 && (
+        <details className="other-team-leases">
+          <summary>
+            {otherLeases.length} lease(s) held by other teams (locks are global)
+          </summary>
+          {otherLeases.map((l: any) => (
+            <div className="lease" key={l.id}>
+              <b>{nameOf(l.agentId)}</b>
+              {l.paths.map((path: string) => (
+                <code className="full-path" key={path}>
+                  {path}
+                </code>
+              ))}
+            </div>
+          ))}
+        </details>
       )}
       <h3>Waiting agents</h3>
-      {state?.chatQueue?.map((q: any) => (
+      {chatQueue.map((q: any) => (
         <div className="queue-row" key={q.id}>
           <Clock size={15} />
           <div className="grow">
-            <b>Chat · {data.agents.find((a) => a.id === q.agentId)?.name}</b>
+            <b>Chat · {nameOf(q.agentId)}</b>
             <small>
               base {q.priority} → effective {q.effectivePriority}
             </small>
@@ -208,25 +247,20 @@ export function Resources({
           </button>
         </div>
       ))}
-      {state?.queue.length ? (
-        state.queue.map((q: any) => (
+      {queue.length ? (
+        queue.map((q: any) => (
           <div className="queue-row" key={q.id}>
             <Clock size={15} />
             <div className="grow">
               <b>{q.title}</b>
               <small>
-                {data.agents.find((a) => a.id === q.agentId)?.name} · base{" "}
-                {q.priority} → effective {q.effectivePriority}
+                {nameOf(q.agentId)} · base {q.priority} → effective{" "}
+                {q.effectivePriority}
               </small>
               {q.blockers.length > 0 && (
                 <small>
                   Waiting for{" "}
-                  {q.blockers
-                    .map(
-                      (id: string) =>
-                        data.agents.find((a) => a.id === id)?.name,
-                    )
-                    .join(", ")}
+                  {q.blockers.map((id: string) => nameOf(id)).join(", ")}
                 </small>
               )}
             </div>

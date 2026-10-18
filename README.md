@@ -20,6 +20,7 @@ No provider credentials or subscriptions are bundled. AgentTeam does not replace
 
 ## What is included
 
+- One team at a time: a switcher in the top bar names the active team, shows its status and running/attention counts, and lists every team with its counts so work in other teams is never out of sight. Canvas, conversations, workflows, resources, inbox, inspector, assistant changes and workflow graphs show only the active team (the Team Assistant is global and appears in every team); switching never pauses or cancels anything. Samples, inserted templates and team packs get a team of their own and switch to it. Teams can be created, renamed and deleted (agents are moved to another team by default, or deleted explicitly when unused). Links between agents of different teams are created only explicitly and shown as cross-team links; permissions, locks, limits, gates and scheduling stay global.
 - A hideable navigation pane, main pane and resizable right pane. Canvas opens in the center and conversation on the right. Either content pane can show chat, cards, workflows, folders, skills, resource coordination or activity.
 - Persistent agent profiles: environment, model, effort, role, instructions, skills, parent agent, scheduling priority and concurrent-invocation limit (Unlimited by default).
 - An interactive team canvas with a plain-language connection editor and directed/bidirectional communication links, compact/detailed cards, hierarchy arrangement, zoom and directional activity pulses.

@@ -4,6 +4,8 @@ First functional desktop release for macOS, Windows and Linux.
 
 ## Highlights
 
+- Active-team switcher: one team or workflow set is shown at a time, named in the top bar with status and running/attention counts; other teams' running work and inbox items stay visible and opening one switches the team. Samples, templates and packs create their own team. Existing data becomes the "Main team" without migration (records without a team belong to Main). Cross-team links need an explicit choice; all policy (permissions, locks, limits, gates, scheduling) stays global.
+
 - Flexible three-pane workspace, opening with canvas in the center and conversation on the right.
 - Contextual connection editor: assign tasks, ask for advice, request reviews or send updates.
 - Enter sends chat; Shift+Enter adds a newline.

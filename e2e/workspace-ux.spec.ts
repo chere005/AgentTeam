@@ -397,7 +397,7 @@ test("accessibility smoke: landmarks, names, tab order, dialog focus trap and re
     ).toBeFocused();
     await skip.focus();
     const order: string[] = [];
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 6; i++) {
       await page.keyboard.press("Tab");
       order.push(
         await page.evaluate(() => {
@@ -410,8 +410,10 @@ test("accessibility smoke: landmarks, names, tab order, dialog focus trap and re
         }),
       );
     }
-    expect(order[0]).toBe("Layouts");
-    expect(order[1]).toMatch(/^Attention inbox, \d+ item/);
+    // The active-team switcher comes first in the top bar.
+    expect(order[0]).toMatch(/^Active team: Main team, idle/);
+    expect(order[1]).toBe("Layouts");
+    expect(order[2]).toMatch(/^Attention inbox, \d+ item/);
     expect(order).toContain("Toggle navigation");
     // Focus is visibly ringed.
     const outline = await page.evaluate(

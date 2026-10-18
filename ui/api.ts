@@ -1,6 +1,17 @@
-import type { Agent, Edge, Rule, Session, Task, Workflow } from "../src/model";
+import type {
+  Agent as ModelAgent,
+  Edge,
+  Rule,
+  Session,
+  Task,
+  Workflow,
+} from "../src/model";
 import type { WorkflowSetup } from "../src/samples";
-export type { Agent, Edge, Rule, Session, Task, Workflow, WorkflowSetup };
+import type { TeamSummary } from "../src/team-spaces";
+import type { CrossTeamLink } from "./team-view";
+export type { Edge, Rule, Session, Task, Workflow, WorkflowSetup, TeamSummary };
+/** Snapshot agents carry their resolved team; null = the global Team Assistant. */
+export type Agent = Omit<ModelAgent, "teamId"> & { teamId?: string | null };
 export type Activity = {
   agentId: string;
   state: string;
@@ -24,6 +35,18 @@ export type Snapshot = {
   sessions: Session[];
   activity: Activity[];
   liveExecution: boolean;
+  /** Every team with counts (src/team-spaces.ts); the snapshot itself is unfiltered. */
+  teams: TeamSummary[];
+  activeTeamId: string;
+  /** Set by the UI on the filtered view of the active team (ui/team-view.ts). */
+  teamView?: {
+    team: TeamSummary;
+    teams: TeamSummary[];
+    allAgents: Agent[];
+    crossTeam: CrossTeamLink<Edge>[];
+    otherAgents: Agent[];
+    index: Map<string, string | null>;
+  };
 };
 export type TeamEvent = {
   seq: number;
@@ -54,6 +77,8 @@ export const empty: Snapshot = {
   sessions: [],
   activity: [],
   liveExecution: false,
+  teams: [],
+  activeTeamId: "main",
 };
 export function agentInput(agent: Agent) {
   const { id, createdAt, control, ...input } = agent;

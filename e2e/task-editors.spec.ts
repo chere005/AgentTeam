@@ -468,11 +468,36 @@ test("routing rule editing: mode, priority, persistence and backend error", asyn
     );
     // Backend error: the target agent disappears while the form is open.
     await page.getByRole("button", { name: /^Edit rule/ }).click();
-    await api(page, "DELETE", `/agents/${target.id}`);
     const again = page.getByTestId("rule-edit-form");
     await again.getByLabel("Priority (highest wins)").fill("8");
-    await again.getByRole("button", { name: "Save changes" }).click();
-    await expect(again.getByRole("alert")).toBeVisible();
+    // Deleting the agent also deletes the rule, and the next snapshot refresh (debounced) removes
+    // the open form; delete and save in one step and watch for the error before that refresh.
+    const shown = await page.evaluate(async (id) => {
+      await window.agentteam.request("DELETE", `/agents/${id}`);
+      const form = document.querySelector('[data-testid="rule-edit-form"]')!;
+      const alertShown = new Promise<boolean>((resolve) => {
+        const check = () =>
+          !!form.querySelector('[role="alert"]')?.textContent?.trim();
+        if (check()) return resolve(true);
+        const observer = new MutationObserver(() => {
+          if (check()) {
+            observer.disconnect();
+            resolve(true);
+          }
+        });
+        observer.observe(form, {
+          childList: true,
+          subtree: true,
+          characterData: true,
+        });
+        setTimeout(() => resolve(false), 5000);
+      });
+      [...form.querySelectorAll("button")]
+        .find((b) => b.textContent?.trim() === "Save changes")!
+        .click();
+      return alertShown;
+    }, target.id);
+    expect(shown).toBe(true);
   });
 });
 

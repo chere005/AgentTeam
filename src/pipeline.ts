@@ -270,6 +270,12 @@ export async function createPipelineSample(
   const store = service.store;
   const rec = store.transaction(() => {
     const createdAt = new Date().toISOString();
+    // The sample gets its own team (src/team-spaces.ts), which becomes the active team.
+    const team = service.teamSpaces.createInTx(
+      PIPELINE_NAME,
+      "Paused sample: plan, implement, review, adjudicate, fix, report",
+    );
+    service.teamSpaces.activateInTx(team.id);
     const mk = (
       name: string,
       environment: "claude" | "codex",
@@ -315,6 +321,7 @@ export async function createPipelineSample(
       const parsed = agentSchema.parse(raw);
       const agent: Agent = {
         ...parsed,
+        teamId: team.id,
         id: randomUUID(),
         control: "team",
         createdAt,

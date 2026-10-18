@@ -185,13 +185,21 @@ export const taskSchema = z
 export type AgentInput = z.infer<typeof agentSchema>;
 export type Agent = AgentInput & {
   id: string;
+  /** Team container (src/team-spaces.ts); absent = Main team; never set on the Team Assistant. */
+  teamId?: string;
   control: "team" | "human";
   createdAt: string;
 };
-export type Edge = z.infer<typeof edgeSchema> & { id: string };
+export type Edge = z.infer<typeof edgeSchema> & {
+  id: string;
+  /** Explicitly created link between agents of different teams (TeamService.saveEdge). */
+  crossTeam?: boolean;
+};
 export type Rule = z.infer<typeof ruleSchema> & { id: string };
 export type Workflow = z.infer<typeof workflowSchema> & {
   id: string;
+  /** Team container (src/team-spaces.ts); absent = Main team. */
+  teamId?: string;
   paused: boolean;
 };
 export type Task = z.infer<typeof taskSchema> & {

@@ -403,6 +403,12 @@ test("team templates: save selection, library preview and mapped insert", async 
     );
     await page.getByRole("button", { name: "Insert…", exact: true }).click();
     const insert = page.getByRole("dialog", { name: /Insert/ });
+    // Default destination is a new team of its own; here the copy joins the active team.
+    await expect(
+      insert.getByRole("button", { name: "Insert as new team", exact: true }),
+    ).toBeDisabled();
+    await expect(insert.getByLabel("New team name")).toHaveValue("Pair");
+    await insert.getByLabel(/Add to the active team “Main team”/).check();
     await expect(
       insert.getByRole("button", { name: "Insert team", exact: true }),
     ).toBeDisabled();

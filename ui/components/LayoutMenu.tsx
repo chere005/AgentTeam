@@ -11,21 +11,38 @@ import {
   type LayoutStore,
   type PaneLayout,
 } from "../workspace";
+import { teamKey, MAIN_TEAM_ID } from "../team-view";
 import "./layout-menu.css";
+
+/** The layout preset a team last chose (layouts are per team), or null. */
+export function rememberedLayout(teamId: string): PaneLayout | null {
+  const id = saved<string>(teamKey("layouts.active", teamId), "");
+  if (!id) return null;
+  return (
+    allLayouts(sanitizeStore(saved(teamKey("layouts", teamId), null))).find(
+      (l) => l.id === id,
+    )?.layout ?? null
+  );
+}
 
 /** Menu of saved workspace layouts (planning/coding/review/monitoring plus user-defined). */
 export function LayoutMenu({
   current,
   apply,
+  teamId = MAIN_TEAM_ID,
 }: {
   current: PaneLayout;
   apply: (l: PaneLayout) => void;
+  /** Layouts and the chosen preset are remembered per team (Main keeps the legacy keys). */
+  teamId?: string;
 }) {
+  const storeKey = teamKey("layouts", teamId),
+    activeKey = teamKey("layouts.active", teamId);
   const [store, setStore] = useState<LayoutStore>(() =>
-      sanitizeStore(saved("layouts", null)),
+      sanitizeStore(saved(storeKey, null)),
     ),
     [open, setOpen] = useState(false),
-    [active, setActive] = useState(() => saved<string>("layouts.active", "")),
+    [active, setActive] = useState(() => saved<string>(activeKey, "")),
     [name, setName] = useState(""),
     [renaming, setRenaming] = useState<{ id: string; name: string } | null>(
       null,
@@ -35,7 +52,7 @@ export function LayoutMenu({
   const commit = (next: LayoutStore) => {
     setStore(next);
     try {
-      persist("layouts", next);
+      persist(storeKey, next);
     } catch {
       /* storage unavailable */
     }
@@ -43,7 +60,7 @@ export function LayoutMenu({
   const choose = (id: string) => {
     setActive(id);
     try {
-      persist("layouts.active", id);
+      persist(activeKey, id);
     } catch {
       /* storage unavailable */
     }

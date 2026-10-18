@@ -77,9 +77,17 @@ test("team packs: preview, gated install with groups, and three-way update that 
       "curated:jeffallan--swift-expert",
     );
     expect(byName("Swift Implementer").skills[0].allowUnverified).toBe(false);
-    // Group membership came with the pack.
-    const groups = await page.evaluate(() =>
-      JSON.parse(localStorage.getItem("agentteam.groups") ?? "[]"),
+    // The pack got its own team, which is now active.
+    expect(snap.teams.find((t: any) => t.id === snap.activeTeamId).name).toBe(
+      "Swift development",
+    );
+    await expect(page.getByTestId("active-team-name")).toHaveText(
+      "Swift development",
+    );
+    // Group membership came with the pack (canvas groups are stored per team).
+    const groups = await page.evaluate(
+      (key) => JSON.parse(localStorage.getItem(key) ?? "[]"),
+      "agentteam.groups.team-" + snap.activeTeamId,
     );
     expect(groups).toHaveLength(1);
     expect(groups[0].name).toBe("Swift team");

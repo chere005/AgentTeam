@@ -221,7 +221,7 @@ test("audit fails a pack whose skill lacks license text, notice or matching pins
 });
 
 test("preview shows compatibility, skills, grants and changes; install is gated and atomic", async (t) => {
-  const { store, packs, mapping, teams } = await setup(t);
+  const { store, packs, mapping, teams, service } = await setup(t);
   const library = packs.library() as any[];
   assert.equal(library[0].packId, "swift-development");
   assert.equal(library[0].status, "skeleton");
@@ -312,6 +312,13 @@ test("preview shows compatibility, skills, grants and changes; install is gated 
   assert.equal(result.edges.length, 7);
   assert.equal(result.rules.length, 2);
   assert.equal(result.groups[0].agentIds.length, 5);
+  // The pack gets its own team, named after the pack, which becomes the active team.
+  assert.notEqual(result.teamId, "main");
+  assert.equal(service.teamSpaces.get(result.teamId).name, result.teamName);
+  assert.equal(service.teamSpaces.active(), result.teamId);
+  assert.ok(
+    store.list<Agent>("agent").every((a) => a.teamId === result.teamId),
+  );
   assert.deepEqual(counts(store), {
     agents: 5,
     edges: 7,
