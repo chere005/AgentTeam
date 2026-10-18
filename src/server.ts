@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile, chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
+import { RuntimeDiscovery } from "./discovery.ts";
 import { Store } from "./store.ts";
 import { SkillCatalog } from "./skills.ts";
 import { TeamService } from "./service.ts";
@@ -26,13 +27,17 @@ await catalog.scan();
 const service = new TeamService(store, catalog);
 const runs = new RunManager(
   service,
-  process.env.AGENTTEAM_ENABLE_LIVE === "1",
+  process.env.AGENTTEAM_ENABLE_LIVE !== "0",
   projectRoot,
 );
 runs.recover();
 const scheduler = new Scheduler(service, runs);
 scheduler.start();
-const server = createApi(service, token, runs);
+const discovery = new RuntimeDiscovery(store);
+void discovery
+  .refresh()
+  .then(() => store.emit("runtimes.discovered", "runtimes"));
+const server = createApi(service, token, runs, discovery);
 const port = Number(process.env.AGENTTEAM_PORT ?? 4317);
 if (!Number.isInteger(port) || port < 0 || port > 65535)
   throw new Error("Invalid port");

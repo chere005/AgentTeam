@@ -4,6 +4,10 @@ A local desktop workspace for building and coordinating teams of AI agents. Buil
 
 **0.1.0 is the first functional release.** The desktop UI and orchestration are implemented and tested with fixtures. Live provider integrations require your own installed runtimes and accounts; they have not all been validated against live subscriptions. Read the limitations below before enabling execution.
 
+![AgentTeam canvas and conversation workspace](docs/team-canvas.png)
+
+See [the detailed feature backlog](TODO.md) for remaining work, partial implementations, and the planned implementation order.
+
 ## Install
 
 Download the appropriate artifact from [GitHub Releases](https://github.com/chere005/AgentTeam/releases).
@@ -16,10 +20,10 @@ No provider credentials or subscriptions are bundled. AgentTeam does not replace
 
 ## What is included
 
-- A hideable navigation pane, main pane and resizable right pane. Either content pane can show chat, cards, workflows, folders, skills, resource coordination or activity.
+- A hideable navigation pane, main pane and resizable right pane. Canvas opens in the center and conversation on the right. Either content pane can show chat, cards, workflows, folders, skills, resource coordination or activity.
 - Persistent agent profiles: environment, model, effort, role, instructions, skills, parent agent, scheduling priority and concurrent-invocation limit (Unlimited by default).
-- An interactive team canvas with directed/bidirectional communication links, compact/detailed cards, hierarchy arrangement, zoom and directional activity pulses.
-- Conversations with a recipient dropdown, a persistent Team Assistant, queued messages, cancellation, CLI resume instructions and native-app opening on macOS.
+- An interactive team canvas with a plain-language connection editor and directed/bidirectional communication links, compact/detailed cards, hierarchy arrangement, zoom and directional activity pulses.
+- Conversations with Enter-to-send / Shift+Enter-newline, a recipient dropdown, a persistent Team Assistant, queued messages, cancellation, CLI resume instructions and native-app opening on macOS.
 - Workflow tasks, dependencies, completion criteria, pause/resume, retries, cancellation, and an automatic scheduler when execution is enabled.
 - Priority-based routing rules, explicit routing previews and communication permissions.
 - Shared-resource locks for attached folders and overlapping subfolders. Workflow tasks and requested chat runs share the lock boundary. Priority ages while waiting so lower-priority agents eventually get a turn.
@@ -43,9 +47,17 @@ npm start
 
 Development UI: run `npm run dev:ui`, build the desktop entry once, then launch Electron with `AGENTTEAM_DEV=1`. Windows PowerShell uses `$env:AGENTTEAM_DEV="1"; npm run desktop`.
 
+## Hybrid backend
+
+AgentTeam owns routing, scheduling, priorities, resource locks, and persistent team/workflow state in TypeScript and SQLite. Provider execution has direct CLI adapters and an optional ACP v1 adapter using the pinned `@agentclientprotocol/sdk` 1.9.0 (Apache-2.0). ACP is a connection layer, not a replacement for orchestration. XState/LangGraph evaluation for durable workflows is planned; neither is installed yet.
+
+Settings → Agent connections selects Direct CLI or ACP for each provider. ACP requires an installed adapter executable (or Node plus an adapter script argument). It negotiates capabilities, streams output, handles permission requests, and reloads sessions where supported. Existing conversations are bound to their adapter identity: create a new agent when changing transports or adapter commands. ACP fixture tests pass; live Codex/Claude account compatibility is not yet verified. Internal Wolfram ACP support is deferred.
+
+ACP client filesystem/terminal capabilities are currently disabled. The adapter's native tools still use its own local permissions; this is not an OS sandbox or enforcement of native-subagent limits. AgentTeam shows pending permissions and maintains its own scheduling/resource gates. Provider-native background jobs and crash recovery need further work.
+
 ## Provider setup
 
-Execution starts **off**. Configure your agents and folders, authenticate your provider tools outside AgentTeam, then enable Provider execution in Settings. Enabling it starts eligible queued workflow tasks. Chat requests start when explicitly sent or queued with Run queued.
+Execution is available by default outside test mode, with Pause/Resume controls in Settings. Existing provider installations are discovered automatically; manual executable overrides remain available. Authenticate the chosen provider separately. Eligible queued tasks run when execution is active; chat requests are scheduled when sent or explicitly run.
 
 - **Codex:** install/authenticate the Codex CLI and make `codex` available on PATH. The initial adapter uses read-only execution. Model and effort values pass through to the installed CLI.
 - **Claude:** install/authenticate Claude Code and expose `claude` on PATH. The initial adapter is tool-free chat; assigned skills must use Always load. Its CLI flags require a sufficiently recent installation.
@@ -57,7 +69,7 @@ On Windows and Linux, Sublime's `subl` or VS Code's `code` command must be on PA
 
 AgentTeam's file browser and Git operations enforce the attached folder boundaries and read/write setting, block path traversal and symlink escapes, and exclude direct `.git` access. Folder permissions include descendants. External editor opening is a user action.
 
-The scheduler locks each agent's attached folders for the duration of a run. Overlapping paths conflict by default. A named resource can override an agent's scheduling priority (0–100). Waiting adds one effective priority point per five seconds; running work is never preempted. This provides eventual priority over newer work, not a fixed wall-clock start guarantee.
+The scheduler locks each agent's attached folders for the duration of a run. Overlapping paths conflict by default. A named resource can override an agent's scheduling priority: Low, Medium, High, Max, or Preempt. Normal priorities gain one effective point per five seconds waiting; Preempt gets the next available turn ahead of normal work. Running work is never interrupted. Existing numeric priorities retain their values; old 100 remains Max, while Preempt uses 101. Continuous Preempt traffic can delay normal work. This provides eventual priority over newer work, not a fixed wall-clock start guarantee.
 
 In Resources, configure a workflow for parallel access by naming a coordinator, shared resources and a cap. Its coordination task runs first and passes a work-allocation plan to the workers. Parallel access does not merge files or prevent two workers from editing the same file; separate worktrees remain a useful way to isolate changes.
 

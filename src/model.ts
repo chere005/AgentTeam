@@ -15,7 +15,7 @@ export const agentSchema = z
     environment,
     model: z.string().min(1).default("default"),
     effort: z.string().min(1).nullable().default(null),
-    schedulingPriority: z.number().int().min(0).max(100).default(50),
+    schedulingPriority: z.number().int().min(0).max(101).default(50),
     maxConcurrentInvocations: z
       .number()
       .int()

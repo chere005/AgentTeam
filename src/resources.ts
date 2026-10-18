@@ -1,3 +1,4 @@
+import { comparePriority } from "./priorities.ts";
 import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { relative, isAbsolute, resolve } from "node:path";
@@ -64,7 +65,12 @@ export class ResourceCoordinator {
   }
   ordered(tasks: Task[]) {
     const now = Date.now();
-    return [...tasks].sort((a, b) => this.score(b, now) - this.score(a, now));
+    return [...tasks].sort((a, b) =>
+      comparePriority(
+        { priority: this.priority(a.agentId), score: this.score(a, now) },
+        { priority: this.priority(b.agentId), score: this.score(b, now) },
+      ),
+    );
   }
   conflicts(agentId: string, workflowId: string | null, id: string) {
     const agent = this.store.get<Agent>("agent", agentId),
@@ -143,7 +149,7 @@ export class ResourceCoordinator {
             z
               .object({
                 agentId: z.string(),
-                priority: z.number().int().min(0).max(100),
+                priority: z.number().int().min(0).max(101),
               })
               .strict(),
           )
@@ -263,16 +269,14 @@ export class ResourceCoordinator {
         a.workspaces.map((w) => ({ ...w, agentId: a.id, agentName: a.name })),
       ),
       leases,
-      chatQueue: this.store
-        .list<any>("run-request")
-        .map((r) => ({
-          ...r,
-          priority: this.priority(r.agentId),
-          effectivePriority: Math.floor(
-            this.priority(r.agentId) +
-              Math.max(0, Date.now() - Date.parse(r.queuedAt)) / 5000,
-          ),
-        })),
+      chatQueue: this.store.list<any>("run-request").map((r) => ({
+        ...r,
+        priority: this.priority(r.agentId),
+        effectivePriority: Math.floor(
+          this.priority(r.agentId) +
+            Math.max(0, Date.now() - Date.parse(r.queuedAt)) / 5000,
+        ),
+      })),
       queue: tasks.map((t) => ({
         id: t.id,
         agentId: t.agentId,
@@ -286,7 +290,7 @@ export class ResourceCoordinator {
         ),
       })),
       fairness:
-        "Effective priority increases by one every five seconds waiting. Existing work is never interrupted. Priorities range from 0 to 100.",
+        "Preempt takes the next available turn before normal priorities. Normal priorities age every five seconds to prevent starvation. Running work is never interrupted; continuous Preempt traffic can delay normal work.",
     };
   }
 }

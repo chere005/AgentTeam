@@ -1,3 +1,4 @@
+import { PrioritySelect, priorityName } from "./PrioritySelect";
 import { useEffect, useState } from "react";
 import { LockKeyhole, Plus, Users, Clock, ShieldCheck } from "lucide-react";
 import { api, type Snapshot, type TeamEvent } from "../api";
@@ -122,19 +123,15 @@ export function Resources({
             <label className="priority-row" key={a.id}>
               <span>
                 {a.name}
-                <small>Default {a.schedulingPriority ?? 50}</small>
+                <small>
+                  Default {priorityName(a.schedulingPriority ?? 50)}
+                </small>
               </span>
-              <input
-                aria-label={"Priority for " + a.name}
-                type="number"
-                min="0"
-                max="100"
+              <PrioritySelect
+                label={"Priority for " + a.name}
                 value={priorities[a.id] ?? a.schedulingPriority ?? 50}
-                onChange={(e) =>
-                  setPriorities({
-                    ...priorities,
-                    [a.id]: Number(e.target.value),
-                  })
+                onChange={(value) =>
+                  setPriorities({ ...priorities, [a.id]: value })
                 }
               />
             </label>
@@ -142,7 +139,8 @@ export function Resources({
           <p className="hint">
             Higher starts first. Every five seconds waiting adds a priority
             point, so lower-priority work can move ahead. Running work is not
-            interrupted.
+            interrupted. Preempt always takes the next free turn ahead of normal
+            priorities; continuous Preempt work can delay them.
           </p>
           <button className="primary">Save resource</button>
         </form>
@@ -162,7 +160,7 @@ export function Resources({
               {r.priorities
                 .map(
                   (v: any) =>
-                    `${data.agents.find((a) => a.id === v.agentId)?.name}: ${v.priority}`,
+                    `${data.agents.find((a) => a.id === v.agentId)?.name}: ${priorityName(v.priority)}`,
                 )
                 .join(" · ") || "Uses each agent’s default priority"}
             </small>
@@ -249,6 +247,7 @@ export function Resources({
         <label>
           Workflow
           <select
+            aria-label="Workflow"
             value={wf}
             onChange={(e) => {
               setWf(e.target.value);

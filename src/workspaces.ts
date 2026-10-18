@@ -12,6 +12,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { openCommand } from "./native.ts";
+import { randomUUID } from "node:crypto";
 import { ResourceCoordinator } from "./resources.ts";
 import { Store } from "./store.ts";
 import { AppError, assert, type Agent } from "./model.ts";
@@ -196,6 +197,71 @@ export class WorkspaceService {
     ]);
     return { diff: text, staged: data.staged, path: loc.relative };
   }
+  async review(agentId: string, input: unknown) {
+    const data = z
+      .object({
+        workspace: z.string(),
+        path: z.string().optional(),
+        staged: z.boolean().default(false),
+      })
+      .strict()
+      .parse(input);
+    const loc = await this.location(agentId, { workspace: data.workspace });
+    const info = await this.gitInfo(agentId, { workspace: data.workspace });
+    const files = info.status.filter((f) =>
+      data.staged
+        ? f.status[0] !== " " && f.status[0] !== "?"
+        : f.status[1] !== " ",
+    );
+    if (data.path === undefined) return { ...info, files, diff: "" };
+    const file = files.find((f) => f.path === data.path);
+    assert(
+      file,
+      "change_missing",
+      "This change is no longer in this view; refresh the review",
+      409,
+    );
+    const target = resolve(info.repository, file.path);
+    const rel = relative(loc.root, target);
+    assert(
+      rel !== ".." && !/^\.\.[\\/]/.test(rel) && !isAbsolute(rel),
+      "path_escape",
+      "Change is outside the attached workspace",
+      403,
+    );
+    if (file.status === "??") {
+      const preview = await this.preview(agentId, {
+        workspace: loc.root,
+        path: rel,
+      });
+      const content = preview.content ?? "";
+      const lines = content ? content.replace(/\n$/, "").split("\n") : [];
+      return {
+        ...info,
+        files,
+        binary: preview.binary,
+        truncated: preview.truncated,
+        diff: preview.binary
+          ? "Binary file (untracked)"
+          : lines.length
+            ? `@@ -0,0 +1,${lines.length} @@\n` +
+              lines.map((line) => "+" + line).join("\n")
+            : "Empty untracked file",
+      };
+    }
+    // Use a validated status entry as a literal pathspec: deleted paths need not exist.
+    const diff = await this.git(loc.root, [
+      "diff",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--no-color",
+      "--unified=3",
+      ...(data.staged ? ["--cached"] : []),
+      "--",
+      target,
+    ]);
+    return { ...info, files, diff };
+  }
   async mutateGit(agentId: string, input: unknown) {
     const data = z
       .object({
@@ -220,69 +286,75 @@ export class WorkspaceService {
       "Attach the repository root with write access for Git mutations",
       403,
     );
-    assert(
-      !new ResourceCoordinator(this.store).conflicts(agentId, null, "user-git")
-        .length,
-      "resource_busy",
-      "Finish active work on this folder before changing Git state",
-    );
-    if (data.action === "commit") {
-      assert(data.message, "message_required", "Commit message required", 400);
-      await this.git(repo, [
-        "-c",
-        "core.hooksPath=/dev/null",
-        "-c",
-        "commit.gpgsign=false",
-        "commit",
-        "-m",
-        data.message,
-      ]);
-    } else {
-      assert(
-        data.paths.length > 0,
-        "paths_required",
-        "Choose paths to stage or unstage",
-        400,
-      );
-      const paths = [];
-      for (const p of data.paths) {
-        try {
-          const entry = await this.location(
-            agentId,
-            { workspace: loc.root, path: p },
-            true,
-          );
-          paths.push(entry.relative);
-        } catch (e) {
-          if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; // Deleted files can still be staged, after checking their real parent.
-          const parent = await this.location(
-            agentId,
-            { workspace: loc.root, path: dirname(p) },
-            true,
-          );
-          const leaf = basename(p);
-          assert(
-            leaf !== ".git" && leaf !== "." && leaf !== "..",
-            "invalid_path",
-            "Invalid Git path",
-            400,
-          );
-          paths.push(join(parent.relative, leaf));
+    const coordinator = new ResourceCoordinator(this.store),
+      leaseId = "git:" + randomUUID();
+    coordinator.acquire(leaseId, agentId, null);
+    try {
+      if (data.action === "commit") {
+        assert(
+          data.message,
+          "message_required",
+          "Commit message required",
+          400,
+        );
+        await this.git(repo, [
+          "-c",
+          "core.hooksPath=/dev/null",
+          "-c",
+          "commit.gpgsign=false",
+          "commit",
+          "-m",
+          data.message,
+        ]);
+      } else {
+        assert(
+          data.paths.length > 0,
+          "paths_required",
+          "Choose paths to stage or unstage",
+          400,
+        );
+        const paths = [];
+        for (const p of data.paths) {
+          try {
+            const entry = await this.location(
+              agentId,
+              { workspace: loc.root, path: p },
+              true,
+            );
+            paths.push(entry.relative);
+          } catch (e) {
+            if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; // Deleted files can still be staged, after checking their real parent.
+            const parent = await this.location(
+              agentId,
+              { workspace: loc.root, path: dirname(p) },
+              true,
+            );
+            const leaf = basename(p);
+            assert(
+              leaf !== ".git" && leaf !== "." && leaf !== "..",
+              "invalid_path",
+              "Invalid Git path",
+              400,
+            );
+            paths.push(join(parent.relative, leaf));
+          }
         }
+        await this.git(
+          repo,
+          data.action === "stage"
+            ? ["add", "--", ...paths]
+            : ["restore", "--staged", "--", ...paths],
+        );
       }
-      await this.git(
-        repo,
-        data.action === "stage"
-          ? ["add", "--", ...paths]
-          : ["restore", "--staged", "--", ...paths],
-      );
+      this.store.emit("workspace.git", agentId, {
+        action: data.action,
+        workspace: loc.root,
+        paths: data.paths,
+      });
+      return { status: "ok", action: data.action };
+    } finally {
+      coordinator.release(leaseId);
     }
-    this.store.emit("workspace.git", agentId, {
-      action: data.action,
-      workspace: loc.root,
-      paths: data.paths,
-    });
-    return { status: "ok", action: data.action };
   }
   settings() {
     try {

@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { mkdir, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
+import { RuntimeDiscovery } from "../src/discovery.ts";
 import { Store } from "../src/store.ts";
 import { SkillCatalog } from "../src/skills.ts";
 import { TeamService } from "../src/service.ts";
@@ -13,6 +14,8 @@ import { createApi } from "../src/http.ts";
 import { roots, setProjectRoot } from "../src/config.ts";
 import type { Agent, Session } from "../src/model.ts";
 app.setName("AgentTeam");
+if (process.env.AGENTTEAM_DATA_DIR)
+  app.setPath("userData", process.env.AGENTTEAM_DATA_DIR);
 const here = dirname(fileURLToPath(import.meta.url));
 if (!app.requestSingleInstanceLock()) app.quit();
 async function start() {
@@ -33,7 +36,7 @@ async function start() {
       instructions:
         "Help the user construct agents and workflows. Clearly distinguish proposed changes from changes already applied.",
     });
-  let enabled = false;
+  let enabled = process.env.AGENTTEAM_TEST !== "1";
   try {
     enabled = store.get<any>("settings", "execution").enabled === true;
   } catch {}
@@ -41,8 +44,13 @@ async function start() {
   runs.recover();
   const scheduler = new Scheduler(service, runs);
   scheduler.start();
+  const discovery = new RuntimeDiscovery(store);
+  if (process.env.AGENTTEAM_TEST !== "1")
+    void discovery
+      .refresh()
+      .then(() => store.emit("runtimes.discovered", "runtimes"));
   const token = randomBytes(32).toString("hex"),
-    server = createApi(service, token, runs);
+    server = createApi(service, token, runs, discovery);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (!address || typeof address === "string")
@@ -80,6 +88,14 @@ async function start() {
           result.error,
       );
     return result;
+  });
+  ipcMain.handle("choose-executable", async (event) => {
+    trusted(event);
+    const result = await dialog.showOpenDialog(win, {
+      title: "Choose harness executable",
+      properties: ["openFile"],
+    });
+    return result.canceled ? null : result.filePaths[0];
   });
   ipcMain.handle("choose-folder", async (event) => {
     trusted(event);

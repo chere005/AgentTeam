@@ -1,3 +1,4 @@
+import { Approvals } from "./approvals.ts";
 import { randomUUID } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
@@ -25,8 +26,10 @@ export class TeamService {
   store: Store;
   skills: SkillCatalog;
   resources: ResourceCoordinator;
+  approvals: Approvals;
   constructor(store: Store, skills: SkillCatalog) {
     this.store = store;
+    this.approvals = new Approvals(store);
     this.skills = skills;
     this.resources = new ResourceCoordinator(store);
   }
@@ -115,7 +118,8 @@ export class TeamService {
       return agent;
     });
   }
-  saveEdge(input: unknown) {
+  saveEdge(input: unknown, id?: string) {
+    if (id) this.store.get<Edge>("edge", id);
     const data = edgeSchema.parse(input);
     this.store.get<Agent>("agent", data.from);
     this.store.get<Agent>("agent", data.to);
@@ -126,9 +130,9 @@ export class TeamService {
       400,
     );
     return this.store.transaction(() => {
-      const edge = { ...data, id: randomUUID() };
+      const edge = { ...data, id: id ?? randomUUID() };
       this.store.put("edge", edge);
-      this.store.emit("edge.created", edge.id);
+      this.store.emit(id ? "edge.updated" : "edge.created", edge.id);
       return edge;
     });
   }
@@ -574,6 +578,21 @@ export class TeamService {
       return message;
     });
   }
+  connection(environment: string): {
+    transport: "direct" | "acp";
+    executable: string;
+    args: string[];
+  } {
+    try {
+      return (
+        this.store.get<any>("settings", "connections").providers[
+          environment
+        ] ?? { transport: "direct", executable: "", args: [] }
+      );
+    } catch {
+      return { transport: "direct", executable: "", args: [] };
+    }
+  }
   async launchPlan(agentId: string) {
     const agent = this.store.get<Agent>("agent", agentId);
     await this.skills.scan();
@@ -616,6 +635,7 @@ export class TeamService {
     }
     return {
       agentId,
+      connection: this.connection(agent.environment),
       environment: agent.environment,
       model: agent.model,
       effort: agent.effort,

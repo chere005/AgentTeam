@@ -1,3 +1,6 @@
+import { WorktreeSetup, DevelopmentPreview } from "./Development";
+import { ChangesReview } from "./ChangesReview";
+import { HarnessSettings } from "./HarnessSettings";
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowUp,
@@ -82,7 +85,7 @@ export function Chat(p: PaneProps) {
     end.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
   async function send() {
-    if (!agent || !draft.trim()) return;
+    if (!agent || !draft.trim() || sending) return;
     setSending(true);
     await p.act(async () => {
       const s = await api("/agents/" + agent.id + "/session", "POST");
@@ -272,8 +275,8 @@ export function Chat(p: PaneProps) {
           <div className="composer-wrap">
             {!p.data.liveExecution && (
               <div className="notice">
-                Execution is paused. Messages stay queued until you enable
-                providers in Settings.
+                Execution is paused. Messages stay queued until you resume in
+                Settings.
               </div>
             )}
             <div className="composer">
@@ -286,7 +289,12 @@ export function Chat(p: PaneProps) {
                   persist("draft." + agent.id, e.target.value);
                 }}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  if (
+                    e.key === "Enter" &&
+                    !e.shiftKey &&
+                    !e.nativeEvent.isComposing &&
+                    e.keyCode !== 229
+                  ) {
                     e.preventDefault();
                     void send();
                   }
@@ -295,7 +303,7 @@ export function Chat(p: PaneProps) {
               <div className="row between">
                 <span className="hint">
                   {agent.workspaces.length} folders · {agent.skills.length}{" "}
-                  skills · ⌘ / Ctrl + Enter
+                  skills · Enter to send · Shift+Enter for newline
                 </span>
                 {session?.state === "running" ? (
                   <button
@@ -1024,6 +1032,20 @@ export function Workspace(p: PaneProps) {
           >
             Git
           </button>
+          <button
+            className={tab === "review" ? "active" : ""}
+            disabled={!root}
+            onClick={() => setTab("review")}
+          >
+            Review
+          </button>
+          <button
+            className={tab === "preview" ? "active" : ""}
+            disabled={!root}
+            onClick={() => setTab("preview")}
+          >
+            Preview
+          </button>
         </div>
       </div>
       {tab === "access" ? (
@@ -1037,7 +1059,20 @@ export function Workspace(p: PaneProps) {
         </div>
       ) : (
         <div className="scroll section workspace-body">
-          {tab === "files" ? (
+          {tab === "preview" ? (
+            <DevelopmentPreview
+              key={agent.id + root}
+              agentId={agent.id}
+              workspace={root}
+            />
+          ) : tab === "review" ? (
+            <ChangesReview
+              key={agent.id + root}
+              agentId={agent.id}
+              workspace={root}
+              agents={p.data.agents}
+            />
+          ) : tab === "files" ? (
             <>
               <div className="row between">
                 <div className="row">
@@ -1279,6 +1314,11 @@ export function Workspace(p: PaneProps) {
                   <pre>{preview.content}</pre>
                 </div>
               )}
+              <WorktreeSetup
+                key={agent.id + root}
+                agentId={agent.id}
+                workspace={root}
+              />
               <h3>Worktrees</h3>
               {git?.worktrees.map((w: any) => (
                 <div className="worktree" key={w.worktree}>
@@ -1342,35 +1382,25 @@ export function Preferences(p: PaneProps) {
       <span className="eyebrow">PREFERENCES</span>
       <h2>Make this workspace yours</h2>
       <section className="settings-card">
-        <h3>Provider execution</h3>
+        <h3>Execution</h3>
         <p>
-          Use your installed, authenticated provider tools. Enabling execution
-          allows queued workflow tasks to start automatically. Direct chat runs
-          when you send or choose Run queued.
+          Installed harnesses and their existing logins are used automatically.
+          Pause execution when you want to hold new work.
         </p>
-        <label className="inline">
-          <input
-            type="checkbox"
-            checked={p.data.liveExecution}
-            onChange={(e) =>
-              void p.act(() =>
-                api("/execution", "PUT", { enabled: e.target.checked }),
-              )
-            }
-          />
-          Enable provider execution
-        </label>
+        <button
+          onClick={() =>
+            void p.act(() =>
+              api("/execution", "PUT", { enabled: !p.data.liveExecution }),
+            )
+          }
+        >
+          {p.data.liveExecution ? "Pause execution" : "Resume execution"}
+        </button>
         <p className="hint">
-          Disabling prevents new runs. Active requests continue until stopped.
+          Pausing holds new runs; active requests continue until stopped.
         </p>
-        {runtime?.runtimes.map((r: any) => (
-          <div className="runtime-row" key={r.id}>
-            <b>{r.id}</b>
-            <span>{r.execution}</span>
-            <span className="badge">{r.adapter ?? "Not connected"}</span>
-          </div>
-        ))}
       </section>
+      <HarnessSettings act={p.act} />
       <section className="settings-card">
         <h3>Default text editor</h3>
         <p>Applies to files and project directories opened from Workspace.</p>

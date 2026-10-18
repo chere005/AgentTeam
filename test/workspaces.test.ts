@@ -153,3 +153,118 @@ test("Git porcelain parser preserves spaces, newlines and rename origins", () =>
     { status: "??", path: "new\nfile" },
   ]);
 });
+
+test("review separates staged changes, includes untracked previews and deleted directories", async (t) => {
+  const { root, agent, ws } = await fixture(t);
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-C", root, ...args], { encoding: "utf8" });
+  git("init", "-q");
+  git("config", "user.name", "Test");
+  git("config", "user.email", "test@example.invalid");
+  await mkdir(join(root, "old"));
+  await writeFile(join(root, "old", "gone.txt"), "original\n");
+  await writeFile(join(root, "both.txt"), "before\n");
+  git("add", ".");
+  git("commit", "-qm", "Initial");
+  await rm(join(root, "old"), { recursive: true });
+  await writeFile(join(root, "both.txt"), "staged\n");
+  git("add", "both.txt");
+  await writeFile(join(root, "both.txt"), "unstaged\n");
+  await writeFile(join(root, "new.txt"), "new content\n");
+  assert.match(
+    (await ws.review(agent.id, { workspace: root, path: "old/gone.txt" })).diff,
+    /-original/,
+  );
+  assert.match(
+    (
+      await ws.review(agent.id, {
+        workspace: root,
+        path: "both.txt",
+        staged: true,
+      })
+    ).diff,
+    /\+staged/,
+  );
+  assert.match(
+    (await ws.review(agent.id, { workspace: root, path: "both.txt" })).diff,
+    /\+unstaged/,
+  );
+  assert.match(
+    (await ws.review(agent.id, { workspace: root, path: "new.txt" })).diff,
+    /\+new content/,
+  );
+  await assert.rejects(
+    ws.review(agent.id, { workspace: root, path: "../outside" }),
+    /no longer/,
+  );
+});
+
+test("development worktrees attach a fresh branch without copying dirty files", async (t) => {
+  const { root, agent, team } = await fixture(t);
+  const { DevelopmentService } = await import("../src/development.ts");
+  const development = new DevelopmentService(team);
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-C", root, ...args], { encoding: "utf8" });
+  git("init", "-q");
+  git("config", "user.name", "Test");
+  git("config", "user.email", "test@example.invalid");
+  await writeFile(join(root, "file.txt"), "committed\n");
+  git("add", ".");
+  git("commit", "-qm", "Initial");
+  await writeFile(join(root, "file.txt"), "dirty\n");
+  const result = await development.worktree(agent.id, {
+    workspace: root,
+    branch: "agentteam/test",
+  });
+  assert.equal(result.agent.workspaces.length, 1);
+  assert.equal(result.agent.workspaces[0].path, result.path);
+  assert.equal(result.agent.workspaces[0].active, true);
+  assert.equal(
+    execFileSync("git", ["-C", result.path, "branch", "--show-current"], {
+      encoding: "utf8",
+    }).trim(),
+    "agentteam/test",
+  );
+  assert.equal(
+    (
+      await new WorkspaceService(team.store).preview(agent.id, {
+        workspace: result.path,
+        path: "file.txt",
+      })
+    ).content,
+    "committed\n",
+  );
+});
+
+test("inline feedback rejects stale snapshots and delivers only once", async (t) => {
+  const { root, agent, team, store, ws } = await fixture(t);
+  const { DevelopmentService } = await import("../src/development.ts");
+  const { createHash, randomUUID } = await import("node:crypto");
+  const development = new DevelopmentService(team);
+  execFileSync("git", ["-C", root, "init", "-q"]);
+  await writeFile(join(root, "new.txt"), "review this\n");
+  const review = await ws.review(agent.id, {
+    workspace: root,
+    path: "new.txt",
+  });
+  const request = {
+    workspace: root,
+    path: "new.txt",
+    staged: false,
+    targetId: agent.id,
+    text: "Improve this line",
+    row: 1,
+    diffHash: createHash("sha256").update(review.diff).digest("hex"),
+    requestId: randomUUID(),
+  };
+  await development.feedback(agent.id, request);
+  await development.feedback(agent.id, request);
+  assert.equal(store.list("review-feedback").length, 1);
+  assert.equal(store.list("message").length, 1);
+  assert.match(store.list<any>("message")[0].text, /new line 1/);
+  await writeFile(join(root, "new.txt"), "changed\n");
+  await assert.rejects(
+    development.feedback(agent.id, { ...request, requestId: randomUUID() }),
+    /diff changed/,
+  );
+});

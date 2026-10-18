@@ -1,3 +1,7 @@
+import { DevelopmentService } from "./development.ts";
+import { createHash } from "node:crypto";
+import { isAbsolute } from "node:path";
+import { RuntimeDiscovery } from "./discovery.ts";
 import {
   createServer,
   type IncomingMessage,
@@ -37,10 +41,12 @@ export function createApi(
   service: TeamService,
   token: string,
   runs: RunManager,
+  discovery = new RuntimeDiscovery(),
 ) {
   const store = service.store;
   const workspaces = new WorkspaceService(store);
-  return createServer(async (req, res) => {
+  const development = new DevelopmentService(service);
+  const server = createServer(async (req, res) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Cache-Control", "no-store");
     const send = (data: unknown, status = 200) => {
@@ -69,6 +75,118 @@ export function createApi(
         path = url.pathname,
         method = req.method;
       let match: RegExpMatchArray | null;
+      if (
+        method === "POST" &&
+        (match = path.match(
+          /^\/agents\/([^/]+)\/development\/(worktree|feedback|start|list|stop)$/,
+        ))
+      ) {
+        const agentId = id(match[1]),
+          action = match[2],
+          data = await body(req);
+        store.get<Agent>("agent", agentId);
+        if (action === "worktree")
+          return send(await development.worktree(agentId, data));
+        if (action === "feedback") {
+          const feedback = await development.feedback(agentId, data);
+          let execution = "queued";
+          if (runs.enabled) {
+            try {
+              await runs.start(feedback.sessionId);
+              execution = "scheduled";
+            } catch {
+              execution = "queued — open the conversation to run it";
+            }
+          }
+          return send({ ...feedback, execution });
+        }
+        if (action === "start")
+          return send(await development.start(agentId, data));
+        if (action === "list") {
+          const { workspace } = z
+            .object({ workspace: z.string() })
+            .strict()
+            .parse(data);
+          await workspaces.location(agentId, { workspace });
+          return send(development.list(agentId, workspace));
+        }
+        const { processId } = z
+          .object({ processId: z.string() })
+          .strict()
+          .parse(data);
+        const processInfo = development.processes.get(processId);
+        if (!processInfo || processInfo.info.agentId !== agentId)
+          throw new AppError(404, "server_missing", "Server not found");
+        return send(await development.stop(processId));
+      }
+      if (method === "GET" && path === "/approvals")
+        return send(service.approvals.list());
+      if (method === "POST" && (match = path.match(/^\/approvals\/([^/]+)$/))) {
+        const data = z
+          .object({ optionId: z.string().nullable() })
+          .strict()
+          .parse(await body(req));
+        return send(service.approvals.respond(id(match[1]), data.optionId));
+      }
+      if (method === "GET" && path === "/connections")
+        return send(
+          Object.fromEntries(
+            ["codex", "claude", "wolfram"].map((p) => [
+              p,
+              service.connection(p),
+            ]),
+          ),
+        );
+      if (
+        method === "PUT" &&
+        (match = path.match(/^\/connections\/(codex|claude|wolfram)$/))
+      ) {
+        const data = z
+          .object({
+            transport: z.enum(["direct", "acp"]),
+            executable: z.string(),
+            args: z.array(z.string()).max(30),
+          })
+          .strict()
+          .parse(await body(req));
+        if (
+          data.transport === "acp" &&
+          (!isAbsolute(data.executable) || !data.executable.trim())
+        )
+          throw new AppError(
+            400,
+            "invalid_executable",
+            "Choose an absolute path to an installed ACP adapter executable",
+          );
+        if (
+          store
+            .list<Session>("session")
+            .some(
+              (s) =>
+                s.state === "running" &&
+                store.get<Agent>("agent", s.agentId).environment === match![1],
+            ) ||
+          store
+            .list<any>("task")
+            .some(
+              (t) =>
+                t.status === "running" &&
+                store.get<Agent>("agent", t.agentId).environment === match![1],
+            )
+        )
+          throw new AppError(
+            409,
+            "runtime_busy",
+            "Finish active work before changing the connection",
+          );
+        const providers = Object.fromEntries(
+          ["codex", "claude", "wolfram"].map((p) => [p, service.connection(p)]),
+        );
+        providers[match[1]] = data;
+        store.put("settings", { id: "connections", providers });
+        store.emit("connections.updated", match[1]);
+        return send(data);
+      }
       if (method === "GET" && path === "/resources")
         return send(service.resources.snapshot());
       if (method === "POST" && path === "/resources")
@@ -145,32 +263,43 @@ export function createApi(
           version: "0.1.0",
           liveExecution: runs.enabled,
         });
+      if (
+        method === "PUT" &&
+        (match = path.match(/^\/runtimes\/(codex|claude|wolfram)$/))
+      ) {
+        const data = z
+          .object({ path: z.string().trim().min(1).nullable() })
+          .strict()
+          .parse(await body(req));
+        if (data.path && !isAbsolute(data.path))
+          throw new AppError(
+            400,
+            "invalid_path",
+            "Harness overrides must be absolute executable paths",
+          );
+        if (data.path) discovery.overrides[match[1]] = data.path;
+        else delete discovery.overrides[match[1]];
+        store.put("settings", { id: "harnesses", paths: discovery.overrides });
+        await discovery.refresh();
+        store.emit("runtimes.discovered", "runtimes");
+        return send({
+          runtimes: discovery.runtimes,
+          overrides: discovery.overrides,
+        });
+      }
       if (method === "GET" && path === "/runtimes")
         return send({
-          runtimes: [
-            {
-              id: "codex",
-              adapter: "cli",
-              execution: "read-only",
-              liveEnabled: runs.enabled,
-            },
-            {
-              id: "claude",
-              adapter: "cli",
-              execution: "chat-only",
-              liveEnabled: runs.enabled,
-            },
-            {
-              id: "wolfram",
-              adapter: "wolframscript",
-              execution:
-                "LLMSynthesize · requires configured Wolfram LLM access",
-              liveEnabled: runs.enabled,
-            },
-          ],
-          modelCatalog:
-            "Provider model discovery pending; configured model and effort pass through without substituting another model",
+          runtimes: discovery.runtimes.map((r) => ({
+            ...r,
+            liveEnabled: runs.enabled,
+          })),
+          scanning: discovery.scanning,
+          overrides: discovery.overrides,
         });
+      if (method === "POST" && path === "/runtimes/refresh") {
+        await discovery.refresh();
+        return send({ runtimes: discovery.runtimes });
+      }
       if (method === "GET" && path === "/skills")
         return send({
           recommended: await recommendations(),
@@ -202,7 +331,9 @@ export function createApi(
       }
       if (
         method === "POST" &&
-        (match = path.match(/^\/agents\/([^/]+)\/git\/(status|diff|mutate)$/))
+        (match = path.match(
+          /^\/agents\/([^/]+)\/git\/(status|diff|review|mutate)$/,
+        ))
       ) {
         const agentId = id(match[1]),
           action = match[2],
@@ -210,9 +341,14 @@ export function createApi(
         return send(
           action === "status"
             ? await workspaces.gitInfo(agentId, data)
-            : action === "diff"
-              ? await workspaces.diff(agentId, data)
-              : await workspaces.mutateGit(agentId, data),
+            : action === "review"
+              ? await workspaces.review(agentId, data).then((r) => ({
+                  ...r,
+                  diffHash: createHash("sha256").update(r.diff).digest("hex"),
+                }))
+              : action === "diff"
+                ? await workspaces.diff(agentId, data)
+                : await workspaces.mutateGit(agentId, data),
         );
       }
       if (method === "GET" && path === "/agents")
@@ -266,6 +402,8 @@ export function createApi(
         (match = path.match(/^\/agents\/([^/]+)\/activity$/))
       )
         return send(service.activity(id(match[1])));
+      if (method === "PUT" && (match = path.match(/^\/edges\/([^/]+)$/)))
+        return send(service.saveEdge(await body(req), id(match[1])));
       if (method === "GET" && path === "/edges")
         return send(store.list("edge"));
       if (method === "POST" && path === "/edges")
@@ -308,8 +446,15 @@ export function createApi(
       if (
         method === "POST" &&
         (match = path.match(/^\/tasks\/([^/]+)\/status$/))
-      )
+      ) {
+        if (runs.active.has("task:" + id(match[1])))
+          throw new AppError(
+            409,
+            "task_running",
+            "Stop the running task before manually changing its status",
+          );
         return send(service.transitionTask(id(match[1]), await body(req)));
+      }
       if (method === "GET" && path === "/sessions")
         return send(store.list("session"));
       if ((match = path.match(/^\/sessions\/([^/]+)\/messages$/))) {
@@ -405,4 +550,8 @@ export function createApi(
       );
     }
   });
+  server.on("close", () => {
+    void development.close();
+  });
+  return server;
 }

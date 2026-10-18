@@ -29,6 +29,7 @@ declare global {
     agentteam: {
       request: (method: string, path: string, body?: unknown) => Promise<any>;
       chooseFolder: () => Promise<string | null>;
+      chooseExecutable: () => Promise<string | null>;
       openAgent: (id: string, mode: string) => Promise<any>;
       onEvent: (callback: (event: TeamEvent) => void) => () => void;
       platform: string;

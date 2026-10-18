@@ -1,3 +1,4 @@
+import { PrioritySelect } from "./PrioritySelect";
 import { useEffect, useState } from "react";
 import { X, Plus, FolderOpen } from "lucide-react";
 import { api, agentInput, type Agent, type Snapshot } from "../api";
@@ -32,6 +33,8 @@ export function AgentEditor({
     ),
     [tab, setTab] = useState("profile"),
     [catalog, setCatalog] = useState<any>(null),
+    [runtimes, setRuntimes] = useState<any[]>([]),
+    [customModel, setCustomModel] = useState(false),
     [search, setSearch] = useState(""),
     [source, setSource] = useState("bundled"),
     [error, setError] = useState(""),
@@ -43,6 +46,27 @@ export function AgentEditor({
       .then(setCatalog)
       .catch((e) => setError(String(e)));
   }, []);
+  useEffect(() => {
+    let alive = true;
+    const refresh = async () => {
+      try {
+        const result = await api("/runtimes");
+        if (alive) setRuntimes(result.runtimes);
+      } catch {}
+    };
+    void refresh();
+    const timer = setInterval(() => void refresh(), 2000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, []);
+  const runtime = runtimes.find((r) => r.id === form.environment);
+  const modelOptions = runtime?.models ?? [
+    { id: "default", name: "Provider default", efforts: [] },
+  ];
+  const effortOptions =
+    modelOptions.find((m: any) => m.id === form.model)?.efforts ?? [];
   const skills = (catalog?.[source]?.groups?.[form.environment] ?? []) as any[];
   async function addFolder() {
     try {
@@ -98,6 +122,16 @@ export function AgentEditor({
             <>
               <div className="form-grid">
                 <label>
+                  Role type
+                  <select
+                    value={form.kind}
+                    onChange={(e) => update("kind", e.target.value)}
+                  >
+                    <option value="agent">Specialist agent</option>
+                    <option value="team-assistant">Team Assistant</option>
+                  </select>
+                </label>
+                <label>
                   Name
                   <input
                     autoFocus
@@ -112,6 +146,8 @@ export function AgentEditor({
                     value={form.environment}
                     onChange={(e) => {
                       update("environment", e.target.value);
+                      update("model", "default");
+                      setCustomModel(false);
                       update("effort", null);
                     }}
                   >
@@ -122,25 +158,53 @@ export function AgentEditor({
                 </label>
                 <label>
                   Model
-                  <input
-                    value={form.model}
-                    onChange={(e) => update("model", e.target.value)}
-                    placeholder="default or provider model ID"
-                  />
+                  <select
+                    aria-label="Model"
+                    value={customModel ? "custom" : form.model}
+                    onChange={(e) => {
+                      if (e.target.value === "custom") setCustomModel(true);
+                      else {
+                        setCustomModel(false);
+                        update("model", e.target.value);
+                        update("effort", null);
+                      }
+                    }}
+                  >
+                    {modelOptions.map((m: any) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                    {!modelOptions.some((m: any) => m.id === form.model) && (
+                      <option value={form.model}>{form.model}</option>
+                    )}
+                    <option value="custom">Custom model ID…</option>
+                  </select>
+                  {customModel && (
+                    <input
+                      aria-label="Custom model ID"
+                      value={form.model}
+                      onChange={(e) => update("model", e.target.value)}
+                    />
+                  )}
+                  <small>
+                    {runtime?.installed
+                      ? "Detected " + form.environment
+                      : runtime
+                        ? "Not installed · choose a path in Settings"
+                        : "Detecting installation…"}
+                  </small>
                 </label>
                 <label>
                   Effort
                   <select
-                    disabled={form.environment === "wolfram"}
+                    disabled={!effortOptions.length}
                     value={form.effort ?? ""}
                     onChange={(e) => update("effort", e.target.value || null)}
                   >
                     <option value="">Provider default</option>
-                    {(form.environment === "claude"
-                      ? ["low", "medium", "high", "max"]
-                      : ["minimal", "low", "medium", "high", "xhigh"]
-                    ).map((v) => (
-                      <option key={v}>{v}</option>
+                    {effortOptions.map((effort: string) => (
+                      <option key={effort}>{effort}</option>
                     ))}
                   </select>
                 </label>
@@ -151,60 +215,43 @@ export function AgentEditor({
                     onChange={(e) =>
                       update(
                         "maxConcurrentInvocations",
-                        e.target.value === ""
-                          ? null
-                          : e.target.value === "custom"
-                            ? 4
-                            : Number(e.target.value),
+                        e.target.value === "" ? null : Number(e.target.value),
                       )
                     }
                   >
                     <option value="">Unlimited</option>
                     {[
-                      1,
-                      2,
-                      3,
-                      5,
-                      10,
-                      ...(form.maxConcurrentInvocations &&
-                      ![1, 2, 3, 5, 10].includes(form.maxConcurrentInvocations)
-                        ? [form.maxConcurrentInvocations]
-                        : []),
-                    ].map((v) => (
-                      <option key={v} value={v}>
-                        {v}
-                      </option>
-                    ))}
-                    <option value="custom">Custom…</option>
+                      ...new Set([
+                        ...Array.from({ length: 20 }, (_, i) => i + 1),
+                        25,
+                        50,
+                        100,
+                        250,
+                        500,
+                        1000,
+                        ...(form.maxConcurrentInvocations
+                          ? [form.maxConcurrentInvocations]
+                          : []),
+                      ]),
+                    ]
+                      .sort((a, b) => a - b)
+                      .map((n) => (
+                        <option key={n} value={n}>
+                          {n}
+                        </option>
+                      ))}
                   </select>
                 </label>
                 <label>
-                  Custom limit
-                  <input
-                    type="number"
-                    min="1"
-                    max="1000"
-                    value={form.maxConcurrentInvocations ?? ""}
-                    placeholder="Unlimited"
-                    onChange={(e) =>
-                      update(
-                        "maxConcurrentInvocations",
-                        e.target.value ? Number(e.target.value) : null,
-                      )
-                    }
-                  />
-                </label>
-                <label>
-                  Scheduling priority (0–100)
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
+                  Scheduling priority
+                  <PrioritySelect
                     value={form.schedulingPriority ?? 50}
-                    onChange={(e) =>
-                      update("schedulingPriority", Number(e.target.value))
-                    }
+                    onChange={(value) => update("schedulingPriority", value)}
                   />
+                  <small>
+                    Preempt gets the next free turn. Running work finishes
+                    first.
+                  </small>
                 </label>
                 <label>
                   Reports to
@@ -220,16 +267,6 @@ export function AgentEditor({
                           {a.name}
                         </option>
                       ))}
-                  </select>
-                </label>
-                <label>
-                  Role type
-                  <select
-                    value={form.kind}
-                    onChange={(e) => update("kind", e.target.value)}
-                  >
-                    <option value="agent">Specialist agent</option>
-                    <option value="team-assistant">Team Assistant</option>
                   </select>
                 </label>
               </div>

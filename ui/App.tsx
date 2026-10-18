@@ -1,3 +1,4 @@
+import { PendingApprovals } from "./components/Connections";
 import { useEffect, useState, useCallback, useRef } from "react";
 import {
   Network,
@@ -60,12 +61,16 @@ export default function App() {
     [events, setEvents] = useState<TeamEvent[]>([]),
     [error, setError] = useState(""),
     [ready, setReady] = useState(false);
-  const [main, setMain] = useState<Panel>(() => saved("main", "chat")),
-    [right, setRight] = useState<Panel>(() => saved("right", "workflows")),
+  const [main, setMain] = useState<Panel>(() =>
+      saved<number>("layoutVersion", 0) === 2 ? saved("main", "team") : "team",
+    ),
+    [right, setRight] = useState<Panel>(() =>
+      saved<number>("layoutVersion", 0) === 2 ? saved("right", "chat") : "chat",
+    ),
     [showRight, setShowRight] = useState(() => saved("showRight", true)),
     [showLeft, setShowLeft] = useState(() => saved("showLeft", true)),
-    [width, setWidth] = useState(() => saved("rightWidth", 380));
-  const [selected, setSelected] = useState(""),
+    [width, setWidth] = useState(() => saved("rightWidth", 440));
+  const [selected, setSelected] = useState(() => saved("selected", "")),
     [editor, setEditor] = useState<Agent | "new" | null>(null),
     [search, setSearch] = useState("");
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
@@ -111,12 +116,14 @@ export default function App() {
     });
   }, [refresh]);
   useEffect(() => {
+    persist("layoutVersion", 2);
+    persist("selected", selected);
     persist("main", main);
     persist("right", right);
     persist("showRight", showRight);
     persist("showLeft", showLeft);
     persist("rightWidth", width);
-  }, [main, right, showRight, showLeft, width]);
+  }, [main, right, showRight, showLeft, width, selected]);
   const agent = data.agents.find((a) => a.id === selected);
   function pane(id: Panel, side: string) {
     const props = {
@@ -135,7 +142,8 @@ export default function App() {
             add={() => setEditor("new")}
             chat={(id) => {
               setSelected(id);
-              side === "main" ? setMain("chat") : setRight("chat");
+              setRight("chat");
+              setShowRight(true);
             }}
           />
         );
@@ -285,7 +293,10 @@ export default function App() {
                     key={a.id}
                     onClick={() => {
                       setSelected(a.id);
-                      setMain("chat");
+                      if (main !== "chat") {
+                        setRight("chat");
+                        setShowRight(true);
+                      }
                     }}
                     onContextMenu={(e) => {
                       e.preventDefault();
@@ -381,6 +392,7 @@ export default function App() {
           {agent ? " / " + agent.environment : ""}
         </span>
       </footer>
+      <PendingApprovals agents={data.agents} />
       {error && (
         <div className="toast" role="alert">
           <div>

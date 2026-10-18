@@ -4,7 +4,9 @@ First functional desktop release for macOS, Windows and Linux.
 
 ## Highlights
 
-- Flexible three-pane workspace with chat, team canvas, workflows, resources, skills and files.
+- Flexible three-pane workspace, opening with canvas in the center and conversation on the right.
+- Contextual connection editor: assign tasks, ask for advice, request reviews or send updates.
+- Enter sends chat; Shift+Enter adds a newline.
 - Agent profiles with model/effort, skills, persistent instructions and concurrent-invocation limits.
 - Directed communication graph, activity indicators and directional transfer animation.
 - Workflow scheduler with dependencies, pause, retry and cancellation.
@@ -15,7 +17,7 @@ First functional desktop release for macOS, Windows and Linux.
 
 ## Install and first run
 
-Choose the archive/installer for your OS and CPU architecture. Enable provider execution only after installing and authenticating your provider CLI. Execution is off by default.
+Choose the archive/installer for your OS and CPU architecture. Existing provider installations are detected automatically. Authenticate your provider tools separately; Settings provides Pause/Resume controls and manual executable overrides. ACP v1 connections are optional and currently validated with protocol fixtures.
 
 This initial release is unsigned and the macOS app is not notarized. Your OS may ask you to approve the application. See README for platform-specific installation and provider configuration.
 

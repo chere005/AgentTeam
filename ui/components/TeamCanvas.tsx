@@ -13,6 +13,7 @@ import {
   type NodeProps,
   type EdgeProps,
   type Node,
+  EdgeLabelRenderer,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
@@ -20,7 +21,14 @@ import {
   Settings2,
   MessageSquare,
   GitBranch,
-  Maximize2,
+  ArrowRight,
+  ArrowLeftRight,
+  Briefcase,
+  Lightbulb,
+  ShieldCheck,
+  Bell,
+  X,
+  Trash2,
 } from "lucide-react";
 import {
   api,
@@ -29,6 +37,7 @@ import {
   type Agent,
   type Snapshot,
   type TeamEvent,
+  type Edge,
 } from "../api";
 type Props = {
   data: Snapshot;
@@ -139,7 +148,7 @@ function Card({ data }: NodeProps) {
   );
 }
 function FlowEdge(props: EdgeProps) {
-  const [path] = getBezierPath(props);
+  const [path, labelX, labelY] = getBezierPath(props);
   const pulse = props.data?.pulse as any;
   return (
     <>
@@ -152,6 +161,16 @@ function FlowEdge(props: EdgeProps) {
           strokeWidth: pulse ? 2.5 : 1.5,
         }}
       />
+      <EdgeLabelRenderer>
+        <div
+          className="edge-caption nodrag nopan"
+          style={{
+            transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+          }}
+        >
+          {props.label}
+        </div>
+      </EdgeLabelRenderer>
       {pulse && (
         <circle
           className="flow-particle"
@@ -177,8 +196,14 @@ const nodeTypes = { agent: Card },
 export function TeamCanvas(p: Props) {
   const [simple, setSimple] = useState(() => saved("simpleCards", true)),
     [nodes, setNodes] = useState<Node[]>([]),
-    [bidirectional, setBidirectional] = useState(false),
-    [kind, setKind] = useState("delegate"),
+    [connection, setConnection] = useState<{
+      from: string;
+      to: string;
+      kind: Edge["kind"];
+      bidirectional: boolean;
+      enabled: boolean;
+      id?: string;
+    } | null>(null),
     [now, setNow] = useState(Date.now()),
     [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(
       null,
@@ -244,7 +269,12 @@ export function TeamCanvas(p: Props) {
           source: e.from,
           target: e.to,
           type: "flow",
-          label: e.kind,
+          label: {
+            delegate: "Tasks",
+            consult: "Advice",
+            review: "Review",
+            notify: "Updates",
+          }[e.kind],
           markerEnd: { type: MarkerType.ArrowClosed, color: "#6c829a" },
           markerStart: e.bidirectional
             ? { type: MarkerType.ArrowClosed, color: "#6c829a" }
@@ -283,23 +313,9 @@ export function TeamCanvas(p: Props) {
           Arrange
         </button>
         <div className="grow" />
-        <select
-          aria-label="Connection kind"
-          value={kind}
-          onChange={(e) => setKind(e.target.value)}
-        >
-          {["delegate", "consult", "review", "notify"].map((k) => (
-            <option key={k}>{k}</option>
-          ))}
-        </select>
-        <label className="inline">
-          <input
-            type="checkbox"
-            checked={bidirectional}
-            onChange={(e) => setBidirectional(e.target.checked)}
-          />
-          Two-way
-        </label>
+        <span className="connection-hint">
+          Connect two agents to choose how they work together
+        </span>
       </div>
       <div className="canvas">
         <ReactFlow
@@ -317,15 +333,18 @@ export function TeamCanvas(p: Props) {
             });
           }}
           onConnect={(c) =>
-            void p.act(() =>
-              api("/edges", "POST", {
-                from: c.source,
-                to: c.target,
-                kind,
-                bidirectional,
-              }),
-            )
+            setConnection({
+              from: c.source!,
+              to: c.target!,
+              kind: "delegate",
+              bidirectional: false,
+              enabled: true,
+            })
           }
+          onEdgeClick={(_, edge) => {
+            const existing = p.data.edges.find((e) => e.id === edge.id);
+            if (existing) setConnection({ ...existing });
+          }}
           onNodeClick={(_, n) => p.setSelected(n.id)}
           onNodeDoubleClick={(_, n) =>
             p.edit(p.data.agents.find((a) => a.id === n.id)!)
@@ -364,6 +383,186 @@ export function TeamCanvas(p: Props) {
         Drag handles to connect · Double-click to configure · Right-click to
         open · Select a connection and Delete to remove
       </div>
+      {connection && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setConnection(null);
+          }}
+        >
+          <section
+            className="modal connection-editor"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Connection settings"
+          >
+            <header>
+              <div>
+                <span className="eyebrow">WORKING TOGETHER</span>
+                <h2>
+                  {connection.id ? "Edit connection" : "Connect your agents"}
+                </h2>
+              </div>
+              <button
+                className="icon"
+                aria-label="Close connection settings"
+                onClick={() => setConnection(null)}
+              >
+                <X size={19} />
+              </button>
+            </header>
+            <div className="modal-content">
+              <div className="connection-pair">
+                <span>
+                  {p.data.agents.find((a) => a.id === connection.from)?.name}
+                </span>
+                {connection.bidirectional ? (
+                  <ArrowLeftRight size={20} />
+                ) : (
+                  <ArrowRight size={20} />
+                )}
+                <span>
+                  {p.data.agents.find((a) => a.id === connection.to)?.name}
+                </span>
+              </div>
+              <h3>What can they do together?</h3>
+              <div
+                className="connection-options"
+                role="radiogroup"
+                aria-label="Relationship"
+              >
+                {(
+                  [
+                    {
+                      id: "delegate",
+                      title: "Assign tasks",
+                      description:
+                        "Hand off work and receive the completed result.",
+                      icon: Briefcase,
+                    },
+                    {
+                      id: "consult",
+                      title: "Ask for advice",
+                      description:
+                        "Get an opinion while keeping ownership of the task.",
+                      icon: Lightbulb,
+                    },
+                    {
+                      id: "review",
+                      title: "Request a review",
+                      description:
+                        "Ask the other agent to check work and flag issues.",
+                      icon: ShieldCheck,
+                    },
+                    {
+                      id: "notify",
+                      title: "Send updates",
+                      description:
+                        "Share progress or information without assigning work.",
+                      icon: Bell,
+                    },
+                  ] as const
+                ).map((option) => (
+                  <button
+                    role="radio"
+                    aria-checked={connection.kind === option.id}
+                    className={connection.kind === option.id ? "selected" : ""}
+                    key={option.id}
+                    onClick={() =>
+                      setConnection({ ...connection, kind: option.id })
+                    }
+                  >
+                    <option.icon size={21} />
+                    <span>
+                      <b>{option.title}</b>
+                      <small>{option.description}</small>
+                    </span>
+                    <span className="choice-circle" />
+                  </button>
+                ))}
+              </div>
+              <h3>Who can start the conversation?</h3>
+              <div className="direction-options">
+                <button
+                  className={!connection.bidirectional ? "selected" : ""}
+                  onClick={() =>
+                    setConnection({ ...connection, bidirectional: false })
+                  }
+                >
+                  <ArrowRight size={17} />
+                  <span>
+                    Only{" "}
+                    {p.data.agents.find((a) => a.id === connection.from)?.name}
+                  </span>
+                </button>
+                <button
+                  className={connection.bidirectional ? "selected" : ""}
+                  onClick={() =>
+                    setConnection({ ...connection, bidirectional: true })
+                  }
+                >
+                  <ArrowLeftRight size={17} />
+                  <span>Either agent</span>
+                </button>
+              </div>
+              <p className="hint">
+                Replies can always return to the sender. This controls who can
+                initiate new work.
+              </p>
+              <button
+                className="text-button"
+                onClick={() =>
+                  setConnection({
+                    ...connection,
+                    from: connection.to,
+                    to: connection.from,
+                  })
+                }
+              >
+                <ArrowLeftRight size={14} />
+                Reverse direction
+              </button>
+            </div>
+            <footer>
+              {connection.id ? (
+                <button
+                  className="danger"
+                  onClick={() =>
+                    void p.act(async () => {
+                      await api("/edges/" + connection.id, "DELETE");
+                      setConnection(null);
+                    })
+                  }
+                >
+                  <Trash2 size={14} />
+                  Remove
+                </button>
+              ) : (
+                <span />
+              )}
+              <div className="row">
+                <button onClick={() => setConnection(null)}>Cancel</button>
+                <button
+                  className="primary"
+                  onClick={() =>
+                    void p.act(async () => {
+                      const { id, ...input } = connection;
+                      await api(
+                        id ? "/edges/" + id : "/edges",
+                        id ? "PUT" : "POST",
+                        input,
+                      );
+                      setConnection(null);
+                    })
+                  }
+                >
+                  {connection.id ? "Save connection" : "Connect agents"}
+                </button>
+              </div>
+            </footer>
+          </section>
+        </div>
+      )}
       {menu && (
         <>
           <div className="menu-dismiss" onClick={() => setMenu(null)} />

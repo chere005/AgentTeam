@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 contextBridge.exposeInMainWorld("agentteam", {
   request: (method: string, path: string, body?: unknown) =>
     ipcRenderer.invoke("api", method, path, body),
+  chooseExecutable: () => ipcRenderer.invoke("choose-executable"),
   chooseFolder: () => ipcRenderer.invoke("choose-folder"),
   openAgent: (id: string, mode: string) =>
     ipcRenderer.invoke("open-agent", id, mode),

@@ -1,3 +1,4 @@
+import { comparePriority } from "./priorities.ts";
 import { TeamService } from "./service.ts";
 import { RunManager, commandFor, executeCommand } from "./runtime.ts";
 import type { Task } from "./model.ts";
@@ -46,16 +47,18 @@ export class Scheduler {
         ...tasks.map((task) => ({
           kind: "task" as const,
           task,
+          priority: this.service.resources.priority(task.agentId),
           score: this.service.resources.score(task),
         })),
         ...requests.map((request) => ({
           kind: "chat" as const,
           request,
+          priority: this.service.resources.priority(request.agentId),
           score:
             this.service.resources.priority(request.agentId) +
             Math.max(0, Date.now() - Date.parse(request.queuedAt)) / 5000,
         })),
-      ].sort((a, b) => b.score - a.score);
+      ].sort(comparePriority);
       for (const candidate of candidates) {
         if (candidate.kind === "chat") {
           if (this.stopped || !this.runs.enabled) break;
@@ -123,13 +126,18 @@ export class Scheduler {
         command,
         plan.environment,
         (event) => {
-          if (event.type === "text") result += String(event.data) + "\n";
+          if (event.type === "text")
+            result += String(event.data) + (command.acp ? "" : "\n");
           this.service.store.emit("task.runtime", task.id, {
             agentId: task.agentId,
             ...event,
           });
         },
         controller.signal,
+        {
+          permission: (request, signal) =>
+            this.service.approvals.request(task.agentId, request, signal),
+        },
       );
       if (!result.trim()) throw new Error("Provider returned no text");
       this.service.transitionTask(task.id, {
@@ -142,6 +150,7 @@ export class Scheduler {
         result: error instanceof Error ? error.message : "Execution failed",
       });
     } finally {
+      this.service.approvals.cancelAgent(task.agentId);
       this.runs.active.delete("task:" + task.id);
     }
   }

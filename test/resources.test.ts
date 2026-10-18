@@ -148,3 +148,41 @@ test("sibling folders are distinct while parents cover descendants", () => {
   assert(!overlaps(join(root, "a"), join(root, "ab")));
   assert(!contains(root, join(root, "..", "escape")));
 });
+
+test("Preempt ranks ahead of aged work without changing legacy Max priorities", async (t) => {
+  const { root, service, store, a, b, wf } = await fixture(t);
+  const first = service.task({
+    workflowId: wf.id,
+    agentId: a.id,
+    title: "First",
+    completionCriteria: "Done",
+  });
+  const old = service.task({
+    workflowId: wf.id,
+    agentId: b.id,
+    title: "Waiting",
+    completionCriteria: "Done",
+  });
+  old.queuedAt = new Date(Date.now() - 86400000).toISOString();
+  store.put("task", old);
+  await service.resources.save({
+    name: "Priority test",
+    path: root,
+    priorities: [
+      { agentId: a.id, priority: 100 },
+      { agentId: b.id, priority: 0 },
+    ],
+  });
+  assert.equal(service.resources.ordered([first, old])[0].id, old.id);
+  await service.resources.save({
+    name: "Preempt test",
+    path: root,
+    priorities: [{ agentId: a.id, priority: 101 }],
+  });
+  assert.equal(service.resources.ordered([old, first])[0].id, first.id);
+  service.resources.acquire("already-running", b.id, null);
+  assert.throws(
+    () => service.resources.acquire("preempt", a.id, null),
+    /shared resources/,
+  );
+});
