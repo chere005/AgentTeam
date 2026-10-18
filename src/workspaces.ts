@@ -1,34 +1,367 @@
-import { readdir, realpath, stat, open } from 'node:fs/promises';
-import { resolve, relative, isAbsolute, dirname, basename, extname, join } from 'node:path';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { z } from 'zod';
-import { openCommand } from './native.ts';
-import { ResourceCoordinator } from './resources.ts';
-import { Store } from './store.ts';
-import { AppError, assert, type Agent } from './model.ts';
-const exec=promisify(execFile);
-const requestSchema=z.object({workspace:z.string(),path:z.string().default('.')}).strict();
+import { readdir, realpath, stat, open } from "node:fs/promises";
+import {
+  resolve,
+  relative,
+  isAbsolute,
+  dirname,
+  basename,
+  extname,
+  join,
+} from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { z } from "zod";
+import { openCommand } from "./native.ts";
+import { ResourceCoordinator } from "./resources.ts";
+import { Store } from "./store.ts";
+import { AppError, assert, type Agent } from "./model.ts";
+const exec = promisify(execFile);
+const requestSchema = z
+  .object({ workspace: z.string(), path: z.string().default(".") })
+  .strict();
 export class WorkspaceService {
-  store:Store;
-  constructor(store:Store){this.store=store;}
-  async location(agentId:string,input:unknown,write=false){const data=requestSchema.parse(input);const agent=this.store.get<Agent>('agent',agentId);const ws=agent.workspaces.find(w=>w.path===data.workspace);assert(ws,'workspace_denied','Directory is not attached to this agent',403);assert(!write||ws.access==='write','read_only','Agent has read-only access',403);assert(!isAbsolute(data.path)&&!data.path.includes('\0'),'invalid_path','Use a relative path',400);assert(!data.path.split(/[\\/]/).includes('.git'),'git_internal','Direct access to Git internals is not supported',403);const root=await realpath(ws.path);assert(root===ws.path,'workspace_changed','Workspace target changed; reattach it',409);const target=await realpath(resolve(root,data.path));const rel=relative(root,target);assert(!/^\.\.[\\/]/.test(rel)&&rel!=='..'&&!isAbsolute(rel),'path_escape','Path escapes the attached workspace',403);assert(!rel.split(/[\\/]/).includes('.git'),'git_internal','Direct access to Git internals is not supported',403);return {root,target,relative:rel||'.',access:ws.access};}
-  async browse(agentId:string,input:unknown){const loc=await this.location(agentId,input);assert((await stat(loc.target)).isDirectory(),'not_directory','Path is not a directory',400);const entries=await readdir(loc.target,{withFileTypes:true});return {...loc,entries:entries.filter(e=>e.name!=='.git').map(e=>({name:e.name,path:join(loc.relative,e.name),type:e.isDirectory()?'directory':e.isSymbolicLink()?'symlink':'file'})).sort((a,b)=>a.type===b.type?a.name.localeCompare(b.name):a.type==='directory'?-1:1)};}
-  async preview(agentId:string,input:unknown){const loc=await this.location(agentId,input),info=await stat(loc.target);assert(info.isFile(),'not_file','Path is not a regular file',400);const file=await open(loc.target,'r');try{const buffer=Buffer.alloc(Math.min(info.size,256_000));await file.read(buffer,0,buffer.length,0);const binary=buffer.includes(0);return {path:loc.relative,name:basename(loc.target),extension:extname(loc.target),size:info.size,truncated:info.size>buffer.length,binary,content:binary?null:buffer.toString('utf8')};}finally{await file.close();}}
-  private async git(root:string,args:string[]){try{return (await exec('git',['-C',root,...args],{encoding:'utf8',maxBuffer:2_000_000,timeout:15_000,env:{...process.env,GIT_TERMINAL_PROMPT:'0',GIT_LITERAL_PATHSPECS:'1',GIT_OPTIONAL_LOCKS:'0'}})).stdout;}catch(e){throw new AppError(400,'git_error',(e as {stderr?:string}).stderr?.trim().slice(0,1000)||'Git command failed');}}
-  async gitInfo(agentId:string,input:unknown){const loc=await this.location(agentId,input);const cwd=(await stat(loc.target)).isDirectory()?loc.target:dirname(loc.target);const repo=(await this.git(cwd,['rev-parse','--show-toplevel'])).trim();const [status,branch,branches,worktrees]=await Promise.all([this.git(cwd,['status','--porcelain=v1','-z','--',loc.target]),this.git(cwd,['branch','--show-current']),this.git(cwd,['branch','--format=%(refname:short)']),this.git(cwd,['worktree','list','--porcelain'])]);return {repository:repo,branch:branch.trim()||'(detached HEAD)',status:parseStatus(status),branches:branches.trim().split('\n').filter(Boolean),worktrees:parseWorktrees(worktrees),canMutate:loc.access==='write'&&await realpath(repo)===loc.root};}
-  async diff(agentId:string,input:unknown){const data=z.object({workspace:z.string(),path:z.string().default('.'),staged:z.boolean().default(false)}).strict().parse(input);const loc=await this.location(agentId,{workspace:data.workspace,path:data.path});const text=await this.git(loc.root,['diff','--no-ext-diff','--no-textconv',...(data.staged?['--cached']:[]),'--',loc.relative]);return {diff:text,staged:data.staged,path:loc.relative};}
-  async mutateGit(agentId:string,input:unknown){const data=z.object({workspace:z.string(),action:z.enum(['stage','unstage','commit']),paths:z.array(z.string()).default([]),message:z.string().trim().min(1).max(10000).optional()}).strict().parse(input);const loc=await this.location(agentId,{workspace:data.workspace,path:'.'},true);const repo=await realpath((await this.git(loc.root,['rev-parse','--show-toplevel'])).trim());assert(repo===loc.root,'repo_root_required','Attach the repository root with write access for Git mutations',403);
-    assert(!new ResourceCoordinator(this.store).conflicts(agentId,null,'user-git').length,'resource_busy','Finish active work on this folder before changing Git state');
-    if(data.action==='commit'){assert(data.message,'message_required','Commit message required',400);await this.git(repo,['-c','core.hooksPath=/dev/null','-c','commit.gpgsign=false','commit','-m',data.message]);}
-    else {assert(data.paths.length>0,'paths_required','Choose paths to stage or unstage',400);const paths=[];for(const p of data.paths){try{const entry=await this.location(agentId,{workspace:loc.root,path:p},true);paths.push(entry.relative);}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e; // Deleted files can still be staged, after checking their real parent.
-          const parent=await this.location(agentId,{workspace:loc.root,path:dirname(p)},true);const leaf=basename(p);assert(leaf!=='.git'&&leaf!=='.'&&leaf!=='..','invalid_path','Invalid Git path',400);paths.push(join(parent.relative,leaf));}}
-      await this.git(repo,data.action==='stage'?['add','--',...paths]:['restore','--staged','--',...paths]);}
-    this.store.emit('workspace.git',agentId,{action:data.action,workspace:loc.root,paths:data.paths});return {status:'ok',action:data.action};
+  store: Store;
+  constructor(store: Store) {
+    this.store = store;
   }
-  settings(){try{return this.store.get<{id:string;defaultEditor:'sublime'|'vscode'|'system'}>('settings','user');}catch{return {id:'user',defaultEditor:'sublime' as const};}}
-  setEditor(input:unknown){const data=z.object({defaultEditor:z.enum(['sublime','vscode','system'])}).strict().parse(input);return this.store.put('settings',{id:'user',...data});}
-  async openExternal(agentId:string,input:unknown,execute=false){const data=z.object({workspace:z.string(),path:z.string().default('.'),application:z.enum(['sublime','vscode','system','finder']).optional()}).strict().parse(input);const loc=await this.location(agentId,{workspace:data.workspace,path:data.path});const app=data.application??this.settings().defaultEditor;const {executable,args}=openCommand(process.platform,app,loc.target);if(execute){try{await exec(executable,args,{timeout:10_000});}catch{throw new AppError(400,'app_unavailable','The selected application could not be opened');}this.store.emit('workspace.opened',agentId,{application:app,path:loc.target});}return {executable,args,executed:execute,application:app};}
+  async location(agentId: string, input: unknown, write = false) {
+    const data = requestSchema.parse(input);
+    const agent = this.store.get<Agent>("agent", agentId);
+    const ws = agent.workspaces.find((w) => w.path === data.workspace);
+    assert(
+      ws,
+      "workspace_denied",
+      "Directory is not attached to this agent",
+      403,
+    );
+    assert(
+      !write || ws.access === "write",
+      "read_only",
+      "Agent has read-only access",
+      403,
+    );
+    assert(
+      !isAbsolute(data.path) && !data.path.includes("\0"),
+      "invalid_path",
+      "Use a relative path",
+      400,
+    );
+    assert(
+      !data.path.split(/[\\/]/).includes(".git"),
+      "git_internal",
+      "Direct access to Git internals is not supported",
+      403,
+    );
+    const root = await realpath(ws.path);
+    assert(
+      root === ws.path,
+      "workspace_changed",
+      "Workspace target changed; reattach it",
+      409,
+    );
+    const target = await realpath(resolve(root, data.path));
+    const rel = relative(root, target);
+    assert(
+      !/^\.\.[\\/]/.test(rel) && rel !== ".." && !isAbsolute(rel),
+      "path_escape",
+      "Path escapes the attached workspace",
+      403,
+    );
+    assert(
+      !rel.split(/[\\/]/).includes(".git"),
+      "git_internal",
+      "Direct access to Git internals is not supported",
+      403,
+    );
+    return { root, target, relative: rel || ".", access: ws.access };
+  }
+  async browse(agentId: string, input: unknown) {
+    const loc = await this.location(agentId, input);
+    assert(
+      (await stat(loc.target)).isDirectory(),
+      "not_directory",
+      "Path is not a directory",
+      400,
+    );
+    const entries = await readdir(loc.target, { withFileTypes: true });
+    return {
+      ...loc,
+      entries: entries
+        .filter((e) => e.name !== ".git")
+        .map((e) => ({
+          name: e.name,
+          path: join(loc.relative, e.name),
+          type: e.isDirectory()
+            ? "directory"
+            : e.isSymbolicLink()
+              ? "symlink"
+              : "file",
+        }))
+        .sort((a, b) =>
+          a.type === b.type
+            ? a.name.localeCompare(b.name)
+            : a.type === "directory"
+              ? -1
+              : 1,
+        ),
+    };
+  }
+  async preview(agentId: string, input: unknown) {
+    const loc = await this.location(agentId, input),
+      info = await stat(loc.target);
+    assert(info.isFile(), "not_file", "Path is not a regular file", 400);
+    const file = await open(loc.target, "r");
+    try {
+      const buffer = Buffer.alloc(Math.min(info.size, 256_000));
+      await file.read(buffer, 0, buffer.length, 0);
+      const binary = buffer.includes(0);
+      return {
+        path: loc.relative,
+        name: basename(loc.target),
+        extension: extname(loc.target),
+        size: info.size,
+        truncated: info.size > buffer.length,
+        binary,
+        content: binary ? null : buffer.toString("utf8"),
+      };
+    } finally {
+      await file.close();
+    }
+  }
+  private async git(root: string, args: string[]) {
+    try {
+      return (
+        await exec("git", ["-C", root, ...args], {
+          encoding: "utf8",
+          maxBuffer: 2_000_000,
+          timeout: 15_000,
+          env: {
+            ...process.env,
+            GIT_TERMINAL_PROMPT: "0",
+            GIT_LITERAL_PATHSPECS: "1",
+            GIT_OPTIONAL_LOCKS: "0",
+          },
+        })
+      ).stdout;
+    } catch (e) {
+      throw new AppError(
+        400,
+        "git_error",
+        (e as { stderr?: string }).stderr?.trim().slice(0, 1000) ||
+          "Git command failed",
+      );
+    }
+  }
+  async gitInfo(agentId: string, input: unknown) {
+    const loc = await this.location(agentId, input);
+    const cwd = (await stat(loc.target)).isDirectory()
+      ? loc.target
+      : dirname(loc.target);
+    const repo = (await this.git(cwd, ["rev-parse", "--show-toplevel"])).trim();
+    const [status, branch, branches, worktrees] = await Promise.all([
+      this.git(cwd, ["status", "--porcelain=v1", "-z", "--", loc.target]),
+      this.git(cwd, ["branch", "--show-current"]),
+      this.git(cwd, ["branch", "--format=%(refname:short)"]),
+      this.git(cwd, ["worktree", "list", "--porcelain"]),
+    ]);
+    return {
+      repository: repo,
+      branch: branch.trim() || "(detached HEAD)",
+      status: parseStatus(status),
+      branches: branches.trim().split("\n").filter(Boolean),
+      worktrees: parseWorktrees(worktrees),
+      canMutate: loc.access === "write" && (await realpath(repo)) === loc.root,
+    };
+  }
+  async diff(agentId: string, input: unknown) {
+    const data = z
+      .object({
+        workspace: z.string(),
+        path: z.string().default("."),
+        staged: z.boolean().default(false),
+      })
+      .strict()
+      .parse(input);
+    const loc = await this.location(agentId, {
+      workspace: data.workspace,
+      path: data.path,
+    });
+    const text = await this.git(loc.root, [
+      "diff",
+      "--no-ext-diff",
+      "--no-textconv",
+      ...(data.staged ? ["--cached"] : []),
+      "--",
+      loc.relative,
+    ]);
+    return { diff: text, staged: data.staged, path: loc.relative };
+  }
+  async mutateGit(agentId: string, input: unknown) {
+    const data = z
+      .object({
+        workspace: z.string(),
+        action: z.enum(["stage", "unstage", "commit"]),
+        paths: z.array(z.string()).default([]),
+        message: z.string().trim().min(1).max(10000).optional(),
+      })
+      .strict()
+      .parse(input);
+    const loc = await this.location(
+      agentId,
+      { workspace: data.workspace, path: "." },
+      true,
+    );
+    const repo = await realpath(
+      (await this.git(loc.root, ["rev-parse", "--show-toplevel"])).trim(),
+    );
+    assert(
+      repo === loc.root,
+      "repo_root_required",
+      "Attach the repository root with write access for Git mutations",
+      403,
+    );
+    assert(
+      !new ResourceCoordinator(this.store).conflicts(agentId, null, "user-git")
+        .length,
+      "resource_busy",
+      "Finish active work on this folder before changing Git state",
+    );
+    if (data.action === "commit") {
+      assert(data.message, "message_required", "Commit message required", 400);
+      await this.git(repo, [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-m",
+        data.message,
+      ]);
+    } else {
+      assert(
+        data.paths.length > 0,
+        "paths_required",
+        "Choose paths to stage or unstage",
+        400,
+      );
+      const paths = [];
+      for (const p of data.paths) {
+        try {
+          const entry = await this.location(
+            agentId,
+            { workspace: loc.root, path: p },
+            true,
+          );
+          paths.push(entry.relative);
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; // Deleted files can still be staged, after checking their real parent.
+          const parent = await this.location(
+            agentId,
+            { workspace: loc.root, path: dirname(p) },
+            true,
+          );
+          const leaf = basename(p);
+          assert(
+            leaf !== ".git" && leaf !== "." && leaf !== "..",
+            "invalid_path",
+            "Invalid Git path",
+            400,
+          );
+          paths.push(join(parent.relative, leaf));
+        }
+      }
+      await this.git(
+        repo,
+        data.action === "stage"
+          ? ["add", "--", ...paths]
+          : ["restore", "--staged", "--", ...paths],
+      );
+    }
+    this.store.emit("workspace.git", agentId, {
+      action: data.action,
+      workspace: loc.root,
+      paths: data.paths,
+    });
+    return { status: "ok", action: data.action };
+  }
+  settings() {
+    try {
+      return this.store.get<{
+        id: string;
+        defaultEditor: "sublime" | "vscode" | "system";
+      }>("settings", "user");
+    } catch {
+      return { id: "user", defaultEditor: "sublime" as const };
+    }
+  }
+  setEditor(input: unknown) {
+    const data = z
+      .object({ defaultEditor: z.enum(["sublime", "vscode", "system"]) })
+      .strict()
+      .parse(input);
+    return this.store.put("settings", { id: "user", ...data });
+  }
+  async openExternal(agentId: string, input: unknown, execute = false) {
+    const data = z
+      .object({
+        workspace: z.string(),
+        path: z.string().default("."),
+        application: z
+          .enum(["sublime", "vscode", "system", "finder"])
+          .optional(),
+      })
+      .strict()
+      .parse(input);
+    const loc = await this.location(agentId, {
+      workspace: data.workspace,
+      path: data.path,
+    });
+    const app = data.application ?? this.settings().defaultEditor;
+    const { executable, args } = openCommand(process.platform, app, loc.target);
+    if (execute) {
+      try {
+        await exec(executable, args, { timeout: 10_000 });
+      } catch {
+        throw new AppError(
+          400,
+          "app_unavailable",
+          "The selected application could not be opened",
+        );
+      }
+      this.store.emit("workspace.opened", agentId, {
+        application: app,
+        path: loc.target,
+      });
+    }
+    return { executable, args, executed: execute, application: app };
+  }
 }
-export function parseStatus(raw:string){const records=raw.split('\0');const files=[];for(let i=0;i<records.length;i++){const line=records[i];if(!line)continue;const status=line.slice(0,2),path=line.slice(3);const from=/[RC]/.test(status)?records[++i]:undefined;files.push({status,path,...(from?{from}:{})});}return files;}
-export function parseWorktrees(raw:string){return raw.trim().split('\n\n').filter(Boolean).map(block=>Object.fromEntries(block.split('\n').map(line=>{const i=line.indexOf(' ');return i===-1?[line,true]:[line.slice(0,i),line.slice(i+1)];})));}
+export function parseStatus(raw: string) {
+  const records = raw.split("\0");
+  const files = [];
+  for (let i = 0; i < records.length; i++) {
+    const line = records[i];
+    if (!line) continue;
+    const status = line.slice(0, 2),
+      path = line.slice(3);
+    const from = /[RC]/.test(status) ? records[++i] : undefined;
+    files.push({ status, path, ...(from ? { from } : {}) });
+  }
+  return files;
+}
+export function parseWorktrees(raw: string) {
+  return raw
+    .trim()
+    .split("\n\n")
+    .filter(Boolean)
+    .map((block) =>
+      Object.fromEntries(
+        block.split("\n").map((line) => {
+          const i = line.indexOf(" ");
+          return i === -1
+            ? [line, true]
+            : [line.slice(0, i), line.slice(i + 1)];
+        }),
+      ),
+    );
+}

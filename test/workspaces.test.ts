@@ -1,17 +1,155 @@
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm, symlink, realpath } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
-import { Store } from '../src/store.ts';
-import { SkillCatalog } from '../src/skills.ts';
-import { TeamService } from '../src/service.ts';
-import { WorkspaceService, parseStatus } from '../src/workspaces.ts';
-async function fixture(t:any){const base=await realpath(await mkdtemp(join(tmpdir(),'agentteam-files-'))),root=join(base,'project');await mkdir(root);const store=new Store(':memory:'),team=new TeamService(store,new SkillCatalog([]));const agent=await team.saveAgent({name:'Builder',environment:'codex',workspaces:[{path:root,access:'write',active:true}]});t.after(async()=>{store.close();await rm(base,{recursive:true,force:true});});return {base,root,store,team,agent,ws:new WorkspaceService(store)};}
-test('file previews are bounded; binary files are identified',async t=>{const {root,agent,ws}=await fixture(t);await writeFile(join(root,'file.txt'),'hello');await writeFile(join(root,'binary.bin'),Buffer.from([0,1,2]));await writeFile(join(root,'big.txt'),'a'.repeat(300000));assert.equal((await ws.preview(agent.id,{workspace:root,path:'file.txt'})).content,'hello');assert.equal((await ws.preview(agent.id,{workspace:root,path:'binary.bin'})).binary,true);assert.equal((await ws.preview(agent.id,{workspace:root,path:'big.txt'})).truncated,true);assert.equal((await ws.browse(agent.id,{workspace:root})).entries.length,3);});
-test('paths cannot escape through traversal, symlinks or Git internals',async t=>{const {base,root,agent,ws}=await fixture(t);await writeFile(join(base,'secret'),'outside');await symlink(join(base,'secret'),join(root,'link'));await mkdir(join(root,'.git'));await assert.rejects(ws.preview(agent.id,{workspace:root,path:'../secret'}),/escapes/);await assert.rejects(ws.preview(agent.id,{workspace:root,path:'link'}),/escapes/);await assert.rejects(ws.browse(agent.id,{workspace:root,path:'.git'}),/Git internals/);});
-test('Sublime defaults and directory launch plans do not execute applications',async t=>{const {root,agent,ws}=await fixture(t);assert.equal(ws.settings().defaultEditor,'sublime');if(process.platform==='darwin'){const plan=await ws.openExternal(agent.id,{workspace:root});assert.deepEqual(plan.args,['-a','Sublime Text','--',root]);assert.equal(plan.executed,false);}ws.setEditor({defaultEditor:'vscode'});assert.equal(ws.settings().defaultEditor,'vscode');});
-test('Git status, diffs, staging and commit work in an isolated fixture',async t=>{const {root,agent,ws}=await fixture(t);const git=(...args:string[])=>execFileSync('git',['-C',root,...args],{encoding:'utf8'});git('init','-q');git('config','user.name','AgentTeam Test');git('config','user.email','test@example.invalid');await writeFile(join(root,'hello.txt'),'hello\n');const status=await ws.gitInfo(agent.id,{workspace:root});assert.equal(status.status[0].path,'hello.txt');await ws.mutateGit(agent.id,{workspace:root,action:'stage',paths:['hello.txt']});assert.match((await ws.diff(agent.id,{workspace:root,staged:true})).diff,/hello/);await ws.mutateGit(agent.id,{workspace:root,action:'commit',message:'Initial fixture'});await writeFile(join(root,'hello.txt'),'changed\n');assert.match((await ws.diff(agent.id,{workspace:root,path:'hello.txt'})).diff,/changed/);await ws.mutateGit(agent.id,{workspace:root,action:'stage',paths:['hello.txt']});await ws.mutateGit(agent.id,{workspace:root,action:'unstage',paths:['hello.txt']});assert.equal((await ws.diff(agent.id,{workspace:root,staged:true})).diff,'');});
-test('read-only workspaces cannot stage files',async t=>{const {root,team,ws}=await fixture(t);const reader=await team.saveAgent({name:'Reader',environment:'claude',workspaces:[{path:root,access:'read'}]});await assert.rejects(ws.mutateGit(reader.id,{workspace:root,action:'stage',paths:['anything']}),/read-only/);});
-test('Git porcelain parser preserves spaces, newlines and rename origins',()=>{assert.deepEqual(parseStatus('R  new name\0old name\0?? new\nfile\0'),[{status:'R ',path:'new name',from:'old name'},{status:'??',path:'new\nfile'}]);});
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  mkdtemp,
+  mkdir,
+  writeFile,
+  rm,
+  symlink,
+  realpath,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { Store } from "../src/store.ts";
+import { SkillCatalog } from "../src/skills.ts";
+import { TeamService } from "../src/service.ts";
+import { WorkspaceService, parseStatus } from "../src/workspaces.ts";
+async function fixture(t: any) {
+  const base = await realpath(
+      await mkdtemp(join(tmpdir(), "agentteam-files-")),
+    ),
+    root = join(base, "project");
+  await mkdir(root);
+  const store = new Store(":memory:"),
+    team = new TeamService(store, new SkillCatalog([]));
+  const agent = await team.saveAgent({
+    name: "Builder",
+    environment: "codex",
+    workspaces: [{ path: root, access: "write", active: true }],
+  });
+  t.after(async () => {
+    store.close();
+    await rm(base, { recursive: true, force: true });
+  });
+  return { base, root, store, team, agent, ws: new WorkspaceService(store) };
+}
+test("file previews are bounded; binary files are identified", async (t) => {
+  const { root, agent, ws } = await fixture(t);
+  await writeFile(join(root, "file.txt"), "hello");
+  await writeFile(join(root, "binary.bin"), Buffer.from([0, 1, 2]));
+  await writeFile(join(root, "big.txt"), "a".repeat(300000));
+  assert.equal(
+    (await ws.preview(agent.id, { workspace: root, path: "file.txt" })).content,
+    "hello",
+  );
+  assert.equal(
+    (await ws.preview(agent.id, { workspace: root, path: "binary.bin" }))
+      .binary,
+    true,
+  );
+  assert.equal(
+    (await ws.preview(agent.id, { workspace: root, path: "big.txt" }))
+      .truncated,
+    true,
+  );
+  assert.equal(
+    (await ws.browse(agent.id, { workspace: root })).entries.length,
+    3,
+  );
+});
+test("paths cannot escape through traversal, symlinks or Git internals", async (t) => {
+  const { base, root, agent, ws } = await fixture(t);
+  await writeFile(join(base, "secret"), "outside");
+  await symlink(join(base, "secret"), join(root, "link"));
+  await mkdir(join(root, ".git"));
+  await assert.rejects(
+    ws.preview(agent.id, { workspace: root, path: "../secret" }),
+    /escapes/,
+  );
+  await assert.rejects(
+    ws.preview(agent.id, { workspace: root, path: "link" }),
+    /escapes/,
+  );
+  await assert.rejects(
+    ws.browse(agent.id, { workspace: root, path: ".git" }),
+    /Git internals/,
+  );
+});
+test("Sublime defaults and directory launch plans do not execute applications", async (t) => {
+  const { root, agent, ws } = await fixture(t);
+  assert.equal(ws.settings().defaultEditor, "sublime");
+  if (process.platform === "darwin") {
+    const plan = await ws.openExternal(agent.id, { workspace: root });
+    assert.deepEqual(plan.args, ["-a", "Sublime Text", "--", root]);
+    assert.equal(plan.executed, false);
+  }
+  ws.setEditor({ defaultEditor: "vscode" });
+  assert.equal(ws.settings().defaultEditor, "vscode");
+});
+test("Git status, diffs, staging and commit work in an isolated fixture", async (t) => {
+  const { root, agent, ws } = await fixture(t);
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-C", root, ...args], { encoding: "utf8" });
+  git("init", "-q");
+  git("config", "user.name", "AgentTeam Test");
+  git("config", "user.email", "test@example.invalid");
+  await writeFile(join(root, "hello.txt"), "hello\n");
+  const status = await ws.gitInfo(agent.id, { workspace: root });
+  assert.equal(status.status[0].path, "hello.txt");
+  await ws.mutateGit(agent.id, {
+    workspace: root,
+    action: "stage",
+    paths: ["hello.txt"],
+  });
+  assert.match(
+    (await ws.diff(agent.id, { workspace: root, staged: true })).diff,
+    /hello/,
+  );
+  await ws.mutateGit(agent.id, {
+    workspace: root,
+    action: "commit",
+    message: "Initial fixture",
+  });
+  await writeFile(join(root, "hello.txt"), "changed\n");
+  assert.match(
+    (await ws.diff(agent.id, { workspace: root, path: "hello.txt" })).diff,
+    /changed/,
+  );
+  await ws.mutateGit(agent.id, {
+    workspace: root,
+    action: "stage",
+    paths: ["hello.txt"],
+  });
+  await ws.mutateGit(agent.id, {
+    workspace: root,
+    action: "unstage",
+    paths: ["hello.txt"],
+  });
+  assert.equal(
+    (await ws.diff(agent.id, { workspace: root, staged: true })).diff,
+    "",
+  );
+});
+test("read-only workspaces cannot stage files", async (t) => {
+  const { root, team, ws } = await fixture(t);
+  const reader = await team.saveAgent({
+    name: "Reader",
+    environment: "claude",
+    workspaces: [{ path: root, access: "read" }],
+  });
+  await assert.rejects(
+    ws.mutateGit(reader.id, {
+      workspace: root,
+      action: "stage",
+      paths: ["anything"],
+    }),
+    /read-only/,
+  );
+});
+test("Git porcelain parser preserves spaces, newlines and rename origins", () => {
+  assert.deepEqual(parseStatus("R  new name\0old name\0?? new\nfile\0"), [
+    { status: "R ", path: "new name", from: "old name" },
+    { status: "??", path: "new\nfile" },
+  ]);
+});

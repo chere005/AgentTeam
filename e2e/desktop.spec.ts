@@ -1,31 +1,65 @@
-import {test,expect,_electron as electron} from '@playwright/test';
-import {mkdtemp,rm} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
-test('desktop connects, persists agents, configures limits and queues chat',async()=>{
- const directory=await mkdtemp(join(tmpdir(),'agentteam-e2e-'));
- const app=await electron.launch({args:['.'],env:{...process.env,AGENTTEAM_DATA_DIR:directory,AGENTTEAM_TEST:'1'}});
- try{const page=await app.firstWindow();const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
- await expect(page.getByText('Workspace connected',{exact:true})).toBeVisible();
- await expect(page.getByRole('heading',{name:'What are we building?'})).toBeVisible();
- await page.getByRole('button',{name:'New agent',exact:true}).click();
- await page.getByLabel('Name',{exact:true}).fill('Database Architect');
- await page.getByLabel('Role / specialty').fill('Design reliable schemas and migrations');
- await page.getByLabel('Max concurrent invoked agents').selectOption('3');
- await page.getByRole('button',{name:'Create agent',exact:true}).click();
- await expect(page.getByRole('dialog')).toHaveCount(0);
- await page.getByRole('button',{name:'Database Architect codex'}).click();
- await page.getByRole('textbox',{name:'Message',exact:true}).fill('Design a small database');
- await page.getByRole('button',{name:'Send message',exact:true}).click();
- await expect(page.getByText('Design a small database',{exact:true})).toBeVisible();
- await expect(page.getByText('queued',{exact:true}).first()).toBeVisible();
- await page.getByRole('button',{name:'Team canvas',exact:true}).click();
- await expect(page.locator('.agent-card')).toHaveCount(2);
- await expect(page.getByText('0 / 3 invoked',{exact:true})).toBeVisible();
- await page.screenshot({path:join('test-results','desktop-canvas.png')});
- await page.reload();await expect(page.locator('.agent-card')).toHaveCount(2);
- await page.getByRole('button',{name:'Conversations',exact:true}).click();
- await page.screenshot({path:join('test-results','desktop-chat.png')});
- expect(errors).toEqual([]);
- }finally{await app.close();await rm(directory,{recursive:true,force:true});}
+import { test, expect, _electron as electron } from "@playwright/test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+test("desktop connects, persists agents, configures limits and queues chat", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentteam-e2e-"));
+  const app = await electron.launch({
+    args: [".", ...(process.platform === "linux" ? ["--no-sandbox"] : [])],
+    env: { ...process.env, AGENTTEAM_DATA_DIR: directory, AGENTTEAM_TEST: "1" },
+  });
+  try {
+    const page = await app.firstWindow();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await expect(
+      page.getByText("Workspace connected", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "What are we building?" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "New agent", exact: true }).click();
+    await page.getByLabel("Name", { exact: true }).fill("Database Architect");
+    await page
+      .getByLabel("Role / specialty")
+      .fill("Design reliable schemas and migrations");
+    await page.getByLabel("Max concurrent invoked agents").selectOption("3");
+    await page
+      .getByRole("button", { name: "Create agent", exact: true })
+      .click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await page
+      .getByRole("button", { name: "Database Architect codex" })
+      .click();
+    await page
+      .getByRole("textbox", { name: "Message", exact: true })
+      .fill("Design a small database");
+    await page
+      .getByRole("button", { name: "Send message", exact: true })
+      .click();
+    await expect(
+      page.getByText("Design a small database", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("queued", { exact: true }).first(),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Team canvas", exact: true })
+      .click();
+    await expect(page.locator(".agent-card")).toHaveCount(2);
+    await expect(
+      page.getByText("0 / 3 invoked", { exact: true }),
+    ).toBeVisible();
+    await page.screenshot({ path: join("test-results", "desktop-canvas.png") });
+    await page.reload();
+    await expect(page.locator(".agent-card")).toHaveCount(2);
+    await page
+      .getByRole("button", { name: "Conversations", exact: true })
+      .click();
+    await page.screenshot({ path: join("test-results", "desktop-chat.png") });
+    expect(errors).toEqual([]);
+  } finally {
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });

@@ -1,16 +1,358 @@
-import {useEffect,useState} from 'react';
-import {LockKeyhole,Plus,Users,Clock,ShieldCheck} from 'lucide-react';
-import {api,type Snapshot,type TeamEvent} from '../api';
-export function Resources({data,events,act}:{data:Snapshot;events:TeamEvent[];act:(fn:()=>Promise<unknown>)=>Promise<void>}){
- const [state,setState]=useState<any>(null),[adding,setAdding]=useState(false),[name,setName]=useState(''),[path,setPath]=useState(''),[priorities,setPriorities]=useState<Record<string,number>>({}),[editing,setEditing]=useState('');
- const [wf,setWf]=useState(''),[coordinator,setCoordinator]=useState(''),[parallel,setParallel]=useState(false),[max,setMax]=useState(3),[resources,setResources]=useState<string[]>([]);
- const load=()=>api('/resources').then(setState);useEffect(()=>{void act(load);},[events]);
- const paths=[...new Set(data.agents.flatMap(a=>a.workspaces.map(w=>w.path)))];
- function edit(r:any){setAdding(true);setEditing(r.id);setName(r.name);setPath(r.path);setPriorities(Object.fromEntries(r.priorities.map((v:any)=>[v.agentId,v.priority])));}
- return <div className="section scroll"><div className="section-title"><div><span className="eyebrow">SHARED WORK</span><h2>Resource coordination</h2></div><button onClick={()=>{setAdding(!adding);setEditing('');setName('');setPath(paths[0]??'');setPriorities({});}}><Plus size={15}/>Resource</button></div><div className="access-banner"><div className="row"><LockKeyhole size={17}/><b>ONE AGENT AT A TIME, BY DEFAULT</b></div><p>Attached folders and overlapping subfolders are automatically exclusive during AgentTeam runs, even before you create a named resource. Named resources let you set priorities and allow guided parallel workflows.</p></div>
- {adding&&<form className="form-card" onSubmit={e=>{e.preventDefault();void act(async()=>{await api('/resources','POST',{...(editing?{id:editing}:{}),name,path,priorities:Object.entries(priorities).map(([agentId,priority])=>({agentId,priority}))});setAdding(false);await load();});}}><h3>{editing?'Edit resource':'Name a shared resource'}</h3><label>Name<input required value={name} onChange={e=>setName(e.target.value)} placeholder="Application source"/></label><label>Folder path<input required list="resource-paths" value={path} onChange={e=>setPath(e.target.value)} placeholder="Full path to attached folder or common parent"/><datalist id="resource-paths">{paths.map(path=><option value={path} key={path}/>)}</datalist></label><p className="hint">All files below this path belong to the resource. Start with an attached folder; a common parent can group overlapping projects.</p><h3>Agent priority</h3>{data.agents.map(a=><label className="priority-row" key={a.id}><span>{a.name}<small>Default {a.schedulingPriority??50}</small></span><input aria-label={'Priority for '+a.name} type="number" min="0" max="100" value={priorities[a.id]??a.schedulingPriority??50} onChange={e=>setPriorities({...priorities,[a.id]:Number(e.target.value)})}/></label>)}<p className="hint">Higher starts first. Every five seconds waiting adds a priority point, so lower-priority work can move ahead. Running work is not interrupted.</p><button className="primary">Save resource</button></form>}
- <div className="resource-list">{state?.resources.map((r:any)=><article className="settings-card" key={r.id}><div className="row between"><div className="row"><LockKeyhole size={18}/><b>{r.name}</b></div><button onClick={()=>edit(r)}>Priorities</button></div><code className="full-path">{r.path}</code><small>{r.priorities.map((v:any)=>`${data.agents.find(a=>a.id===v.agentId)?.name}: ${v.priority}`).join(' · ')||'Uses each agent’s default priority'}</small></article>)}</div>
- <h3>Currently holding resources</h3>{state?.leases.length?state.leases.map((l:any)=><div className="lease" key={l.id}><div className="row"><span className="dot green pulse"/><b>{data.agents.find(a=>a.id===l.agentId)?.name}</b><span className="badge">{l.workflowId?'Workflow':'Chat'}</span></div>{l.paths.map((path:string)=><code className="full-path" key={path}>{path}</code>)}</div>):<p className="hint">No active resource holders.</p>}
- <h3>Waiting agents</h3>{state?.chatQueue?.map((q:any)=><div className="queue-row" key={q.id}><Clock size={15}/><div className="grow"><b>Chat · {data.agents.find(a=>a.id===q.agentId)?.name}</b><small>base {q.priority} → effective {q.effectivePriority}</small></div><button onClick={()=>void act(()=>api('/sessions/'+q.id+'/cancel','POST'))}>Cancel</button></div>)}{state?.queue.length?state.queue.map((q:any)=><div className="queue-row" key={q.id}><Clock size={15}/><div className="grow"><b>{q.title}</b><small>{data.agents.find(a=>a.id===q.agentId)?.name} · base {q.priority} → effective {q.effectivePriority}</small>{q.blockers.length>0&&<small>Waiting for {q.blockers.map((id:string)=>data.agents.find(a=>a.id===id)?.name).join(', ')}</small>}</div></div>):<p className="hint">Nothing waiting for a turn.</p>}
- <section className="settings-card"><div className="row"><Users size={19}/><h3>Guided parallel workflow</h3></div><p>Allow a specific workflow to share selected resources. A coordinator first writes a work-allocation plan; workers receive it before starting in parallel. Other workflows remain excluded.</p><label>Workflow<select value={wf} onChange={e=>{setWf(e.target.value);const w=data.workflows.find(w=>w.id===e.target.value) as any;setCoordinator(w?.coordination?.coordinatorId??w?.ownerId??'');setParallel(w?.coordination?.enabled??false);setResources(w?.coordination?.resourceIds??[]);setMax(w?.coordination?.maxConcurrent??3);}}><option value="">Choose workflow</option>{data.workflows.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}</select></label><label className="inline"><input type="checkbox" checked={parallel} onChange={e=>setParallel(e.target.checked)}/>Allow parallel work in this workflow</label><div className="form-grid" style={{marginTop:15}}><label>Coordinating agent<select value={coordinator} onChange={e=>setCoordinator(e.target.value)}><option value="">Choose coordinator</option>{data.agents.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select></label><label>Max parallel workers<input type="number" min="2" max="32" value={max} onChange={e=>setMax(Number(e.target.value))}/></label></div><label>Shared resources</label>{state?.resources.map((r:any)=><label className="inline resource-choice" key={r.id}><input type="checkbox" checked={resources.includes(r.id)} onChange={e=>setResources(e.target.checked?[...resources,r.id]:resources.filter(id=>id!==r.id))}/>{r.name}</label>)}{!state?.resources.length&&<p className="hint">Add a named resource first.</p>}<button className="primary" disabled={!wf||!coordinator||!resources.length} onClick={()=>void act(async()=>{await api('/workflows/'+wf+'/coordination','PUT',{enabled:parallel,coordinatorId:coordinator,resourceIds:resources,maxConcurrent:max});await load();})}>Apply workflow access</button><p className="hint">Parallel workers can edit the same files. Use the coordinator’s plan or separate Git worktrees to avoid conflicts. Changes require active tasks to finish first.</p></section><p className="hint">Locks apply to work launched by AgentTeam and its Git mutations. External editors and native sessions are outside this coordination system.</p></div>;
+import { useEffect, useState } from "react";
+import { LockKeyhole, Plus, Users, Clock, ShieldCheck } from "lucide-react";
+import { api, type Snapshot, type TeamEvent } from "../api";
+export function Resources({
+  data,
+  events,
+  act,
+}: {
+  data: Snapshot;
+  events: TeamEvent[];
+  act: (fn: () => Promise<unknown>) => Promise<void>;
+}) {
+  const [state, setState] = useState<any>(null),
+    [adding, setAdding] = useState(false),
+    [name, setName] = useState(""),
+    [path, setPath] = useState(""),
+    [priorities, setPriorities] = useState<Record<string, number>>({}),
+    [editing, setEditing] = useState("");
+  const [wf, setWf] = useState(""),
+    [coordinator, setCoordinator] = useState(""),
+    [parallel, setParallel] = useState(false),
+    [max, setMax] = useState(3),
+    [resources, setResources] = useState<string[]>([]);
+  const load = () => api("/resources").then(setState);
+  useEffect(() => {
+    void act(load);
+  }, [events]);
+  const paths = [
+    ...new Set(data.agents.flatMap((a) => a.workspaces.map((w) => w.path))),
+  ];
+  function edit(r: any) {
+    setAdding(true);
+    setEditing(r.id);
+    setName(r.name);
+    setPath(r.path);
+    setPriorities(
+      Object.fromEntries(r.priorities.map((v: any) => [v.agentId, v.priority])),
+    );
+  }
+  return (
+    <div className="section scroll">
+      <div className="section-title">
+        <div>
+          <span className="eyebrow">SHARED WORK</span>
+          <h2>Resource coordination</h2>
+        </div>
+        <button
+          onClick={() => {
+            setAdding(!adding);
+            setEditing("");
+            setName("");
+            setPath(paths[0] ?? "");
+            setPriorities({});
+          }}
+        >
+          <Plus size={15} />
+          Resource
+        </button>
+      </div>
+      <div className="access-banner">
+        <div className="row">
+          <LockKeyhole size={17} />
+          <b>ONE AGENT AT A TIME, BY DEFAULT</b>
+        </div>
+        <p>
+          Attached folders and overlapping subfolders are automatically
+          exclusive during AgentTeam runs, even before you create a named
+          resource. Named resources let you set priorities and allow guided
+          parallel workflows.
+        </p>
+      </div>
+      {adding && (
+        <form
+          className="form-card"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void act(async () => {
+              await api("/resources", "POST", {
+                ...(editing ? { id: editing } : {}),
+                name,
+                path,
+                priorities: Object.entries(priorities).map(
+                  ([agentId, priority]) => ({ agentId, priority }),
+                ),
+              });
+              setAdding(false);
+              await load();
+            });
+          }}
+        >
+          <h3>{editing ? "Edit resource" : "Name a shared resource"}</h3>
+          <label>
+            Name
+            <input
+              required
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Application source"
+            />
+          </label>
+          <label>
+            Folder path
+            <input
+              required
+              list="resource-paths"
+              value={path}
+              onChange={(e) => setPath(e.target.value)}
+              placeholder="Full path to attached folder or common parent"
+            />
+            <datalist id="resource-paths">
+              {paths.map((path) => (
+                <option value={path} key={path} />
+              ))}
+            </datalist>
+          </label>
+          <p className="hint">
+            All files below this path belong to the resource. Start with an
+            attached folder; a common parent can group overlapping projects.
+          </p>
+          <h3>Agent priority</h3>
+          {data.agents.map((a) => (
+            <label className="priority-row" key={a.id}>
+              <span>
+                {a.name}
+                <small>Default {a.schedulingPriority ?? 50}</small>
+              </span>
+              <input
+                aria-label={"Priority for " + a.name}
+                type="number"
+                min="0"
+                max="100"
+                value={priorities[a.id] ?? a.schedulingPriority ?? 50}
+                onChange={(e) =>
+                  setPriorities({
+                    ...priorities,
+                    [a.id]: Number(e.target.value),
+                  })
+                }
+              />
+            </label>
+          ))}
+          <p className="hint">
+            Higher starts first. Every five seconds waiting adds a priority
+            point, so lower-priority work can move ahead. Running work is not
+            interrupted.
+          </p>
+          <button className="primary">Save resource</button>
+        </form>
+      )}
+      <div className="resource-list">
+        {state?.resources.map((r: any) => (
+          <article className="settings-card" key={r.id}>
+            <div className="row between">
+              <div className="row">
+                <LockKeyhole size={18} />
+                <b>{r.name}</b>
+              </div>
+              <button onClick={() => edit(r)}>Priorities</button>
+            </div>
+            <code className="full-path">{r.path}</code>
+            <small>
+              {r.priorities
+                .map(
+                  (v: any) =>
+                    `${data.agents.find((a) => a.id === v.agentId)?.name}: ${v.priority}`,
+                )
+                .join(" · ") || "Uses each agent’s default priority"}
+            </small>
+          </article>
+        ))}
+      </div>
+      <h3>Currently holding resources</h3>
+      {state?.leases.length ? (
+        state.leases.map((l: any) => (
+          <div className="lease" key={l.id}>
+            <div className="row">
+              <span className="dot green pulse" />
+              <b>{data.agents.find((a) => a.id === l.agentId)?.name}</b>
+              <span className="badge">
+                {l.workflowId ? "Workflow" : "Chat"}
+              </span>
+            </div>
+            {l.paths.map((path: string) => (
+              <code className="full-path" key={path}>
+                {path}
+              </code>
+            ))}
+          </div>
+        ))
+      ) : (
+        <p className="hint">No active resource holders.</p>
+      )}
+      <h3>Waiting agents</h3>
+      {state?.chatQueue?.map((q: any) => (
+        <div className="queue-row" key={q.id}>
+          <Clock size={15} />
+          <div className="grow">
+            <b>Chat · {data.agents.find((a) => a.id === q.agentId)?.name}</b>
+            <small>
+              base {q.priority} → effective {q.effectivePriority}
+            </small>
+          </div>
+          <button
+            onClick={() =>
+              void act(() => api("/sessions/" + q.id + "/cancel", "POST"))
+            }
+          >
+            Cancel
+          </button>
+        </div>
+      ))}
+      {state?.queue.length ? (
+        state.queue.map((q: any) => (
+          <div className="queue-row" key={q.id}>
+            <Clock size={15} />
+            <div className="grow">
+              <b>{q.title}</b>
+              <small>
+                {data.agents.find((a) => a.id === q.agentId)?.name} · base{" "}
+                {q.priority} → effective {q.effectivePriority}
+              </small>
+              {q.blockers.length > 0 && (
+                <small>
+                  Waiting for{" "}
+                  {q.blockers
+                    .map(
+                      (id: string) =>
+                        data.agents.find((a) => a.id === id)?.name,
+                    )
+                    .join(", ")}
+                </small>
+              )}
+            </div>
+          </div>
+        ))
+      ) : (
+        <p className="hint">Nothing waiting for a turn.</p>
+      )}
+      <section className="settings-card">
+        <div className="row">
+          <Users size={19} />
+          <h3>Guided parallel workflow</h3>
+        </div>
+        <p>
+          Allow a specific workflow to share selected resources. A coordinator
+          first writes a work-allocation plan; workers receive it before
+          starting in parallel. Other workflows remain excluded.
+        </p>
+        <label>
+          Workflow
+          <select
+            value={wf}
+            onChange={(e) => {
+              setWf(e.target.value);
+              const w = data.workflows.find(
+                (w) => w.id === e.target.value,
+              ) as any;
+              setCoordinator(
+                w?.coordination?.coordinatorId ?? w?.ownerId ?? "",
+              );
+              setParallel(w?.coordination?.enabled ?? false);
+              setResources(w?.coordination?.resourceIds ?? []);
+              setMax(w?.coordination?.maxConcurrent ?? 3);
+            }}
+          >
+            <option value="">Choose workflow</option>
+            {data.workflows.map((w) => (
+              <option key={w.id} value={w.id}>
+                {w.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="inline">
+          <input
+            type="checkbox"
+            checked={parallel}
+            onChange={(e) => setParallel(e.target.checked)}
+          />
+          Allow parallel work in this workflow
+        </label>
+        <div className="form-grid" style={{ marginTop: 15 }}>
+          <label>
+            Coordinating agent
+            <select
+              value={coordinator}
+              onChange={(e) => setCoordinator(e.target.value)}
+            >
+              <option value="">Choose coordinator</option>
+              {data.agents.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Max parallel workers
+            <input
+              type="number"
+              min="2"
+              max="32"
+              value={max}
+              onChange={(e) => setMax(Number(e.target.value))}
+            />
+          </label>
+        </div>
+        <label>Shared resources</label>
+        {state?.resources.map((r: any) => (
+          <label className="inline resource-choice" key={r.id}>
+            <input
+              type="checkbox"
+              checked={resources.includes(r.id)}
+              onChange={(e) =>
+                setResources(
+                  e.target.checked
+                    ? [...resources, r.id]
+                    : resources.filter((id) => id !== r.id),
+                )
+              }
+            />
+            {r.name}
+          </label>
+        ))}
+        {!state?.resources.length && (
+          <p className="hint">Add a named resource first.</p>
+        )}
+        <button
+          className="primary"
+          disabled={!wf || !coordinator || !resources.length}
+          onClick={() =>
+            void act(async () => {
+              await api("/workflows/" + wf + "/coordination", "PUT", {
+                enabled: parallel,
+                coordinatorId: coordinator,
+                resourceIds: resources,
+                maxConcurrent: max,
+              });
+              await load();
+            })
+          }
+        >
+          Apply workflow access
+        </button>
+        <p className="hint">
+          Parallel workers can edit the same files. Use the coordinator’s plan
+          or separate Git worktrees to avoid conflicts. Changes require active
+          tasks to finish first.
+        </p>
+      </section>
+      <p className="hint">
+        Locks apply to work launched by AgentTeam and its Git mutations.
+        External editors and native sessions are outside this coordination
+        system.
+      </p>
+    </div>
+  );
 }
