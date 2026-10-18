@@ -2,6 +2,7 @@ import { DevelopmentService } from "./development.ts";
 import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { RuntimeDiscovery } from "./discovery.ts";
+import { runtimeCapabilities } from "./capabilities.ts";
 import { TeamTemplates } from "./teams.ts";
 import {
   createWolframSample,
@@ -15,6 +16,7 @@ import {
 } from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
+import { completionCheckSchema } from "./limits-schema.ts";
 import { TeamService } from "./service.ts";
 import { RunManager } from "./runtime.ts";
 import { WorkspaceService } from "./workspaces.ts";
@@ -324,8 +326,7 @@ export function createApi(
             "invalid_path",
             "Harness overrides must be absolute executable paths",
           );
-        if (data.path) discovery.overrides[match[1]] = data.path;
-        else delete discovery.overrides[match[1]];
+        discovery.setOverride(match[1], data.path);
         store.put("settings", { id: "harnesses", paths: discovery.overrides });
         await discovery.refresh();
         store.emit("runtimes.discovered", "runtimes");
@@ -341,8 +342,11 @@ export function createApi(
             liveEnabled: runs.enabled,
           })),
           scanning: discovery.scanning,
+          settled: discovery.settled,
           overrides: discovery.overrides,
         });
+      if (method === "GET" && path === "/runtime-capabilities")
+        return send({ capabilities: runtimeCapabilities() });
       if (method === "POST" && path === "/runtimes/refresh") {
         await discovery.refresh();
         return send({ runtimes: discovery.runtimes });
@@ -523,6 +527,34 @@ export function createApi(
         (match = path.match(/^\/tasks\/([^/]+)\/cancel$/))
       )
         return send(runs.cancel("task:" + id(match[1])), 202);
+      if ((match = path.match(/^\/workflows\/([^/]+)\/limits$/))) {
+        if (method === "GET") return send(service.limits.status(id(match[1])));
+        if (method === "PUT")
+          return send(service.limits.setLimits(id(match[1]), await body(req)));
+      }
+      if (
+        method === "POST" &&
+        (match = path.match(/^\/workflows\/([^/]+)\/limits\/resume$/))
+      ) {
+        const data = z
+          .object({
+            limits: z.unknown().optional(),
+            requeueStopped: z.boolean().optional(),
+          })
+          .strict()
+          .parse(await body(req));
+        return send(service.limits.resume(id(match[1]), data));
+      }
+      if (
+        method === "PUT" &&
+        (match = path.match(/^\/tasks\/([^/]+)\/completion-checks$/))
+      ) {
+        const data = z
+          .object({ checks: z.array(completionCheckSchema).max(20) })
+          .strict()
+          .parse(await body(req));
+        return send(service.limits.setChecks(id(match[1]), data.checks));
+      }
       if (method === "POST" && path === "/tasks")
         return send(service.task(await body(req)), 201);
       if (method === "GET" && (match = path.match(/^\/tasks\/([^/]+)$/)))
@@ -537,7 +569,25 @@ export function createApi(
             "task_running",
             "Stop the running task before manually changing its status",
           );
-        return send(service.transitionTask(id(match[1]), await body(req)));
+        const change = (await body(req)) as {
+          status?: string;
+          result?: string;
+        };
+        if (
+          change?.status === "completed" &&
+          typeof change.result === "string"
+        ) {
+          // Declared completion checks must pass for exactly this result text, evaluated against
+          // the same workspace the scheduler uses (the agent's active folder, else the app cwd).
+          const task = store.get<Task>("task", id(match[1]));
+          const agent = store.get<Agent>("agent", task.agentId);
+          await service.limits.evaluate(
+            task,
+            change.result,
+            agent.workspaces.find((w) => w.active)?.path ?? runs.cwd,
+          );
+        }
+        return send(service.transitionTask(id(match[1]), change));
       }
       if (method === "GET" && path === "/sessions")
         return send(store.list("session"));

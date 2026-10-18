@@ -1,6 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type Agent } from "../api";
 
+/** Which diff the review applies to: staged/unstaged, or a branch comparison. */
+export type ReviewScope = {
+  staged: boolean;
+  base?: string;
+  head?: string;
+  mergeBase?: boolean;
+};
 type Comment = {
   id: string;
   path: string;
@@ -32,7 +39,7 @@ type State = {
 export function ReviewComments({
   agentId,
   workspace,
-  staged,
+  scope: reviewScope,
   path,
   agents,
   revision,
@@ -40,7 +47,7 @@ export function ReviewComments({
 }: {
   agentId: string;
   workspace: string;
-  staged: boolean;
+  scope: ReviewScope;
   path: string;
   agents: Agent[];
   revision: number;
@@ -51,7 +58,11 @@ export function ReviewComments({
     [note, setNote] = useState(""),
     [recipient, setRecipient] = useState(agentId),
     [busy, setBusy] = useState(false);
-  const scope = { workspace, staged };
+  const key = JSON.stringify(reviewScope);
+  const scope = useMemo(
+    () => ({ workspace, ...reviewScope }),
+    [workspace, key],
+  );
   const load = useCallback(async () => {
     try {
       setState(await api(`/agents/${agentId}/reviews/state`, "POST", scope));
@@ -59,7 +70,7 @@ export function ReviewComments({
     } catch (e) {
       setError(String((e as Error).message ?? e));
     }
-  }, [agentId, workspace, staged]);
+  }, [agentId, scope]);
   useEffect(() => {
     void load();
   }, [load, revision]);

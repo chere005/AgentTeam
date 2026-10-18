@@ -1,0 +1,73 @@
+.model-warning,
+.effort-warning {
+  display: block;
+  margin: 6px 0 0;
+  padding: 7px 9px;
+  border-radius: 6px;
+  border: 1px solid #6f5a28;
+  background: #3a3220;
+  color: #f1d58b;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.invocation-panel {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid #344253;
+  border-radius: 8px;
+  font-size: 12px;
+}
+.invocation-panel h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+.invocation-panel ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.invocation-panel li {
+  line-height: 1.6;
+}
+.diagnostics {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.diagnostics .error {
+  color: #f2a1a1;
+}
+.diagnostics .warn {
+  color: #f1d58b;
+}
+.diagnostics .info {
+  color: var(--muted);
+}
+.capability-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.capability-table th,
+.capability-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 6px 8px;
+  border-top: 1px solid #344253;
+}
+.capability-table .cap-yes {
+  color: #9bdfc1;
+}
+.capability-table .cap-partial {
+  color: #f1d58b;
+}
+.capability-table .cap-no {
+  color: var(--muted);
+}
+.capability-table small {
+  display: block;
+  color: var(--muted);
+  line-height: 1.5;
+  margin-top: 2px;
+}

@@ -57,6 +57,8 @@ export type ReviewComment = {
   workspace: string;
   path: string;
   staged: boolean;
+  /** Branch-compare scope identity ("" for staged/unstaged); absent on older records. */
+  compare?: string;
   side: "old" | "new";
   line: number;
   lineText: string;
@@ -75,6 +77,7 @@ type FileMark = {
   agentId: string;
   workspace: string;
   staged: boolean;
+  compare?: string;
   path: string;
   diffHash: string;
   at: string;
@@ -84,6 +87,7 @@ type Decision = {
   agentId: string;
   workspace: string;
   staged: boolean;
+  compare?: string;
   decision: "changes_requested" | "approved";
   note: string;
   snapshot: string;
@@ -93,7 +97,28 @@ type Decision = {
 const scope = z.object({
   workspace: z.string(),
   staged: z.boolean().default(false),
+  /** Compare `head` (default HEAD) with `base`, or with merge-base(base, head) when mergeBase. */
+  base: z.string().max(200).optional(),
+  head: z.string().max(200).optional(),
+  mergeBase: z.boolean().default(true),
 });
+type Scope = z.infer<typeof scope>;
+/** Stable identity for a compare scope; empty for the staged/unstaged views. */
+export function compareId(s: {
+  base?: string;
+  head?: string;
+  mergeBase?: boolean;
+}) {
+  return s.base
+    ? `${s.base.trim()}\0${s.head?.trim() || "HEAD"}\0${s.mergeBase === false ? "direct" : "merge-base"}`
+    : "";
+}
+const scopeLabel = (s: Scope) =>
+  s.base
+    ? `compare ${s.head?.trim() || "HEAD"} against ${s.base.trim()}${s.mergeBase === false ? " (direct)" : " (merge base)"}`
+    : s.staged
+      ? "staged"
+      : "unstaged";
 const pathField = z.string().min(1).max(4096);
 
 /** Lexical path check; the workspace service additionally verifies the path is a current change. */
@@ -126,14 +151,18 @@ export class ReviewService {
   private get store() {
     return this.team.store;
   }
-  private key(agentId: string, workspace: string, staged: boolean) {
-    return sha(`${agentId}\0${workspace}\0${staged}`).slice(0, 24);
+  private key(
+    agentId: string,
+    workspace: string,
+    staged: boolean,
+    compare = "",
+  ) {
+    return sha(
+      `${agentId}\0${workspace}\0${staged}${compare ? "\0" + compare : ""}`,
+    ).slice(0, 24);
   }
   /** Current per-file diffs for a scope (read-only Git; never mutates). */
-  private async snapshot(
-    agentId: string,
-    s: { workspace: string; staged: boolean },
-  ) {
+  private async snapshot(agentId: string, s: Scope) {
     const base = await this.ws.review(agentId, s);
     const files = new Map<string, { diff: string; hash: string }>();
     for (const f of base.files) {
@@ -166,7 +195,8 @@ export class ReviewService {
         (c) =>
           c.agentId === agentId &&
           c.workspace === s.workspace &&
-          c.staged === s.staged,
+          c.staged === s.staged &&
+          (c.compare ?? "") === compareId(s),
       )
       .map((c) => ({
         ...c,
@@ -185,7 +215,8 @@ export class ReviewService {
         (m) =>
           m.agentId === agentId &&
           m.workspace === s.workspace &&
-          m.staged === s.staged,
+          m.staged === s.staged &&
+          (m.compare ?? "") === compareId(s),
       );
     const reviewed: Record<string, boolean> = {};
     for (const [p, v] of snap.files)
@@ -193,7 +224,10 @@ export class ReviewService {
     const decision =
       this.store
         .list<Decision>("review-decision")
-        .find((d) => d.id === this.key(agentId, s.workspace, s.staged)) ?? null;
+        .find(
+          (d) =>
+            d.id === this.key(agentId, s.workspace, s.staged, compareId(s)),
+        ) ?? null;
     const active = comments.filter((c) => !c.outdated);
     return {
       comments,
@@ -235,6 +269,9 @@ export class ReviewService {
     const r = await this.ws.review(agentId, {
       workspace: d.workspace,
       staged: d.staged,
+      base: d.base,
+      head: d.head,
+      mergeBase: d.mergeBase,
       path: d.path,
     }); // rejects paths that are not current changes
     assert(
@@ -250,7 +287,7 @@ export class ReviewService {
     return this.store.transaction(() => {
       const session = this.team.session(d.targetId);
       const message = this.team.message(session.id, {
-        text: `Code review feedback\nWorkspace: ${d.workspace}\nFile: ${d.path} (${d.staged ? "staged" : "unstaged"}, ${d.side} line ${d.line})\nDiff snapshot: ${sha(r.diff)}\n\n${d.text}\n\nQuoted line:\n${anchor.text}\n\nInspect the current file before applying changes; the quoted line is a snapshot.`,
+        text: `Code review feedback\nWorkspace: ${d.workspace}\nFile: ${d.path} (${scopeLabel(d)}, ${d.side} line ${d.line})\nDiff snapshot: ${sha(r.diff)}\n\n${d.text}\n\nQuoted line:\n${anchor.text}\n\nInspect the current file before applying changes; the quoted line is a snapshot.`,
       });
       const comment: ReviewComment = {
         id: d.requestId,
@@ -258,6 +295,7 @@ export class ReviewService {
         workspace: d.workspace,
         path: d.path,
         staged: d.staged,
+        compare: compareId(d),
         side: d.side,
         line: d.line,
         lineText: anchor.text,
@@ -302,12 +340,14 @@ export class ReviewService {
     const r = await this.ws.review(agentId, {
       workspace: d.workspace,
       staged: d.staged,
+      base: d.base,
+      head: d.head,
+      mergeBase: d.mergeBase,
       path: d.path,
     });
-    const id = sha(`${agentId}\0${d.workspace}\0${d.staged}\0${d.path}`).slice(
-      0,
-      24,
-    );
+    const id = sha(
+      `${agentId}\0${d.workspace}\0${d.staged}\0${d.path}${compareId(d) ? "\0" + compareId(d) : ""}`,
+    ).slice(0, 24);
     this.store.transaction(() => {
       if (d.reviewed)
         this.store.put<FileMark>("review-file", {
@@ -315,6 +355,7 @@ export class ReviewService {
           agentId,
           workspace: d.workspace,
           staged: d.staged,
+          compare: compareId(d),
           path: d.path,
           diffHash: sha(r.diff),
           at: new Date().toISOString(),
@@ -339,6 +380,9 @@ export class ReviewService {
     const st = await this.state(agentId, {
       workspace: d.workspace,
       staged: d.staged,
+      base: d.base,
+      head: d.head,
+      mergeBase: d.mergeBase,
     });
     const open = st.comments.filter((c) => !c.outdated && !c.resolved);
     let messageId: string | undefined, sessionId: string | undefined;
@@ -354,10 +398,11 @@ export class ReviewService {
       this.store.get<Agent>("agent", d.targetId);
     }
     const decision: Decision = {
-      id: this.key(agentId, d.workspace, d.staged),
+      id: this.key(agentId, d.workspace, d.staged, compareId(d)),
       agentId,
       workspace: d.workspace,
       staged: d.staged,
+      compare: compareId(d),
       decision: d.decision,
       note: d.note,
       snapshot: st.snapshot,
@@ -367,7 +412,7 @@ export class ReviewService {
       if (d.decision === "changes_requested") {
         const session = this.team.session(d.targetId!);
         const message = this.team.message(session.id, {
-          text: `Review: changes requested\nWorkspace: ${d.workspace} (${d.staged ? "staged" : "unstaged"})\n\n${d.note || "(no summary)"}\n\nUnresolved comments: ${open.length}\n${open.map((c) => `- ${c.path} ${c.side} line ${c.line}: ${c.text}`).join("\n")}`,
+          text: `Review: changes requested\nWorkspace: ${d.workspace} (${scopeLabel(d)})\n\n${d.note || "(no summary)"}\n\nUnresolved comments: ${open.length}\n${open.map((c) => `- ${c.path} ${c.side} line ${c.line}: ${c.text}`).join("\n")}`,
         });
         messageId = message.id;
         sessionId = session.id;

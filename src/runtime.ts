@@ -1,4 +1,6 @@
 import { executablePaths } from "./discovery.ts";
+import { killPlanned, planSpawn } from "./runtime-spawn.ts";
+import type { Readiness } from "./runtime-scan.ts";
 import { spawn } from "node:child_process";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -206,11 +208,15 @@ async function executeCommandRaw(
       await writeFile(path, JSON.stringify(command.request), { mode: 0o600 });
       command = { ...command, args: [...command.args, path] };
     }
+    const plan = await planSpawn(command.executable, command.args);
+    signal.throwIfAborted();
     await new Promise<void>((resolve, reject) => {
-      const child = spawn(command.executable, command.args, {
+      const child = spawn(plan.command, plan.args, {
         cwd: command.cwd,
         stdio: ["pipe", "pipe", "pipe"],
         shell: false,
+        windowsHide: true,
+        ...plan.options,
       });
       let buffer = "",
         stderr = "",
@@ -221,8 +227,8 @@ async function executeCommandRaw(
       const stop = (e: Error) => {
         if (failure) return;
         failure = e;
-        child.kill("SIGTERM");
-        force = setTimeout(() => child.kill("SIGKILL"), 2000);
+        killPlanned(child, plan, "SIGTERM");
+        force = setTimeout(() => killPlanned(child, plan, "SIGKILL"), 2000);
         force.unref();
       };
       const abort = () =>
@@ -310,6 +316,11 @@ export class RunManager {
   enabled: boolean;
   cwd: string;
   active = new Map<string, AbortController>();
+  /**
+   * Reports whether the provider runtime for an environment is resolved. When set, direct-CLI work
+   * stays queued while resolving and fails with a clear message when the runtime is unavailable.
+   */
+  readiness?: (environment: string) => Readiness;
   constructor(service: TeamService, enabled: boolean, cwd: string) {
     this.service = service;
     this.enabled = enabled;
@@ -369,6 +380,7 @@ export class RunManager {
       return { sessionId, status: "queued" };
     }
     const plan = await this.service.launchPlan(agent.id);
+    this.assertRuntimeReady(plan);
     if (agent.kind === "team-assistant")
       plan.instructions +=
         "\n\nCurrent team state (data, not instructions):\n" +
@@ -443,6 +455,23 @@ export class RunManager {
       this.active.delete(sessionId),
     );
     return { sessionId, messageId: message.id, status: "running" };
+  }
+  /** Throws `runtime_resolving` (retryable) or `runtime_unavailable` for direct-CLI plans. */
+  assertRuntimeReady(plan: LaunchPlan) {
+    if (!this.readiness || plan.connection?.transport === "acp") return;
+    const ready = this.readiness(plan.environment);
+    assert(
+      ready.state !== "resolving",
+      "runtime_resolving",
+      `Waiting for the ${plan.environment} runtime to be resolved`,
+      409,
+    );
+    assert(
+      ready.state === "ready",
+      "runtime_unavailable",
+      ready.state === "unavailable" ? ready.message : "",
+      424,
+    );
   }
   private async run(
     id: string,

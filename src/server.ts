@@ -34,6 +34,7 @@ runs.recover();
 const scheduler = new Scheduler(service, runs);
 scheduler.start();
 const discovery = new RuntimeDiscovery(store);
+runs.readiness = (environment) => discovery.readiness(environment);
 void discovery
   .refresh()
   .then(() => store.emit("runtimes.discovered", "runtimes"));

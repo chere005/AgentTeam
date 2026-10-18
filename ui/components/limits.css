@@ -1,0 +1,40 @@
+.limits-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 8px 0;
+}
+.limits-panel > summary {
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.limit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+  margin: 8px 0;
+}
+.limit-grid label {
+  display: grid;
+  gap: 3px;
+  font-size: 11px;
+}
+.limit-grid input {
+  width: 100%;
+}
+.limit-trip,
+.limit-error {
+  background: #4a2f2f;
+  color: #f0b4b4;
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin: 8px 0;
+  font-size: 12px;
+}
+.badge.limit-stopped {
+  background: #4a2f2f;
+  color: #f0b4b4;
+}

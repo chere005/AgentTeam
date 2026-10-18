@@ -5,6 +5,7 @@ import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { ResourceCoordinator } from "./resources.ts";
 import { ValidationService } from "./validation.ts";
+import { LimitsService } from "./limits.ts";
 import { Store } from "./store.ts";
 import { SkillCatalog } from "./skills.ts";
 import {
@@ -28,6 +29,7 @@ export class TeamService {
   skills: SkillCatalog;
   resources: ResourceCoordinator;
   validation: ValidationService;
+  limits: LimitsService;
   approvals: Approvals;
   constructor(store: Store, skills: SkillCatalog) {
     this.store = store;
@@ -35,6 +37,7 @@ export class TeamService {
     this.skills = skills;
     this.resources = new ResourceCoordinator(store);
     this.validation = new ValidationService(store, this.resources);
+    this.limits = new LimitsService(this);
   }
   async saveAgent(input: unknown, id?: string) {
     const data = agentSchema.parse(input);
@@ -333,6 +336,9 @@ export class TeamService {
         403,
       );
     }
+    // Delegation bounds: parent resolution, depth, loops, handoff/spawn totals, children cap.
+    const delegation = this.limits.beforeCreate(data);
+    if (delegation.parentTaskId) data.parentTaskId = delegation.parentTaskId;
     for (const id of data.dependsOn) {
       const dep = this.store.get<Task>("task", id);
       assert(
@@ -352,6 +358,7 @@ export class TeamService {
       this.store.put("task", task);
       this.store.emit("task.created", task.id, { agentId: task.agentId });
       if (task.invokedBy) this.flow(task, "request");
+      this.limits.recordCreate(task);
       return task;
     });
   }
@@ -401,6 +408,10 @@ export class TeamService {
       })
       .strict()
       .parse(input);
+    // Limit checks record their trip in their own transaction, so run them before ours.
+    if (data.status === "running")
+      this.limits.enforceStart(this.store.get<Task>("task", id));
+    if (data.status === "queued") this.limits.beforeRetry(id);
     return this.store.transaction(() => {
       const task = this.store.get<Task>("task", id);
       const allowed: Record<Task["status"], Task["status"][]> = {
@@ -460,17 +471,21 @@ export class TeamService {
           "Agent session is running",
         );
         this.resources.acquire(task.id, task.agentId, task.workflowId);
+        this.limits.recordTurn(task);
       }
-      if (data.status === "completed")
+      if (data.status === "completed") {
         assert(
           data.result?.trim(),
           "result_required",
           "Provide a completion result",
           400,
         );
+        this.limits.assertCompletion(task, data.result);
+      }
       task.status = data.status;
       if (data.status !== "running") this.resources.release(task.id);
       if (data.status === "queued") {
+        this.limits.recordRetry(task);
         delete task.result;
         task.queuedAt = new Date().toISOString();
       } else if (data.result) task.result = data.result;
@@ -485,6 +500,7 @@ export class TeamService {
         (task.status === "completed" || task.status === "failed")
       )
         this.flow(task, task.status === "completed" ? "result" : "failure");
+      this.limits.onTransition(task);
       return task;
     });
   }

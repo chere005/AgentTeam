@@ -8,7 +8,7 @@ import {
   extname,
   join,
 } from "node:path";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { openCommand } from "./native.ts";
@@ -16,6 +16,15 @@ import { randomUUID } from "node:crypto";
 import { ResourceCoordinator } from "./resources.ts";
 import { Store } from "./store.ts";
 import { AppError, assert, type Agent } from "./model.ts";
+import {
+  DIFF_MAX_BYTES,
+  type DiffMeta,
+  REVIEW_MAX_FILES,
+  capDiff,
+  parseDiffMeta,
+  parseNameStatus,
+  revisionProblem,
+} from "./diff.ts";
 const exec = promisify(execFile);
 const requestSchema = z
   .object({ workspace: z.string(), path: z.string().default(".") })
@@ -153,14 +162,128 @@ export class WorkspaceService {
       );
     }
   }
-  async gitInfo(agentId: string, input: unknown) {
+  private gitEnv() {
+    return {
+      ...process.env,
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_LITERAL_PATHSPECS: "1",
+      GIT_OPTIONAL_LOCKS: "0",
+    };
+  }
+  /** Run Git but stop reading (and kill it) once `cap` bytes were produced. */
+  private gitCapped(root: string, args: string[], cap: number) {
+    return new Promise<{ text: string; capped: boolean }>((done, fail) => {
+      const child = spawn("git", ["-C", root, ...args], {
+        env: this.gitEnv(),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const chunks: Buffer[] = [];
+      let size = 0,
+        capped = false,
+        err = "";
+      const timer = setTimeout(() => child.kill(), 15_000);
+      child.stdout.on("data", (c: Buffer) => {
+        if (capped) return;
+        chunks.push(c);
+        size += c.length;
+        if (size > cap) {
+          capped = true;
+          child.kill();
+        }
+      });
+      child.stderr.on("data", (c: Buffer) => (err = (err + c).slice(0, 1000)));
+      child.on("error", () => {
+        clearTimeout(timer);
+        fail(new AppError(400, "git_error", "Git command failed"));
+      });
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        if (capped || code === 0)
+          done({
+            text: Buffer.concat(chunks).subarray(0, cap).toString("utf8"),
+            capped,
+          });
+        else
+          fail(
+            new AppError(400, "git_error", err.trim() || "Git command failed"),
+          );
+      });
+    });
+  }
+  /** Resolve a user-supplied revision to a commit id; never passes option-like input to Git. */
+  async resolveRevision(root: string, rev: string, label: string) {
+    const problem = revisionProblem(rev);
+    assert(!problem, "invalid_revision", `${label}: ${problem}`, 400);
+    try {
+      return (
+        await this.git(root, [
+          "rev-parse",
+          "--verify",
+          "--quiet",
+          `${rev}^{commit}`,
+        ])
+      ).trim();
+    } catch {
+      throw new AppError(
+        400,
+        "invalid_revision",
+        `${label}: "${rev}" is not a known branch, tag or commit`,
+      );
+    }
+  }
+  private async compareSpec(
+    root: string,
+    d: { base: string; head?: string; mergeBase: boolean },
+  ) {
+    const head = d.head?.trim() || "HEAD";
+    const baseSha = await this.resolveRevision(root, d.base.trim(), "Base");
+    const headSha = await this.resolveRevision(root, head, "Head");
+    let from = baseSha,
+      mergeBaseSha: string | null = null;
+    if (d.mergeBase) {
+      try {
+        mergeBaseSha = (
+          await this.git(root, ["merge-base", baseSha, headSha])
+        ).trim();
+      } catch {
+        throw new AppError(
+          400,
+          "no_merge_base",
+          `"${d.base}" and "${head}" share no common ancestor; compare directly instead`,
+        );
+      }
+      from = mergeBaseSha;
+    }
+    return {
+      base: d.base.trim(),
+      head,
+      mergeBase: d.mergeBase,
+      baseSha,
+      headSha,
+      mergeBaseSha,
+      from,
+      to: headSha,
+    };
+  }
+  async gitInfo(
+    agentId: string,
+    input: unknown,
+    opts: { untrackedAll?: boolean } = {},
+  ) {
     const loc = await this.location(agentId, input);
     const cwd = (await stat(loc.target)).isDirectory()
       ? loc.target
       : dirname(loc.target);
     const repo = (await this.git(cwd, ["rev-parse", "--show-toplevel"])).trim();
     const [status, branch, branches, worktrees] = await Promise.all([
-      this.git(cwd, ["status", "--porcelain=v1", "-z", "--", loc.target]),
+      this.git(cwd, [
+        "status",
+        "--porcelain=v1",
+        "-z",
+        ...(opts.untrackedAll ? ["--untracked-files=all"] : []),
+        "--",
+        loc.target,
+      ]),
       this.git(cwd, ["branch", "--show-current"]),
       this.git(cwd, ["branch", "--format=%(refname:short)"]),
       this.git(cwd, ["worktree", "list", "--porcelain"]),
@@ -197,23 +320,146 @@ export class WorkspaceService {
     ]);
     return { diff: text, staged: data.staged, path: loc.relative };
   }
-  async review(agentId: string, input: unknown) {
+  /** Who else could have produced changes in this checkout; never claims more than the evidence. */
+  private attribution(
+    agentId: string,
+    root: string,
+    info: {
+      repository: string;
+      branch: string;
+      worktrees: Record<string, string | boolean>[];
+    },
+  ) {
+    const others = this.store
+      .list<Agent>("agent")
+      .filter(
+        (a) =>
+          a.id !== agentId &&
+          a.workspaces.some(
+            (w) => w.path === root || w.path === info.repository,
+          ),
+      )
+      .map((a) => a.name);
+    const main = info.worktrees[0]?.worktree;
+    const linked = !!main && main !== info.repository;
+    if (linked && !others.length)
+      return {
+        kind: "worktree" as const,
+        linked,
+        others,
+        note: `Linked worktree on ${info.branch}, attached only to this agent in AgentTeam. Changes here are most likely this agent's, though editors or other tools outside AgentTeam may also write to it.`,
+      };
+    return {
+      kind: "shared" as const,
+      linked,
+      others,
+      note: others.length
+        ? `Shared checkout also attached to ${others.join(", ")}. Changes cannot be attributed to one agent.`
+        : "Main checkout. Changes may come from any agent, editor or command; they are not attributed to this agent.",
+    };
+  }
+  private async reviewRefs(root: string, current: string) {
+    let refs: string[] = [];
+    try {
+      refs = (
+        await this.git(root, [
+          "for-each-ref",
+          "--format=%(refname:short)",
+          "--sort=-committerdate",
+          "refs/heads",
+          "refs/remotes",
+          "refs/tags",
+        ])
+      )
+        .split("\n")
+        .filter((r) => r && !/(^|\/)HEAD$/.test(r))
+        .slice(0, 400);
+    } catch {
+      /* repository without commits has no refs */
+    }
+    const defaultBase =
+      ["origin/main", "origin/master", "main", "master", "develop"].find(
+        (c) => refs.includes(c) && c !== current,
+      ) ?? "";
+    return { refs, defaultBase };
+  }
+  async review(agentId: string, input: unknown): Promise<ReviewResult> {
     const data = z
       .object({
         workspace: z.string(),
         path: z.string().optional(),
         staged: z.boolean().default(false),
+        base: z.string().max(200).optional(),
+        head: z.string().max(200).optional(),
+        mergeBase: z.boolean().default(true),
       })
       .strict()
       .parse(input);
-    const loc = await this.location(agentId, { workspace: data.workspace });
-    const info = await this.gitInfo(agentId, { workspace: data.workspace });
-    const files = info.status.filter((f) =>
-      data.staged
-        ? f.status[0] !== " " && f.status[0] !== "?"
-        : f.status[1] !== " ",
+    assert(
+      !(data.base && data.staged),
+      "invalid_scope",
+      "Branch comparison cannot be combined with the staged view",
+      400,
     );
-    if (data.path === undefined) return { ...info, files, diff: "" };
+    const loc = await this.location(agentId, { workspace: data.workspace });
+    const info = await this.gitInfo(
+      agentId,
+      { workspace: data.workspace },
+      { untrackedAll: !data.base },
+    );
+    const attribution = this.attribution(agentId, loc.root, info);
+    const compare = data.base
+      ? await this.compareSpec(loc.root, { ...data, base: data.base })
+      : null;
+    let files: {
+      status: string;
+      path: string;
+      from?: string;
+      similarity?: number;
+    }[];
+    if (compare) {
+      const names = await this.gitCapped(
+        loc.root,
+        [
+          "-c",
+          "core.quotePath=false",
+          "diff",
+          "--name-status",
+          "-z",
+          "-M",
+          "--no-ext-diff",
+          "--no-textconv",
+          compare.from,
+          compare.to,
+          "--",
+          loc.target,
+        ],
+        4_000_000,
+      );
+      files = parseNameStatus(names.text);
+    } else
+      files = info.status.filter((f) =>
+        data.staged
+          ? f.status[0] !== " " && f.status[0] !== "?"
+          : f.status[1] !== " ",
+      );
+    const filesTruncated = files.length > REVIEW_MAX_FILES;
+    if (filesTruncated) files = files.slice(0, REVIEW_MAX_FILES);
+    const common = {
+      ...info,
+      files,
+      filesTruncated,
+      compare,
+      attribution,
+      staged: data.staged,
+    };
+    if (data.path === undefined)
+      return {
+        ...common,
+        diff: "",
+        meta: null,
+        ...(await this.reviewRefs(loc.root, info.branch)),
+      };
     const file = files.find((f) => f.path === data.path);
     assert(
       file,
@@ -230,37 +476,87 @@ export class WorkspaceService {
       403,
     );
     if (file.status === "??") {
-      const preview = await this.preview(agentId, {
-        workspace: loc.root,
-        path: rel,
-      });
+      let preview;
+      try {
+        preview = await this.preview(agentId, {
+          workspace: loc.root,
+          path: rel,
+        });
+      } catch (e) {
+        const msg =
+          e instanceof AppError ? e.message : "The file could not be read";
+        return {
+          ...common,
+          binary: false,
+          truncated: false,
+          diff: "",
+          unreadable: `Untracked path cannot be previewed: ${msg}`,
+          meta: null,
+        };
+      }
       const content = preview.content ?? "";
       const lines = content ? content.replace(/\n$/, "").split("\n") : [];
+      const raw = preview.binary
+        ? "Binary file (untracked)"
+        : lines.length
+          ? `@@ -0,0 +1,${lines.length} @@\n` +
+            lines.map((line) => "+" + line).join("\n")
+          : "Empty untracked file";
+      const capped = preview.binary
+        ? { text: raw, truncated: false, reason: undefined }
+        : capDiff(raw, false);
       return {
-        ...info,
-        files,
+        ...common,
         binary: preview.binary,
-        truncated: preview.truncated,
-        diff: preview.binary
-          ? "Binary file (untracked)"
-          : lines.length
-            ? `@@ -0,0 +1,${lines.length} @@\n` +
-              lines.map((line) => "+" + line).join("\n")
-            : "Empty untracked file",
+        truncated: preview.truncated || capped.truncated,
+        truncatedReason: preview.truncated
+          ? "Large file: showing only the first 256 KB"
+          : capped.reason,
+        diff: capped.text,
+        meta: {
+          kind: "added",
+          binary: preview.binary,
+          submodule: false,
+          noHunks: !lines.length,
+        } as DiffMeta,
       };
     }
-    // Use a validated status entry as a literal pathspec: deleted paths need not exist.
-    const diff = await this.git(loc.root, [
-      "diff",
-      "--no-ext-diff",
-      "--no-textconv",
-      "--no-color",
-      "--unified=3",
-      ...(data.staged ? ["--cached"] : []),
-      "--",
+    // Use validated entries as literal pathspecs: deleted paths need not exist. Renames need both sides.
+    const specs = [
       target,
-    ]);
-    return { ...info, files, diff };
+      ...(file.from ? [resolve(info.repository, file.from)] : []),
+    ];
+    const out = await this.gitCapped(
+      loc.root,
+      [
+        "-c",
+        "core.quotePath=false",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        "--unified=3",
+        "-M",
+        ...(compare
+          ? [compare.from, compare.to]
+          : data.staged
+            ? ["--cached"]
+            : []),
+        "--",
+        ...specs,
+      ],
+      DIFF_MAX_BYTES,
+    );
+    const capped = capDiff(out.text, out.capped);
+    const meta = parseDiffMeta(capped.text);
+    return {
+      ...common,
+      diff: capped.text,
+      binary: meta.binary,
+      truncated: capped.truncated,
+      truncatedReason: capped.reason,
+      meta,
+    };
   }
   async mutateGit(agentId: string, input: unknown) {
     const data = z
@@ -408,6 +704,33 @@ export class WorkspaceService {
     return { executable, args, executed: execute, application: app };
   }
 }
+type ReviewResult = Awaited<ReturnType<WorkspaceService["gitInfo"]>> & {
+  files: { status: string; path: string; from?: string; similarity?: number }[];
+  filesTruncated: boolean;
+  compare: {
+    base: string;
+    head: string;
+    mergeBase: boolean;
+    baseSha: string;
+    headSha: string;
+    mergeBaseSha: string | null;
+  } | null;
+  attribution: {
+    kind: "worktree" | "shared";
+    linked: boolean;
+    others: string[];
+    note: string;
+  };
+  staged: boolean;
+  diff: string;
+  meta: DiffMeta | null;
+  binary?: boolean;
+  truncated?: boolean;
+  truncatedReason?: string;
+  unreadable?: string;
+  refs?: string[];
+  defaultBase?: string;
+};
 export function parseStatus(raw: string) {
   const records = raw.split("\0");
   const files = [];

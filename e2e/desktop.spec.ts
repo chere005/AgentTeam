@@ -193,8 +193,8 @@ test("review feedback, local preview and isolated worktree flow", async () => {
     await page.getByRole("button", { name: "Workspace", exact: true }).click();
     await page.getByRole("button", { name: "Review", exact: true }).click();
     await expect(
-      page.getByRole("table", { name: "Unified diff" }),
-    ).toContainText("+after");
+      page.getByRole("table", { name: "Side-by-side diff" }),
+    ).toContainText("after");
     await page
       .getByRole("button", { name: "Comment on new line 1", exact: true })
       .click();

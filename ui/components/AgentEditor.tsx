@@ -2,6 +2,9 @@ import { PrioritySelect } from "./PrioritySelect";
 import { useEffect, useState } from "react";
 import { X, Plus, FolderOpen } from "lucide-react";
 import { api, agentInput, type Agent, type Snapshot } from "../api";
+import { resolveModelState } from "../../src/model-choices";
+import { InvocationPanel } from "./InvocationPanel";
+import "./runtime-ui.css";
 const defaults = {
   schedulingPriority: 50,
   name: "",
@@ -62,11 +65,16 @@ export function AgentEditor({
     };
   }, []);
   const runtime = runtimes.find((r) => r.id === form.environment);
-  const modelOptions = runtime?.models ?? [
-    { id: "default", name: "Provider default", efforts: [] },
-  ];
-  const effortOptions =
-    modelOptions.find((m: any) => m.id === form.model)?.efforts ?? [];
+  const modelState = resolveModelState(runtime, form.model, form.effort);
+  const modelOptions = modelState.options;
+  const effortOptions = modelState.efforts;
+  const savedModelLabel = {
+    unavailable: " (unavailable in this installation)",
+    unlisted: " (not verified)",
+    unverifiable: " (installation not detected)",
+    pending: "",
+    ok: "",
+  }[modelState.status];
   const skills = (catalog?.[source]?.groups?.[form.environment] ?? []) as any[];
   async function addFolder() {
     try {
@@ -176,9 +184,13 @@ export function AgentEditor({
                       </option>
                     ))}
                     {!modelOptions.some((m: any) => m.id === form.model) && (
-                      <option value={form.model}>{form.model}</option>
+                      <option value={form.model}>
+                        {form.model + savedModelLabel}
+                      </option>
                     )}
-                    <option value="custom">Custom model ID…</option>
+                    <option value="custom">
+                      Custom model ID (not validated)…
+                    </option>
                   </select>
                   {customModel && (
                     <input
@@ -186,6 +198,15 @@ export function AgentEditor({
                       value={form.model}
                       onChange={(e) => update("model", e.target.value)}
                     />
+                  )}
+                  {modelState.warning && (
+                    <span
+                      className="model-warning"
+                      role="status"
+                      data-testid="model-warning"
+                    >
+                      {modelState.warning}
+                    </span>
                   )}
                   <small>
                     {runtime?.installed
@@ -198,7 +219,10 @@ export function AgentEditor({
                 <label>
                   Effort
                   <select
-                    disabled={!effortOptions.length}
+                    aria-label="Effort"
+                    disabled={
+                      !effortOptions.length && !modelState.unsupportedEffort
+                    }
                     value={form.effort ?? ""}
                     onChange={(e) => update("effort", e.target.value || null)}
                   >
@@ -206,7 +230,26 @@ export function AgentEditor({
                     {effortOptions.map((effort: string) => (
                       <option key={effort}>{effort}</option>
                     ))}
+                    {modelState.unsupportedEffort && (
+                      <option value={modelState.unsupportedEffort}>
+                        {modelState.unsupportedEffort} (not supported)
+                      </option>
+                    )}
                   </select>
+                  {modelState.unsupportedEffort && (
+                    <span
+                      className="effort-warning"
+                      role="status"
+                      data-testid="effort-warning"
+                    >
+                      The selected model does not offer “
+                      {modelState.unsupportedEffort}”. It is kept until you
+                      change it.
+                    </span>
+                  )}
+                  {!effortOptions.length && !modelState.unsupportedEffort && (
+                    <small>No effort choices for this model.</small>
+                  )}
                 </label>
                 <label>
                   Max concurrent invoked agents
@@ -270,6 +313,13 @@ export function AgentEditor({
                   </select>
                 </label>
               </div>
+              {agent && (
+                <InvocationPanel
+                  agent={agent}
+                  limit={form.maxConcurrentInvocations}
+                  data={data}
+                />
+              )}
               <label>
                 Role / specialty
                 <textarea

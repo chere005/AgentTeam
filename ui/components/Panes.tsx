@@ -7,6 +7,7 @@ import {
   WolframSampleButton,
   WorkflowGateSummary,
 } from "./Validation";
+import { WorkflowLimits } from "./Limits";
 import { HarnessSettings } from "./HarnessSettings";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -487,6 +488,7 @@ export function Workflows(p: PaneProps) {
           <p>{w.goal}</p>
           <SampleSetup workflow={w} act={p.act} />
           <WorkflowGateSummary tasks={w.tasks} />
+          <WorkflowLimits workflowId={w.id} act={p.act} />
           <div className="progress">
             <span
               style={{

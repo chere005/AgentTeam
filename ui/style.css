@@ -1683,3 +1683,84 @@ summary:focus-visible {
 .approval-panel .row {
   flex-wrap: wrap;
 }
+
+/* Review viewer: compare form, side-by-side, tokens, navigation */
+.review-compare {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0;
+}
+.review-compare label.inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.review-toolbar {
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.review-meta {
+  margin: 8px 0;
+  padding-left: 18px;
+  color: #cfe0d8;
+}
+.diff-hunk {
+  background: #253440;
+  color: #aecadd;
+}
+.diff-hunk.current-hunk td,
+.diff-hunk.current-hunk {
+  outline: 2px solid #5fd1a4;
+  outline-offset: -2px;
+}
+.diff-empty {
+  background: #1a2220;
+}
+.diff-prefix {
+  display: inline-block;
+  width: 1.2ch;
+  user-select: none;
+}
+.diff-split {
+  table-layout: fixed;
+}
+.diff-split col.no {
+  width: 44px;
+}
+.diff-split col.btn {
+  width: 28px;
+}
+.diff-split td {
+  vertical-align: top;
+  overflow: hidden;
+}
+.diff-split td code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.diff-split td:nth-child(3n + 1) {
+  text-align: right;
+  color: #8eaaa0;
+  user-select: none;
+}
+.diff-comment {
+  padding: 0 6px;
+  line-height: 1.4;
+}
+.tok-kw {
+  color: #e6a4ff;
+}
+.tok-str {
+  color: #f6d68b;
+}
+.tok-com {
+  color: #8da39a;
+  font-style: italic;
+}
+.tok-num {
+  color: #8fd3ff;
+}
+.diff-scroll:focus-visible {
+  outline: 2px solid #5fd1a4;
+}

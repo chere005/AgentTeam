@@ -17,6 +17,11 @@ export class Scheduler {
     this.service = service;
     this.runs = runs;
     this.executeProvider = executeProvider;
+    service.limits.abortTask = (id) => {
+      const controller = runs.active.get("task:" + id);
+      controller?.abort();
+      return !!controller;
+    };
   }
   start() {
     for (const t of this.service.store.list<Task>("task"))
@@ -35,6 +40,7 @@ export class Scheduler {
     if (this.busy || this.stopped || !this.runs.enabled) return;
     this.busy = true;
     try {
+      this.service.limits.sweep(); // runtime clock + runtime/token budget trips
       const tasks = this.service.store
         .list<Task>("task")
         .filter((t) => t.status === "queued");
@@ -43,12 +49,14 @@ export class Scheduler {
         agentId: string;
         queuedAt: string;
       }>("run-request");
+      // One clock reading for every score so equal-age work keeps FIFO (stable sort) order.
+      const now = Date.now();
       const candidates = [
         ...tasks.map((task) => ({
           kind: "task" as const,
           task,
           priority: this.service.resources.priority(task.agentId),
-          score: this.service.resources.score(task),
+          score: this.service.resources.score(task, now),
         })),
         ...requests.map((request) => ({
           kind: "chat" as const,
@@ -56,7 +64,7 @@ export class Scheduler {
           priority: this.service.resources.priority(request.agentId),
           score:
             this.service.resources.priority(request.agentId) +
-            Math.max(0, Date.now() - Date.parse(request.queuedAt)) / 5000,
+            Math.max(0, now - Date.parse(request.queuedAt)) / 5000,
         })),
       ].sort(comparePriority);
       for (const candidate of candidates) {
@@ -72,6 +80,7 @@ export class Scheduler {
                 "agent_busy",
                 "session_busy",
                 "human_control",
+                "runtime_resolving",
               ].includes(code ?? "")
             ) {
               this.service.store.remove("run-request", candidate.request.id);
@@ -90,6 +99,10 @@ export class Scheduler {
         try {
           plan = await this.service.launchPlan(task.agentId);
           if (this.stopped || !this.runs.enabled) break;
+          // Leave the task queued until its runtime is resolved; an unavailable runtime fails the task in execute().
+          if (this.runs.readiness && plan.connection?.transport !== "acp")
+            if (this.runs.readiness(plan.environment).state === "resolving")
+              continue;
           this.service.transitionTask(task.id, { status: "running" });
         } catch {
           continue;
@@ -107,7 +120,9 @@ export class Scheduler {
     plan: Awaited<ReturnType<TeamService["launchPlan"]>>,
     controller: AbortController,
   ) {
+    let result = "";
     try {
+      this.runs.assertRuntimeReady(plan);
       const inputs = task.dependsOn
         .map((id) => this.service.store.get<Task>("task", id))
         .map((t) => `${t.title}: ${t.result}`)
@@ -121,11 +136,12 @@ export class Scheduler {
         `${task.title}\n${task.instructions}\nCompletion criteria: ${task.completionCriteria}\nDependency results:\n${inputs}`,
         this.runs.cwd,
       );
-      let result = "";
       await this.executeProvider(
         command,
         plan.environment,
         (event) => {
+          if (event.type === "usage")
+            this.service.limits.recordUsage(task, event.data);
           if (event.type === "text")
             result += String(event.data) + (command.acp ? "" : "\n");
           this.service.store.emit("task.runtime", task.id, {
@@ -141,15 +157,27 @@ export class Scheduler {
         },
       );
       if (!result.trim()) throw new Error("Provider returned no text");
+      const evidence = await this.service.limits.evaluate(
+        task,
+        result.slice(0, 100000),
+        plan.cwd ?? this.runs.cwd,
+      );
+      if (evidence && !evidence.passed)
+        throw new Error(this.service.limits.failedChecksText(evidence));
       this.service.transitionTask(task.id, {
         status: "completed",
         result: result.slice(0, 100000),
       });
     } catch (error) {
-      this.service.transitionTask(task.id, {
-        status: controller.signal.aborted ? "cancelled" : "failed",
-        result: error instanceof Error ? error.message : "Execution failed",
-      });
+      this.service.transitionTask(
+        task.id,
+        this.service.limits.finishAbnormal(
+          task,
+          controller.signal.aborted,
+          error instanceof Error ? error.message : "Execution failed",
+          result,
+        ),
+      );
     } finally {
       this.service.approvals.cancelAgent(task.agentId);
       this.runs.active.delete("task:" + task.id);

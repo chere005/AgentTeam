@@ -9,6 +9,7 @@ import {
   type SessionConfigOption,
 } from "@agentclientprotocol/sdk";
 import { assert } from "./model.ts";
+import { killPlanned, planSpawn } from "./runtime-spawn.ts";
 import type { RuntimeAdapter } from "./runtime-types.ts";
 
 export function acpSessionPrefix(executable: string, args: string[]) {
@@ -25,10 +26,13 @@ export const acpAdapter: RuntimeAdapter = {
   async execute(command, _environment, emit, signal, hooks) {
     signal.throwIfAborted();
     const request = command.acp!;
-    const child = spawn(command.executable, command.args, {
+    const plan = await planSpawn(command.executable, command.args);
+    signal.throwIfAborted();
+    const child = spawn(plan.command, plan.args, {
       cwd: command.cwd,
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
+      ...plan.options,
     });
     let stderr = "",
       bytes = 0,
@@ -54,9 +58,9 @@ export const acpAdapter: RuntimeAdapter = {
       });
     });
     const terminate = () => {
-      child.kill("SIGTERM");
+      killPlanned(child, plan, "SIGTERM");
       if (!force) {
-        force = setTimeout(() => child.kill("SIGKILL"), 2000);
+        force = setTimeout(() => killPlanned(child, plan, "SIGKILL"), 2000);
         force.unref();
       }
     };

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { completionCheckSchema } from "./limits-schema.ts";
 export const environment = z.enum(["codex", "claude", "wolfram"]);
 export const workspaceSchema = z
   .object({
@@ -122,6 +123,8 @@ export const taskSchema = z
     dependsOn: z.array(z.string()).default([]),
     completionCriteria: z.string().min(1),
     requiresValidation: z.boolean().optional(),
+    parentTaskId: z.string().optional(),
+    completionChecks: z.array(completionCheckSchema).max(20).optional(),
   })
   .strict();
 export type AgentInput = z.infer<typeof agentSchema>;

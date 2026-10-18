@@ -45,6 +45,7 @@ async function start() {
   const scheduler = new Scheduler(service, runs);
   scheduler.start();
   const discovery = new RuntimeDiscovery(store);
+  runs.readiness = (environment) => discovery.readiness(environment);
   if (process.env.AGENTTEAM_TEST !== "1")
     void discovery
       .refresh()

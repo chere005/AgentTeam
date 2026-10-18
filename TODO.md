@@ -34,16 +34,14 @@ At this checkpoint, type checking and the production build pass. All 43 backend 
 
 ### Code review viewer
 
-- [ ] Verify the Review tab in the running desktop app, in both the main and right panes, including narrow layouts and keyboard navigation.
+- [ ] Verify the Review tab in the running desktop app in the right pane too (Playwright e2e/review.spec.ts covers one pane with narrow layout and keyboard navigation).
 - [ ] Finish inline comments: select a changed line, show its file and old/new line anchor, write feedback, and choose a recipient agent.
 - [ ] Show whether feedback was sent, queued, or scheduled; offer Open conversation for the recipient.
 - [ ] Persist review comments and expose unresolved/resolved status; mark outdated anchors when the diff changes.
 - [ ] Add an overall review summary and explicit Request changes / Approve review actions. Approval must not silently commit or merge.
-- [ ] Add side-by-side view and syntax highlighting while retaining unified view for narrow panes.
-- [ ] Compare a branch against a chosen base or merge base, in addition to local staged/unstaged changes.
-- [ ] Handle renames, binary files, file-mode changes, large diffs, deleted directory trees, and files with unusual names clearly.
+- [ ] Add desktop (Playwright) coverage for the binary, truncated-diff, deleted-tree and unusual-name notices; backend fixtures and the rename/mode UI are already covered.
 - [ ] Add per-file reviewed markers tied to the current diff snapshot so changed content becomes unreviewed again.
-- [ ] Scope review to an agent's worktree or task when possible; shared-folder changes must not be attributed to one agent without evidence.
+- [ ] Scope review to an agent's task (worktree/shared-checkout attribution is done; tasks do not record a base revision or workspace yet).
 
 ### Automatic worktree setup
 
@@ -77,10 +75,7 @@ At this checkpoint, type checking and the production build pass. All 43 backend 
 
 ## 2 Finish the requested agent editor changes — P0
 
-- [ ] Show which running children count toward the limit and why additional invocations are waiting.
-- [ ] Validate model dropdowns against the selected installation and preserve a clearly labeled custom model option.
-- [ ] Expose only supported effort choices, including appropriate choices for the installation's default model.
-- [ ] Show unavailable or unsupported saved models without silently switching the agent to another model.
+No open items. Invocation-limit display, installation-validated model/effort choices and unavailable-model warnings are implemented and covered by `e2e/runtime-settings.spec.ts`; this heading is kept so section numbers stay stable.
 
 ## 3 Provider installations and useful agent execution — P0
 
@@ -112,15 +107,12 @@ References: [ACP protocol](https://agentclientprotocol.com/protocol/overview), [
 
 - [ ] Verify automatic discovery of existing Codex, Claude Code, and Wolfram installations on all supported platforms.
 - [ ] Reuse provider-managed authentication without importing or displaying raw credentials.
-- [ ] Keep manual executable selection, reset-to-auto-detect, rescan, and useful installation/authentication diagnostics in Settings.
-- [ ] Prevent startup races: queued work must wait until the selected runtime is resolved and ready.
-- [ ] Handle executable removal, stale manual paths, upgrades, and Windows command shims correctly.
+- [ ] Verify Windows command-shim launching (`.cmd`/`.bat`, src/runtime-spawn.ts) on a real Windows machine with npm-installed Codex/Claude; it is fixture-tested only. Removal, stale manual paths, upgrades, diagnostics, reset/rescan and startup waiting are implemented and tested with fixtures.
 - [ ] Validate CLI flags and model/effort discovery against actual supported provider versions.
 - [ ] Move beyond the current read-only Codex adapter and tool-free Claude adapter so agents can perform authorized coding work.
 - [ ] Implement provider permission/approval handling and expose pending approvals in the UI.
 - [ ] Map attached folders and read/write settings to real provider restrictions where supported; state remaining limits clearly.
 - [ ] Validate Wolfram execution with a configured local installation, evaluator selection, error handling, and session context.
-- [ ] Add a runtime capability table: streaming, tools, effort, model discovery, session resume, subagents, and cancellation.
 - [ ] Preserve provider session identity and verify resume after restart, model changes, and human takeover.
 - [ ] Provide a guided first-run check that does not require an Enable execution checkbox and does not unexpectedly drain old queued work.
 - [ ] Correct README and release notes that still describe execution as off by default.
@@ -164,9 +156,8 @@ References: [ACP protocol](https://agentclientprotocol.com/protocol/overview), [
 - [ ] Complete action rules such as “when a database review is needed, invoke this agent.”
 - [ ] Resolve competing rules by priority; show ties and the winning rule in the UI.
 - [ ] Support explicit recipient overrides and sensible fallback routing for unaddressed requests.
-- [ ] Enforce maximum concurrent children across native invocation paths as well as workflow tasks.
-- [ ] Detect delegation loops and enforce bounded recursion/handoff limits.
-- [ ] Define cancellation propagation, partial-result handling, and return-to-parent behavior.
+- [ ] Route the future provider-tool teammate invocation path through `TeamService.task` so the max-children cap, depth/loop checks and limits (`src/limits.ts`) apply to it; today only workflow-task invocation exists and is enforced (per-parent `maxChildrenPerTask` plus agent `maxConcurrentInvocations`).
+- [ ] Surface cancellation propagation, `delegation.returned` events and partial results in the UI/canvas, and deliver a child's partial result back into the parent's context (backend propagation and persistence are done).
 - [ ] Show pending, running, returning, failed, and blocked communication on the canvas, with actual direction and correlated messages.
 
 ## 7 Checkpoints and reliable workflow recovery — P1
@@ -182,12 +173,9 @@ References: [ACP protocol](https://agentclientprotocol.com/protocol/overview), [
 
 ## 8 Stopping conditions and usage limits — P1
 
-- [ ] Configure maximum workflow runtime, agent turns, handoffs, retries, and spawned-agent totals.
-- [ ] Define completion conditions using explicit outputs/checks, rather than accepting any returned text as success.
-- [ ] Add per-workflow token/usage budgets where providers report usage; show unavailable metrics honestly.
-- [ ] Distinguish subscription quotas from API monetary costs; do not invent a dollar estimate for opaque subscription usage.
-- [ ] Show budget consumption and the exact reason a workflow stopped.
-- [ ] Allow safe pause/resume or an explicit budget extension while preserving work.
+- [ ] Add a UI editor for per-task completion checks (backend, API `PUT /tasks/:id/completion-checks` and scheduler enforcement are done; only workflow limits have UI).
+- [ ] Verify token-usage parsing against live Codex/Claude/ACP output (fixture-tested only; Wolfram and ACP report no usage today, shown as unavailable).
+- [ ] Detect subscription-quota vs API-key access per provider; today cost is always shown as unavailable and tokens are never converted to dollars.
 
 ## 9 Team playground and run inspector — P1
 

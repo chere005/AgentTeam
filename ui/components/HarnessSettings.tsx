@@ -1,4 +1,6 @@
 import { Connections } from "./Connections";
+import { RuntimeCapabilities } from "./RuntimeCapabilities";
+import "./runtime-ui.css";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { FolderOpen, RefreshCw } from "lucide-react";
@@ -50,13 +52,15 @@ export function HarnessSettings({
             <div className="row between">
               <b>{r.id}</b>
               <span className={"badge " + (r.installed ? "green" : "")}>
-                {!r.installed
-                  ? "Not found"
-                  : r.authenticated === true
-                    ? "Installed · signed in"
-                    : r.authenticated === false
-                      ? "Installed · sign in needed"
-                      : "Installed"}
+                {r.staleOverride
+                  ? "Manual path unavailable"
+                  : !r.installed
+                    ? "Not found"
+                    : r.authenticated === true
+                      ? "Installed · signed in"
+                      : r.authenticated === false
+                        ? "Installed · sign in needed"
+                        : "Installed"}
               </span>
             </div>
             <label>
@@ -105,18 +109,27 @@ export function HarnessSettings({
                   })
                 }
               >
-                Auto-detect
+                Reset to auto-detect
               </button>
               <small>
                 {state.overrides?.[r.id] ? "Manual override" : "Automatic"}
+                {r.version ? " · " + r.version : ""}
               </small>
             </div>
+            <ul className="diagnostics" aria-label={r.id + " diagnostics"}>
+              {(r.diagnostics ?? []).map((d: any) => (
+                <li key={d.code} className={d.level} data-code={d.code}>
+                  {d.message}
+                </li>
+              ))}
+            </ul>
             <p className="hint">
-              {r.note ?? `${r.models.length} model choices · ${r.modelSource}`}
+              {`${r.models.length} model choices · ${r.modelSource}`}
             </p>
           </div>
         ))}
       </section>
+      <RuntimeCapabilities />
     </>
   );
 }
