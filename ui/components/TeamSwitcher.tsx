@@ -121,18 +121,11 @@ export function TeamSwitcher({
       >
         <span className={"team-dot " + active.status} aria-hidden="true" />
         <span className="team-switcher-text">
-          <small>ACTIVE TEAM</small>
           <b data-testid="active-team-name">{active.name}</b>
         </span>
         <span className="team-counts" aria-hidden="true">
           {active.running > 0 && (
             <span className="team-chip running">{active.running} running</span>
-          )}
-          {active.attention > 0 && (
-            <span className="team-chip attention">
-              {active.attention} need{active.attention === 1 ? "s" : ""}{" "}
-              attention
-            </span>
           )}
         </span>
         {(otherRunning > 0 || otherAttention > 0) && (

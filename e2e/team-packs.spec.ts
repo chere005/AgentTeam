@@ -2,6 +2,7 @@ import { test, expect, _electron as electron } from "@playwright/test";
 import { mkdtemp, rm, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openFeature } from "./helpers";
 
 test("team packs: preview, gated install with groups, and three-way update that keeps local edits", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentteam-packs-ui-"));
@@ -18,10 +19,7 @@ test("team packs: preview, gated install with groups, and three-way update that 
     await expect(
       page.getByText("Workspace connected", { exact: true }),
     ).toBeVisible();
-    await page
-      .getByRole("button", { name: "Saved teams", exact: true })
-      .first()
-      .click();
+    await openFeature(page, "Team library");
     const library = page.getByRole("list", { name: "Bundled packs" });
     await expect(library).toContainText("Swift development");
     await expect(library).toContainText("skeleton");
@@ -120,10 +118,7 @@ test("team packs: preview, gated install with groups, and three-way update that 
     }
     const next = join(directory, "swift-0.2.0.json");
     await writeFile(next, JSON.stringify(manifest));
-    await page
-      .getByRole("button", { name: "Saved teams", exact: true })
-      .first()
-      .click();
+    await openFeature(page, "Team library");
     const installed = page.getByRole("list", { name: "Installed packs" });
     await expect(installed).toContainText("Swift development");
     const [chooser] = await Promise.all([

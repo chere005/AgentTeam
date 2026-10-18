@@ -2,6 +2,7 @@ import { test, expect, _electron as electron } from "@playwright/test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openFeature } from "./helpers";
 
 test("run inspector: timeline, wait explainer, transfers, previews, playground compare and redacted export", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentteam-e2e-inspector-"));
@@ -66,7 +67,7 @@ test("run inspector: timeline, wait explainer, transfers, previews, playground c
         dependsOn: [blocker.id],
       });
     });
-    await page.getByRole("button", { name: /^Run inspector/ }).click();
+    await openFeature(page, "Timeline & inspector");
     const inspector = page.getByTestId("inspector");
     await expect(inspector).toBeVisible();
 
@@ -224,7 +225,7 @@ test("run inspector: timeline, wait explainer, transfers, previews, playground c
     );
 
     // ---- canvas: open a connection to see its transfers -------------------------------------------
-    await page.getByRole("button", { name: /^Team canvas/ }).click();
+    await openFeature(page, "Canvas");
     // Dispatch the click on the edge element itself rather than at its bounding-box centre. A
     // coordinate click was flaky in full-suite runs (2 of 3 runs once): the canvas keeps moving the
     // edge after it looked stable (initial fitView once nodes are measured, cards growing as their

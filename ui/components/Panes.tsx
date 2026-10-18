@@ -60,6 +60,7 @@ import {
   Search,
   Clock,
   Network,
+  MoreHorizontal,
 } from "lucide-react";
 import {
   api,
@@ -71,6 +72,7 @@ import {
   type TeamEvent,
 } from "../api";
 import { eventVisible } from "../team-view";
+import type { FeatureId } from "../features";
 /** Comma-separated declared task paths from the task form. */
 const declaredPaths = (text: string) =>
   text
@@ -86,6 +88,8 @@ export type PaneProps = {
   edit: (a: Agent) => void;
   /** Select an agent and show its conversation pane. */
   openChat?: (id: string) => void;
+  /** Open (or focus) a feature tab. */
+  openFeature?: (id: FeatureId) => void;
 };
 function AgentPicker(p: PaneProps & { unread?: Record<string, number> }) {
   return (
@@ -113,6 +117,7 @@ export function Chat(p: PaneProps) {
     session = p.data.sessions.find((s) => s.agentId === p.selected);
   const [sending, setSending] = useState(false),
     [searching, setSearching] = useState(false),
+    [options, setOptions] = useState(false),
     // Which agent the loaded messages belong to (scroll restore must not run on stale messages).
     [owner, setOwner] = useState("");
   const unread = useUnread(p.events, p.selected);
@@ -188,18 +193,11 @@ export function Chat(p: PaneProps) {
   return (
     <div className="chat pane-content">
       <div className="chat-toolbar">
-        <div>
+        <div className="grow">
           <span className="eyebrow">TALKING TO</span>
           <AgentPicker {...p} unread={unread.counts} />
         </div>
         <div className="row">
-          <button
-            className="icon"
-            title="Configure agent"
-            onClick={() => p.edit(agent)}
-          >
-            <Settings2 size={17} />
-          </button>
           <button
             className="icon"
             title="Search messages"
@@ -209,47 +207,71 @@ export function Chat(p: PaneProps) {
           >
             <Search size={17} />
           </button>
+          <button
+            className="icon"
+            title="Agent setup"
+            aria-label={`Set up ${agent.name}`}
+            onClick={() => p.edit(agent)}
+          >
+            <Settings2 size={17} />
+          </button>
+          <button
+            className="icon"
+            title="Who drives this agent, CLI and native app"
+            aria-label="Conversation options"
+            aria-expanded={options}
+            onClick={() => setOptions((v) => !v)}
+          >
+            <MoreHorizontal size={17} />
+          </button>
         </div>
       </div>
-      <OwnershipBar agent={agent} events={p.events} act={p.act} />
+      <OwnershipBar
+        agent={agent}
+        events={p.events}
+        act={p.act}
+        quiet={!options}
+      />
       {searching && (
         <ConversationSearch agentId={agent.id} openChat={p.openChat} />
       )}
-      <div className="chat-mode">
-        <div className="tabs">
-          <button
-            className={mode === "chat" ? "active" : ""}
-            onClick={() => setMode("chat")}
-          >
-            Chat
-          </button>
-          <button
-            className={mode === "cli" ? "active" : ""}
-            onClick={() =>
-              void p.act(async () => {
-                setCli(await takeThenOpen(agent.id, "cli"));
-                setMode("cli");
-              })
-            }
-          >
-            CLI
-          </button>
-          <button
-            onClick={() =>
-              void p.act(async () => {
-                const result = await takeThenOpen(agent.id, "native");
-                setCli(result);
-                setMode("cli");
-              })
-            }
-          >
-            Native app <ExternalLink size={12} />
-          </button>
+      {(options || mode === "cli") && (
+        <div className="chat-mode">
+          <div className="tabs">
+            <button
+              className={mode === "chat" ? "active" : ""}
+              onClick={() => setMode("chat")}
+            >
+              Chat
+            </button>
+            <button
+              className={mode === "cli" ? "active" : ""}
+              onClick={() =>
+                void p.act(async () => {
+                  setCli(await takeThenOpen(agent.id, "cli"));
+                  setMode("cli");
+                })
+              }
+            >
+              CLI
+            </button>
+            <button
+              onClick={() =>
+                void p.act(async () => {
+                  const result = await takeThenOpen(agent.id, "native");
+                  setCli(result);
+                  setMode("cli");
+                })
+              }
+            >
+              Native app <ExternalLink size={12} />
+            </button>
+          </div>
+          <span className="quiet">
+            {agent.environment} · {agent.model} · {agent.effort ?? "auto"}
+          </span>
         </div>
-        <span className="quiet">
-          {agent.environment} · {agent.model} · {agent.effort ?? "auto"}
-        </span>
-      </div>
+      )}
       {mode === "cli" ? (
         <div className="scroll section">
           <h3>Continue in your agent’s interface</h3>
@@ -404,8 +426,7 @@ export function Chat(p: PaneProps) {
               />
               <div className="row between">
                 <span className="hint">
-                  {agent.workspaces.length} folders · {agent.skills.length}{" "}
-                  skills · Enter to send · Shift+Enter for newline
+                  Enter to send · Shift+Enter for a new line
                 </span>
                 {session?.state === "running" ? (
                   <button
@@ -503,10 +524,10 @@ export function Workflows(p: PaneProps) {
         </div>
       </div>
       <p className="hint projects-hint">
-        A team ({teamName}) is the persistent group of agents; a project is one
-        piece of work assigned to it, with its own goal, workspace, tasks and
-        gates. Executable step graphs inside a project are under Workflow
-        graphs.
+        A project is one piece of work for {teamName}: a goal, a workspace,
+        tasks and gates, run by the team’s agents.{" "}
+        {p.data.workflows.length > 0 &&
+          `${p.data.workflows.filter((w) => w.status === "running").length} running · ${p.data.workflows.filter((w) => w.status === "queued").length} queued · ${p.data.workflows.filter((w) => w.status === "completed").length} complete.`}
       </p>
       {assigning && (
         <AssignProject
@@ -516,26 +537,6 @@ export function Workflows(p: PaneProps) {
           close={() => setAssigning(false)}
         />
       )}
-      <div className="summary-grid">
-        <div>
-          <strong>
-            {p.data.workflows.filter((w) => w.status === "running").length}
-          </strong>
-          <span>Running</span>
-        </div>
-        <div>
-          <strong>
-            {p.data.workflows.filter((w) => w.status === "queued").length}
-          </strong>
-          <span>Queued</span>
-        </div>
-        <div>
-          <strong>
-            {p.data.workflows.filter((w) => w.status === "completed").length}
-          </strong>
-          <span>Complete</span>
-        </div>
-      </div>
       {creating && (
         <form
           className="form-card"
@@ -617,10 +618,34 @@ export function Workflows(p: PaneProps) {
             <PipelineHistory workflowId={w.id} act={p.act} />
           )}
           <WorkflowGateSummary tasks={w.tasks} />
-          <WorkflowLimits workflowId={w.id} act={p.act} />
-          <WorkflowRecovery workflowId={w.id} act={p.act} />
-          <WorkflowSharedState workflowId={w.id} />
-          <WorkflowStateEditor workflowId={w.id} act={p.act} />
+          {p.openFeature && (
+            <div className="row wrap project-links">
+              <button
+                className="text-button"
+                onClick={() => p.openFeature!("limits")}
+              >
+                Limits
+              </button>
+              <button
+                className="text-button"
+                onClick={() => p.openFeature!("recovery")}
+              >
+                Recovery
+              </button>
+              <button
+                className="text-button"
+                onClick={() => p.openFeature!("shared")}
+              >
+                Shared state
+              </button>
+              <button
+                className="text-button"
+                onClick={() => p.openFeature!("graphs")}
+              >
+                Workflow graphs
+              </button>
+            </div>
+          )}
           <div className="progress">
             <span
               style={{
@@ -1012,138 +1037,21 @@ export function Workflows(p: PaneProps) {
 function ListTodoIcon() {
   return <Check size={30} />;
 }
-export function Skills(p: PaneProps) {
-  const [catalog, setCatalog] = useState<any>(null),
-    [source, setSource] = useState("bundled"),
-    [env, setEnv] = useState("codex"),
-    [search, setSearch] = useState("");
-  const refresh = () => api("/skills").then(setCatalog);
-  useEffect(() => {
-    void p.act(refresh);
-  }, []);
-  const entries = catalog?.[source]?.groups?.[env] ?? [],
-    agent = p.data.agents.find((a) => a.id === p.selected);
-  return (
-    <div className="scroll section">
-      <div className="section-title">
-        <div>
-          <span className="eyebrow">CAPABILITIES</span>
-          <h2>Skills library</h2>
-        </div>
-        <button
-          title="Rescan skills"
-          onClick={() =>
-            void p.act(async () => {
-              await api("/skills/refresh", "POST");
-              await refresh();
-            })
-          }
-        >
-          <RefreshCw size={16} />
-        </button>
-      </div>
-      <div className="tabs">
-        <button
-          className={source === "bundled" ? "active" : ""}
-          onClick={() => setSource("bundled")}
-        >
-          Recommended
-        </button>
-        <button
-          className={source === "installed" ? "active" : ""}
-          onClick={() => setSource("installed")}
-        >
-          Already installed
-        </button>
-      </div>
-      <div className="row filters">
-        <select
-          aria-label="Skill environment"
-          value={env}
-          onChange={(e) => setEnv(e.target.value)}
-        >
-          {["codex", "claude", "wolfram", "unknown"].map((v) => (
-            <option key={v}>{v}</option>
-          ))}
-        </select>
-        <input
-          aria-label="Search library"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Language, database, framework…"
-        />
-      </div>
-      <p className="hint">
-        {source === "bundled"
-          ? "Pinned starter skills with upstream attribution. Format compatibility is shown; provider execution is not benchmarked."
-          : "Discovered from your existing harness directories. Original files are left in place."}
-      </p>
-      <div className="row">
-        <span className="quiet">Add to</span>
-        <AgentPicker {...p} />
-      </div>
-      <div className="skills-grid">
-        {entries
-          .filter((s: any) =>
-            (s.name + " " + s.description)
-              .toLowerCase()
-              .includes(search.toLowerCase()),
-          )
-          .map((s: any) => {
-            const assigned = agent?.skills.some((x) => x.id === s.id);
-            return (
-              <article className="skill-tile" key={s.id}>
-                <div className="row between">
-                  <b>{s.name}</b>
-                  <span className="badge">{s.compatibility}</span>
-                </div>
-                <p>{s.description}</p>
-                <small>{s.harness}</small>
-                <code>{s.path}</code>
-                <button
-                  disabled={
-                    !agent || !s.environments.includes(agent.environment)
-                  }
-                  onClick={() =>
-                    void p.act(() =>
-                      api("/agents/" + agent!.id, "PUT", {
-                        ...agentInput(agent!),
-                        skills: assigned
-                          ? agent!.skills.filter((x) => x.id !== s.id)
-                          : [
-                              ...agent!.skills,
-                              {
-                                id: s.id,
-                                mode: "always",
-                                allowUnverified: false,
-                              },
-                            ],
-                      }),
-                    )
-                  }
-                >
-                  {assigned ? "Remove from agent" : "Add to agent"}
-                </button>
-              </article>
-            );
-          })}
-      </div>
-      {!entries.length && (
-        <div className="empty">
-          <p>No skills found for this environment.</p>
-        </div>
-      )}
-    </div>
-  );
-}
-export function Workspace(p: PaneProps) {
+export type WorkspaceView = "files" | "git" | "review" | "preview";
+const VIEW_TITLE: Record<WorkspaceView, string> = {
+  files: "Files",
+  git: "Git",
+  review: "Review changes",
+  preview: "Preview",
+};
+/** Files, Git, Review changes and Preview: one feature tab each, for one agent's folder. */
+export function Workspace(p: PaneProps & { view: WorkspaceView }) {
   const agent = p.data.agents.find((a) => a.id === p.selected),
     [root, setRoot] = useState(""),
     [path, setPath] = useState("."),
     [listing, setListing] = useState<any>(null),
     [preview, setPreview] = useState<any>(null),
     [git, setGit] = useState<any>(null),
-    [tab, setTab] = useState("access"),
     [commit, setCommit] = useState(""),
     [tick, setTick] = useState(0),
     [context, setContext] = useState<{
@@ -1151,6 +1059,7 @@ export function Workspace(p: PaneProps) {
       x: number;
       y: number;
     } | null>(null);
+  const tab = p.view;
   useEffect(() => {
     setRoot(
       agent?.workspaces.find((w) => w.active)?.path ??
@@ -1209,78 +1118,40 @@ export function Workspace(p: PaneProps) {
     <div className="workspace pane-content">
       <div className="section workspace-top">
         <div className="section-title">
-          <h2>Workspace</h2>
-          <button title="Configure folders" onClick={() => p.edit(agent)}>
+          <h2>{VIEW_TITLE[tab]}</h2>
+          <button title="Add or change folders" onClick={() => p.edit(agent)}>
             <Plus size={16} />
             Folder
           </button>
         </div>
-        <AgentPicker {...p} />
-        {root && (
-          <select
-            aria-label="Workspace folder"
-            value={root}
-            onChange={(e) => {
-              setRoot(e.target.value);
-              setPath(".");
-              setPreview(null);
-              setGit(null);
-            }}
-          >
-            {agent.workspaces.map((w) => (
-              <option key={w.path} value={w.path}>
-                {w.path} · {w.access}
-              </option>
-            ))}
-          </select>
-        )}
-        <div className="tabs">
-          <button
-            className={tab === "access" ? "active" : ""}
-            onClick={() => setTab("access")}
-          >
-            Access
-          </button>
-          <button
-            className={tab === "files" ? "active" : ""}
-            onClick={() => setTab("files")}
-          >
-            Files
-          </button>
-          <button
-            className={tab === "git" ? "active" : ""}
-            disabled={!root}
-            onClick={() => {
-              setTab("git");
-              void loadGit().catch(() => {});
-            }}
-          >
-            Git
-          </button>
-          <button
-            className={tab === "review" ? "active" : ""}
-            disabled={!root}
-            onClick={() => setTab("review")}
-          >
-            Review
-          </button>
-          <button
-            className={tab === "preview" ? "active" : ""}
-            disabled={!root}
-            onClick={() => setTab("preview")}
-          >
-            Preview
-          </button>
+        <div className="row workspace-pickers">
+          <AgentPicker {...p} />
+          {root && (
+            <select
+              aria-label="Workspace folder"
+              value={root}
+              onChange={(e) => {
+                setRoot(e.target.value);
+                setPath(".");
+                setPreview(null);
+                setGit(null);
+              }}
+            >
+              {agent.workspaces.map((w) => (
+                <option key={w.path} value={w.path}>
+                  {w.path} · {w.access}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
       </div>
-      {tab === "access" ? (
-        <AccessView agent={agent} data={p.data} edit={() => p.edit(agent)} />
-      ) : !root ? (
+      {!root ? (
         <div className="empty">
           <FolderOpen size={34} />
           <h3>No folders attached</h3>
-          <p>Choose a project directory for this agent.</p>
-          <button onClick={() => p.edit(agent)}>Attach folder</button>
+          <p>Add a folder to {agent.name} in its agent panel first.</p>
+          <button onClick={() => p.edit(agent)}>Add a folder</button>
         </div>
       ) : (
         <div className="scroll section workspace-body">
@@ -1578,7 +1449,12 @@ export function Workspace(p: PaneProps) {
     </div>
   );
 }
-export function Preferences(p: PaneProps) {
+export function Preferences(
+  p: PaneProps & {
+    /** Layouts and side-panel preferences (rendered by the App, which owns that state). */
+    workspace?: React.ReactNode;
+  },
+) {
   const [settings, setSettings] = useState<any>({ defaultEditor: "sublime" }),
     [runtime, setRuntime] = useState<any>(null);
   useEffect(() => {
@@ -1589,8 +1465,7 @@ export function Preferences(p: PaneProps) {
   }, []);
   return (
     <div className="scroll section">
-      <span className="eyebrow">PREFERENCES</span>
-      <h2>Make this workspace yours</h2>
+      <h2>Settings</h2>
       <section className="settings-card">
         <h3>Execution</h3>
         <p>
@@ -1637,12 +1512,12 @@ export function Preferences(p: PaneProps) {
         </p>
       </section>
       <EditorSettings />
+      {p.workspace}
       <section className="settings-card">
-        <h3>Layout</h3>
+        <h3>Reset</h3>
         <p>
-          Choose the content of either pane with its dropdown. Use the top-right
-          buttons to hide navigation, swap panes or hide the right pane. Drag
-          the divider to resize.
+          Forget open tabs, layouts, panel sizes and canvas positions on this
+          computer. Message drafts are kept.
         </p>
         <button
           onClick={() => {
@@ -1735,6 +1610,29 @@ export function ActivityLog({
   );
 }
 
+/** "Access & resources": the selected agent's effective folder access, then shared resources. */
+export function AgentAccess(p: PaneProps) {
+  const agent = p.data.agents.find((a) => a.id === p.selected);
+  return (
+    <div className="section access-page">
+      <div className="section-title">
+        <div>
+          <h2>Access & resources</h2>
+          <p className="hint">
+            Which folders each agent may read or edit, and how shared folders
+            are coordinated.
+          </p>
+        </div>
+        <AgentPicker {...p} />
+      </div>
+      {agent ? (
+        <AccessView agent={agent} data={p.data} edit={() => p.edit(agent)} />
+      ) : (
+        <p className="hint">No agents in this team.</p>
+      )}
+    </div>
+  );
+}
 function AccessView({
   agent,
   data,
@@ -1745,7 +1643,7 @@ function AccessView({
   edit: () => void;
 }) {
   return (
-    <div className="scroll section">
+    <div className="access-view">
       <div className="access-heading">
         <span className="eyebrow">EXPLICIT FILE ACCESS</span>
         <h2>{agent.name}</h2>
@@ -1838,6 +1736,75 @@ function AccessView({
           automatically send its contents to a provider.
         </p>
       </section>
+    </div>
+  );
+}
+
+const PROJECT_PANEL: Record<
+  "limits" | "recovery" | "shared",
+  { title: string; hint: string }
+> = {
+  limits: {
+    title: "Limits",
+    hint: "Turn, time, retry and delegation limits per project. A project stopped by a limit resumes only after you raise it.",
+  },
+  recovery: {
+    title: "Recovery",
+    hint: "Tasks interrupted by a restart or blocked on an uncertain effect, with the next safe step.",
+  },
+  shared: {
+    title: "Shared state",
+    hint: "Typed fields the project’s agents share, their history, settings and saved artifacts.",
+  },
+};
+/** Limits, Recovery and Shared state: one per-project panel for each of the team's projects. */
+export function ProjectPanels(
+  p: PaneProps & { kind: "limits" | "recovery" | "shared" },
+) {
+  const info = PROJECT_PANEL[p.kind];
+  return (
+    <div className="scroll section">
+      <div className="section-title">
+        <div>
+          <h2>{info.title}</h2>
+          <p className="hint">{info.hint}</p>
+        </div>
+      </div>
+      {!p.data.workflows.length && (
+        <div className="empty compact">
+          <h3>No projects in {p.data.teamView?.team.name ?? "this team"}</h3>
+          <p>Assign the team a project first.</p>
+          {p.openFeature && (
+            <button onClick={() => p.openFeature!("projects")}>
+              Open Projects
+            </button>
+          )}
+        </div>
+      )}
+      {p.data.workflows.map((w) => (
+        <section className="workflow" key={w.id}>
+          <div className="row between">
+            <b>{w.name}</b>
+            <span
+              className={"badge " + (w.status === "running" ? "green" : "")}
+            >
+              {w.status}
+            </span>
+          </div>
+          {p.kind === "limits" && (
+            <WorkflowLimits workflowId={w.id} act={p.act} />
+          )}
+          {p.kind === "recovery" && (
+            <WorkflowRecovery workflowId={w.id} act={p.act} />
+          )}
+          {p.kind === "shared" && (
+            <>
+              <WorkflowSharedState workflowId={w.id} />
+              <WorkflowStateEditor workflowId={w.id} act={p.act} />
+            </>
+          )}
+        </section>
+      ))}
     </div>
   );
 }

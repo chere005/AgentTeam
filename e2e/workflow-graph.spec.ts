@@ -2,6 +2,7 @@ import { test, expect, _electron as electron } from "@playwright/test";
 import { mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openFeature } from "./helpers";
 
 test("workflow graph: validation, command preview, branch on a failed check, human input, executed path, retry from the failed step, navigation", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentteam-e2e-graph-"));
@@ -104,10 +105,7 @@ test("workflow graph: validation, command preview, branch on a failed check, hum
       [workspace, marker],
     );
 
-    await page
-      .getByRole("button", { name: /^Workflow graphs/ })
-      .first()
-      .click();
+    await openFeature(page, "Workflow graphs");
     const root = page.getByTestId("workflow-graphs");
     await expect(root.getByTestId("graph-item")).toHaveCount(2);
 
@@ -241,11 +239,12 @@ test("workflow graph: validation, command preview, branch on a failed check, hum
       .getByRole("button", { name: "Agent communication graph" })
       .click();
     await expect(
-      page.getByText("Connect two agents to choose how they work together"),
-    ).toBeVisible();
+      page.getByRole("tab", { name: "Canvas", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("toolbar", { name: "Canvas" })).toBeVisible();
+    // The graphs view stays open as a tab next to the canvas.
     await page
-      .getByRole("button", { name: "Workflow graphs", exact: true })
-      .last()
+      .getByRole("tab", { name: "Workflow graphs", exact: true })
       .click();
     await expect(page.getByTestId("workflow-graphs")).toBeVisible();
     expect(errors).toEqual([]);

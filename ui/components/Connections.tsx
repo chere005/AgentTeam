@@ -108,7 +108,14 @@ export function Connections() {
     </section>
   );
 }
-export function PendingApprovals({ agents }: { agents: Agent[] }) {
+export function PendingApprovals({
+  agents,
+  openInbox,
+}: {
+  agents: Agent[];
+  /** Contextual entry: the Inbox lists every pending approval (this panel shows the first). */
+  openInbox?: () => void;
+}) {
   const [pending, setPending] = useState<any[]>([]),
     [error, setError] = useState("");
   useEffect(() => {
@@ -168,6 +175,13 @@ export function PendingApprovals({ agents }: { agents: Agent[] }) {
         ))}
         <button onClick={() => void choose(null)}>Cancel request</button>
       </div>
+      {openInbox && (
+        <button className="text-button" onClick={openInbox}>
+          {pending.length > 1
+            ? `${pending.length - 1} more waiting · Open inbox`
+            : "Open inbox"}
+        </button>
+      )}
       {error && <p role="alert">{error}</p>}
       <small>
         {pending.length} pending · permissions apply through this adapter

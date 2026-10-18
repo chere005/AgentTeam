@@ -1,0 +1,327 @@
+import {
+  test,
+  expect,
+  _electron as electron,
+  type ElectronApplication,
+  type Page,
+} from "@playwright/test";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { openFeature } from "./helpers";
+import { FEATURES, FEATURE_GROUPS } from "../ui/features";
+
+// Progressive-disclosure navigation (docs/ui-design.md). Temp AGENTTEAM_DATA_DIR, fixture data
+// through the API, AGENTTEAM_TEST=1; no provider is ever invoked and no real dialog/editor opens.
+async function launch(directory: string) {
+  const app = await electron.launch({
+    args: [".", ...(process.platform === "linux" ? ["--no-sandbox"] : [])],
+    env: { ...process.env, AGENTTEAM_DATA_DIR: directory, AGENTTEAM_TEST: "1" },
+  });
+  const page = await app.firstWindow();
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await expect(page.getByTestId("workspace-ready")).toBeVisible();
+  return { app, page, errors };
+}
+async function withApp(
+  fn: (ctx: {
+    directory: string;
+    start: () => ReturnType<typeof launch>;
+  }) => Promise<void>,
+) {
+  const directory = await mkdtemp(join(tmpdir(), "agentteam-e2e-nav-"));
+  const apps: ElectronApplication[] = [];
+  try {
+    await fn({
+      directory,
+      start: async () => {
+        const ctx = await launch(join(directory, "data"));
+        apps.push(ctx.app);
+        return ctx;
+      },
+    });
+  } finally {
+    for (const a of apps) await a.close().catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+const api = (page: Page, method: string, path: string, body?: unknown) =>
+  page.evaluate(
+    ([m, p, b]) => window.agentteam.request(m as string, p as string, b),
+    [method, path, body] as const,
+  );
+const tab = (page: Page, name: string) =>
+  page.getByRole("tablist", { name: "Open views" }).getByRole("tab", { name });
+
+test("first run shows only the canvas and the chat: no long navigation, getting-started card, slim top bar", async () => {
+  await withApp(async ({ start }) => {
+    const { page, errors } = await start();
+    await expect(page.getByRole("navigation", { name: "Panes" })).toHaveCount(
+      0,
+    );
+    await expect(page.getByRole("tablist", { name: "Open views" })).toHaveCount(
+      0,
+    );
+    const empty = page.getByTestId("canvas-empty");
+    await expect(empty).toContainText("No agents in Main team yet");
+    await expect(
+      empty.getByRole("button", { name: "Add an agent" }),
+    ).toBeVisible();
+    await expect(
+      empty.getByRole("button", { name: "Insert an example team" }),
+    ).toBeVisible();
+    const side = page.getByRole("complementary", { name: "Side panel" });
+    await expect(side.getByRole("tab", { name: "Chat" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(
+      side.getByRole("textbox", { name: "Message", exact: true }),
+    ).toBeVisible();
+    // Top bar: team switcher, execution state, More and Settings; nothing that needs no action.
+    const bar = page.getByRole("banner");
+    const labels = await bar
+      .getByRole("button")
+      .evaluateAll((els) =>
+        els
+          .filter((e) => (e as HTMLElement).getClientRects().length)
+          .map(
+            (e) => e.getAttribute("aria-label") ?? e.textContent?.trim() ?? "",
+          ),
+      );
+    expect(labels).toHaveLength(4);
+    expect(labels[0]).toMatch(/^Active team: Main team/);
+    expect(labels.slice(1)).toEqual(["Execution paused", "More", "Settings"]);
+    await expect(
+      bar.getByRole("button", { name: /^Attention inbox/ }),
+    ).toHaveCount(0);
+    await expect(
+      bar.getByRole("button", { name: "Assign project" }),
+    ).toHaveCount(0);
+    // "Insert an example team" opens the library as a closable tab.
+    await empty.getByRole("button", { name: "Insert an example team" }).click();
+    await expect(tab(page, "Team library")).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(
+      page.getByRole("list", { name: "Example teams" }).getByRole("button"),
+    ).toHaveCount(3);
+    await page.getByRole("button", { name: "Close Team library" }).click();
+    await expect(page.getByRole("tablist", { name: "Open views" })).toHaveCount(
+      0,
+    );
+    await page.screenshot({ path: test.info().outputPath("first-run.png") });
+    expect(errors).toEqual([]);
+  });
+});
+
+test("the More menu lists every feature by group with a description, and the palette opens each one", async () => {
+  await withApp(async ({ start }) => {
+    const { page, errors } = await start();
+    await api(page, "POST", "/agents", { name: "Alpha", environment: "codex" });
+    await page.getByRole("button", { name: "More", exact: true }).click();
+    const palette = page.getByRole("dialog", { name: "Command palette" });
+    const list = palette.getByRole("listbox", { name: "All views" });
+    for (const g of FEATURE_GROUPS) await expect(list).toContainText(g);
+    for (const f of FEATURES.filter((x) => x.group)) {
+      const option = list.getByRole("option", { name: f.name, exact: true });
+      await expect(option).toContainText(f.description);
+    }
+    await page.keyboard.press("Escape");
+    await expect(palette).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "More" })).toBeFocused();
+    // Every feature opens as its own tab through the palette.
+    for (const f of FEATURES) {
+      await openFeature(page, f.name);
+      await expect(tab(page, f.name)).toHaveAttribute("aria-selected", "true");
+      await expect(page.locator("#view-panel")).not.toBeEmpty();
+    }
+    await expect(
+      page.getByRole("tablist", { name: "Open views" }).getByRole("tab"),
+    ).toHaveCount(FEATURES.length + 1);
+    // Searching finds agents and actions too; Enter runs the highlighted entry.
+    await page.keyboard.press(
+      process.platform === "darwin" ? "Meta+k" : "Control+k",
+    );
+    await palette.getByRole("combobox").fill("alpha");
+    await expect(
+      palette.getByRole("option", { name: "Alpha (agent)" }),
+    ).toBeVisible();
+    await palette.getByRole("combobox").fill("new agent");
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("dialog", { name: "New agent" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    expect(errors).toEqual([]);
+  });
+});
+
+test("open tabs are remembered per team across a relaunch; a new team starts with canvas and chat only", async () => {
+  await withApp(async ({ start }) => {
+    let { page, app, errors } = await start();
+    await openFeature(page, "Projects");
+    await openFeature(page, "Git");
+    // A new team from the switcher: only the canvas.
+    await page.getByTestId("team-switcher").click();
+    await page.getByRole("button", { name: "New team" }).click();
+    await page.getByLabel("Team name").fill("Research");
+    await page.getByRole("button", { name: "Create team" }).click();
+    await expect(page.getByTestId("active-team-name")).toHaveText("Research");
+    await expect(page.getByRole("tablist", { name: "Open views" })).toHaveCount(
+      0,
+    );
+    await openFeature(page, "Inbox");
+    await page.waitForTimeout(300);
+    expect(errors).toEqual([]);
+    await app.close();
+
+    ({ page, app, errors } = await start());
+    await expect(page.getByTestId("active-team-name")).toHaveText("Research");
+    await expect(tab(page, "Inbox")).toHaveAttribute("aria-selected", "true");
+    await expect(tab(page, "Projects")).toHaveCount(0);
+    await page.getByTestId("team-switcher").click();
+    await page
+      .getByRole("group", { name: "Teams" })
+      .getByRole("button", { name: /^Main team:/ })
+      .click();
+    await expect(tab(page, "Projects")).toBeVisible();
+    await expect(tab(page, "Git")).toHaveAttribute("aria-selected", "true");
+    await expect(tab(page, "Inbox")).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+});
+
+test("agent panel: add a folder with edit access and a library skill on demand, save, and the agent is updated", async () => {
+  await withApp(async ({ directory, start }) => {
+    const folder = join(directory, "project");
+    await mkdir(folder);
+    const { app, page, errors } = await start();
+    // The folder chooser is the native dialog: answer it in the main process (nothing opens).
+    await app.evaluate(({ dialog }, path) => {
+      dialog.showOpenDialog = (async () => ({
+        canceled: false,
+        filePaths: [path],
+      })) as typeof dialog.showOpenDialog;
+    }, folder);
+    await page
+      .getByTestId("canvas-empty")
+      .getByRole("button", { name: "Add an agent" })
+      .click();
+    const create = page.getByRole("dialog", { name: "New agent" });
+    await create.getByLabel("Name", { exact: true }).fill("Builder");
+    await create.getByRole("button", { name: "Create agent" }).click();
+    const panel = page.getByTestId("agent-panel");
+    await expect(panel.getByTestId("agent-panel-name")).toHaveText("Builder");
+    await expect(panel).toContainText("No folders yet");
+    await panel.getByRole("button", { name: "Add folder" }).click();
+    const access = panel.getByLabel("Access for " + folder);
+    await expect(access).toHaveValue("read");
+    await expect(access.locator("option")).toHaveText([
+      "Can read",
+      "Can read and edit",
+    ]);
+    await access.selectOption("write");
+    await panel.getByRole("button", { name: "Add skill" }).click();
+    const picker = panel.getByTestId("skill-picker");
+    await picker.getByLabel("Search skills").fill("code-reviewer");
+    await picker
+      .getByRole("button", { name: "Add skill code-reviewer" })
+      .click();
+    const mode = panel.getByLabel("Load mode for code-reviewer");
+    await expect(mode).toHaveValue("on-demand");
+    await mode.selectOption("always");
+    await panel.getByRole("button", { name: "Save changes" }).click();
+    await expect(panel.getByTestId("agent-save")).toHaveCount(0);
+    const agent = (await api(page, "GET", "/agents")).find(
+      (a: any) => a.name === "Builder",
+    );
+    expect(agent.workspaces).toHaveLength(1);
+    expect(agent.workspaces[0]).toMatchObject({
+      access: "write",
+      active: true,
+    });
+    expect(agent.skills).toEqual([
+      expect.objectContaining({
+        id: expect.stringMatching(/code-reviewer$/),
+        mode: "always",
+      }),
+    ]);
+    // Removing is one click away and also needs Save (Discard restores).
+    await panel.getByRole("button", { name: "Remove folder project" }).click();
+    await expect(panel).toContainText("No folders yet");
+    await panel.getByRole("button", { name: "Discard" }).click();
+    // (The saved path is the real path, e.g. /private/var on macOS.)
+    await expect(panel.getByLabel(/^Access for .*project$/)).toHaveValue(
+      "write",
+    );
+    // Advanced stays collapsed until asked for.
+    const advanced = panel.getByTestId("agent-advanced");
+    await expect(advanced).not.toHaveAttribute("open", "");
+    await expect(panel.getByLabel("Scheduling priority")).toBeHidden();
+    await advanced.locator("> summary").click();
+    await expect(panel.getByLabel("Scheduling priority")).toBeVisible();
+    await expect(panel.getByLabel("Max concurrent invoked agents")).toHaveValue(
+      "",
+    );
+    await page.screenshot({ path: test.info().outputPath("agent-panel.png") });
+    expect(errors).toEqual([]);
+  });
+});
+
+test("contextual entry: a pending approval shows the attention button and the approval opens the Inbox", async () => {
+  await withApp(async ({ directory, start }) => {
+    let { app, page } = await start();
+    const agent = await api(page, "POST", "/agents", {
+      name: "Builder",
+      environment: "codex",
+    });
+    await app.close();
+    // Fixture: a pending permission request (as the recovery test seeds it); no provider runs.
+    const db = new DatabaseSync(join(directory, "data", "agentteam.sqlite"));
+    db.prepare("INSERT INTO entities(kind,id,data) VALUES('approval',?,?)").run(
+      "approval-nav",
+      JSON.stringify({
+        id: "approval-nav",
+        agentId: agent.id,
+        createdAt: new Date().toISOString(),
+        fingerprint: "fixture",
+        status: "pending",
+        request: {
+          sessionId: "s",
+          toolCall: { toolCallId: "t1", title: "Edit notes.txt", kind: "edit" },
+          options: [
+            { optionId: "allow", name: "Allow once", kind: "allow_once" },
+          ],
+        },
+      }),
+    );
+    db.close();
+    let errors: string[];
+    ({ app, page, errors } = await start());
+    await expect(page.getByRole("tablist", { name: "Open views" })).toHaveCount(
+      0,
+    );
+    const attention = page.getByRole("button", {
+      name: /^Attention inbox, 1 item/,
+    });
+    await expect(attention).toBeVisible();
+    await expect(page.getByTestId("inbox-badge")).toHaveText("1");
+    const request = page.getByRole("dialog", {
+      name: "Agent permission request",
+    });
+    await expect(request).toContainText("Edit notes.txt");
+    await request.getByRole("button", { name: "Open inbox" }).click();
+    await expect(tab(page, "Inbox")).toHaveAttribute("aria-selected", "true");
+    const item = page
+      .getByRole("region", { name: "Attention inbox" })
+      .getByTestId("inbox-item");
+    await expect(item).toHaveAttribute("data-kind", "approval");
+    await expect(item).toContainText("Edit notes.txt");
+    // Answering it removes the attention button again.
+    await request.getByRole("button", { name: "Allow once" }).click();
+    await expect(attention).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+});

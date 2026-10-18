@@ -109,21 +109,22 @@ export function DialogFocusManager() {
 }
 
 export const shortcuts: { keys: string; action: string }[] = [
-  { keys: "Mod+B", action: "Show or hide navigation" },
-  { keys: "Mod+\\", action: "Show or hide the right pane" },
-  { keys: "Mod+K", action: "Find an agent" },
+  { keys: "Mod+K", action: "More: open any view, agent or action" },
+  { keys: "Mod+\\", action: "Show or hide the side panel (chat, agent setup)" },
   { keys: "Mod+Shift+N", action: "New agent" },
-  { keys: "Mod+Shift+I", action: "Open the attention inbox" },
+  { keys: "Mod+Shift+T", action: "Switch team" },
+  { keys: "Mod+Shift+I", action: "Open the inbox" },
   {
     keys: "F6 / Shift+F6",
-    action: "Move between navigation, main and right panes",
+    action: "Move between top bar, main view and side panels",
   },
+  { keys: "Alt+Arrow keys", action: "Canvas: parent, child and sibling agent" },
   {
     keys: "Enter / Shift+Enter",
     action: "Send message / new line in a conversation",
   },
   { keys: "?", action: "Show this list" },
-  { keys: "Esc", action: "Close the open dialog or menu" },
+  { keys: "Esc", action: "Close the open dialog, menu or agent panel" },
 ];
 export const modLabel = () =>
   typeof navigator !== "undefined" && /Mac/i.test(navigator.platform)

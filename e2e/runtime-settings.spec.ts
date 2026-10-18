@@ -2,6 +2,7 @@ import { test, expect, _electron as electron } from "@playwright/test";
 import { mkdtemp, rm, copyFile, chmod, mkdir, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openAgentPanel } from "./helpers";
 
 // Fixture installation only: scans are limited to an empty PATH so the developer's real
 // Codex/Claude/Wolfram installs (and accounts) are never touched.
@@ -133,14 +134,9 @@ test("runtime diagnostics, validated model/effort choices, invocation limits and
     ).toBeVisible();
 
     // Editor: unavailable saved model is kept, warned, never switched.
-    await page
-      .getByRole("button", { name: "Team canvas", exact: true })
-      .click();
-    await page
-      .getByRole("button", { name: "Retired Model Agent codex" })
-      .click();
-    await page.getByTitle("Configure agent").click();
-    const dialog = page.getByRole("dialog", { name: "Configure agent" });
+    // Agent setup panel (select the agent on the canvas); effort lives under Advanced.
+    const dialog = await openAgentPanel(page, "Retired Model Agent");
+    await dialog.getByTestId("agent-advanced").locator("> summary").click();
     const model = dialog.getByLabel("Model", { exact: true });
     await expect(dialog.getByTestId("model-warning")).toContainText(
       "gpt-retired",
@@ -171,11 +167,13 @@ test("runtime diagnostics, validated model/effort choices, invocation limits and
     ]);
     await model.selectOption("custom");
     await expect(dialog.getByLabel("Custom model ID")).toBeVisible();
-    await dialog.getByRole("button", { name: "Close configuration" }).click();
+    await dialog.getByRole("button", { name: "Discard" }).click();
+    await dialog.getByRole("button", { name: "Close agent panel" }).click();
+    await expect(page.getByTestId("agent-panel")).toHaveCount(0);
 
     // Invocation limit: running child counts, second waits with the reason.
-    await page.getByRole("button", { name: "Lead codex" }).click();
-    await page.getByTitle("Configure agent").click();
+    const leadPanel = await openAgentPanel(page, "Lead");
+    await leadPanel.getByTestId("agent-advanced").locator("> summary").click();
     const limits = page.getByTestId("invocation-panel");
     await expect(limits).toContainText("running 1 / 1");
     await expect(

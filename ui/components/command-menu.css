@@ -1,0 +1,107 @@
+/* More menu / command palette (Ctrl/Cmd+K). */
+.palette-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  background: #070b1299;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 72px 16px 16px;
+}
+.palette {
+  width: 600px;
+  max-width: 100%;
+  max-height: min(640px, calc(100vh - 100px));
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: 0 30px 90px #0009;
+  overflow: hidden;
+}
+.palette-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+}
+.palette-search input {
+  border: 0;
+  background: none;
+  box-shadow: none;
+  font-size: 14px;
+  padding: 10px 4px;
+}
+.palette-search input:focus,
+.palette-search input:focus-visible {
+  box-shadow: none;
+  outline: none;
+}
+.palette-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  overflow: auto;
+  min-height: 0;
+}
+.palette-group {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--faint);
+  padding: 10px 10px 4px;
+}
+.palette-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  color: var(--muted);
+}
+.palette-option.active {
+  background: #223040;
+  color: var(--text);
+}
+.palette-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.palette-text b {
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--text);
+}
+.palette-text small {
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.palette-open {
+  font-size: 10px;
+  color: var(--accent);
+  border: 1px solid #2f5246;
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.palette-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+}
+.palette-foot {
+  display: flex;
+  gap: 16px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--faint);
+}

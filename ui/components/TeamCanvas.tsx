@@ -19,6 +19,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
+  Layers,
   Plus,
   Settings2,
   MessageSquare,
@@ -75,15 +76,22 @@ type Props = {
   edit: (a: Agent) => void;
   add: () => void;
   chat: (id: string) => void;
-  /** Open the saved-teams pane to insert a team onto the canvas. */
+  /** Open the team library (example teams, saved teams, packs). */
   openTeams?: () => void;
-  /** Open the executable workflow graphs pane (separate from this communication graph). */
-  openGraphs?: () => void;
+  /** Open the projects view (a card's "View blockers"). */
+  openBlockers?: (agentId: string) => void;
 };
 /** Below this React Flow zoom, cards switch to the large-type glance layout. */
 const FAR_ZOOM = 0.6;
 /** Beyond this many agents per-card animation is turned off to keep large graphs responsive. */
 const CALM_AGENTS = 40;
+/** Short role line for a card: the role preset or the first words of the role text. */
+function roleLabel(a: Agent) {
+  const type = (a as any).roleType as string | undefined;
+  if (type && type !== "custom") return type[0].toUpperCase() + type.slice(1);
+  const role = (a.role ?? "").trim();
+  return role.length > 42 ? role.slice(0, 40).trimEnd() + "…" : role;
+}
 function Card({ data }: NodeProps) {
   const a = data.agent as Agent,
     activity = data.activity as any;
@@ -128,9 +136,7 @@ function Card({ data }: NodeProps) {
             >
               {state}
               {failed ? " · failed" : resume ? " · resume" : ""}
-            </span>{" "}
-            {priorityName(a.schedulingPriority)} ·{" "}
-            {activity?.capacity.running ?? 0}/{limit}
+            </span>
           </span>
         </div>
       )}
@@ -138,10 +144,10 @@ function Card({ data }: NodeProps) {
         <span className={"avatar " + a.environment}>{a.name[0]}</span>
         <div className="grow">
           <b>{a.name}</b>
-          <small>
+          <small className="card-role">
             {a.kind === "team-assistant"
               ? "Team coordinator"
-              : a.environment + " · " + a.model}
+              : roleLabel(a) || "No role yet"}
           </small>
         </div>
         <span
@@ -152,6 +158,9 @@ function Card({ data }: NodeProps) {
         />
       </div>
       <div className="card-basics">
+        <span className="card-model" title={a.environment + " · " + a.model}>
+          {a.environment} · {a.model}
+        </span>
         <span
           className={
             "badge " + (activity?.state === "processing" ? "green" : "")
@@ -159,32 +168,31 @@ function Card({ data }: NodeProps) {
         >
           {activity?.state ?? "idle"}
         </span>
-        <span>
-          {activity?.capacity.running ?? 0} / {limit} invoked
-        </span>
-        {!!data.simple && <span>{priorityName(a.schedulingPriority)}</span>}
-      </div>
-      <div
-        className="card-access"
-        title={
-          a.workspaces.map((w) => accessTitle(w)).join("\n") ||
-          "No attached folders"
-        }
-      >
-        {a.workspaces.length ? (
-          a.workspaces.map((w) => (
-            <span key={w.path}>
-              {accessLabel(w)} · {w.path.split(/[\\/]/).pop()}
-              {w.active ? " · active" : ""}
-            </span>
-          ))
-        ) : (
-          <span>No attached folders</span>
-        )}
       </div>
       {!data.simple && (
         <>
           <p>{a.role || "Add a role and instructions"}</p>
+          <div
+            className="card-access"
+            title={
+              a.workspaces.map((w) => accessTitle(w)).join("\n") ||
+              "No attached folders"
+            }
+          >
+            {a.workspaces.length ? (
+              a.workspaces.map((w) => (
+                <span key={w.path}>
+                  {accessLabel(w)} · {w.path.split(/[\\/]/).pop()}
+                  {w.active ? " · active" : ""}
+                </span>
+              ))
+            ) : (
+              <span>No attached folders</span>
+            )}
+          </div>
+          <span className="card-invoked">
+            {activity?.capacity.running ?? 0} / {limit} invoked
+          </span>
           <dl className="card-config" aria-label={`${a.name} configuration`}>
             <div>
               <dt>Priority</dt>
@@ -228,20 +236,25 @@ function Card({ data }: NodeProps) {
               }}
             >
               <Settings2 size={13} />
-              Configure
+              Setup
             </button>
           </div>
         </>
       )}
-      {activity?.failedTaskIds.length > 0 && (
-        <div className="failure">
-          {activity.failedTaskIds.length} failed task(s)
-        </div>
-      )}
-      {activity?.interruptedTaskIds?.length > 0 && (
-        <div className="failure">
-          {activity.interruptedTaskIds.length} interrupted task(s) to resume
-        </div>
+      {(failed || resume) && (
+        <button
+          className="failure nodrag"
+          title="Open the tasks that need a decision"
+          onClick={(e) => {
+            e.stopPropagation();
+            (data.blockers as Function | undefined)?.(a.id);
+          }}
+        >
+          {failed
+            ? `${activity.failedTaskIds.length} failed task(s)`
+            : `${activity.interruptedTaskIds.length} interrupted task(s) to resume`}{" "}
+          · View blockers
+        </button>
       )}
       <Handle type="source" position={Position.Bottom} />
     </div>
@@ -342,7 +355,8 @@ export function TeamCanvas(p: Props) {
     [flow, setFlow] = useState<ReactFlowInstance | null>(null),
     [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(
       null,
-    );
+    ),
+    [showGroups, setShowGroups] = useState(false);
   useEffect(() => {
     const open = (e: Event) => {
       const existing = p.data.edges.find(
@@ -529,10 +543,11 @@ export function TeamCanvas(p: Props) {
             }
           : at;
       };
+      const lonely = !p.data.agents.some((a) => a.kind !== "team-assistant");
       const agentNodes: Node[] = p.data.agents.map((a) => ({
         id: a.id,
         type: "agent",
-        hidden: hidden.has(a.id),
+        hidden: hidden.has(a.id) || (lonely && a.kind === "team-assistant"),
         selected: hidden.has(a.id)
           ? false
           : old.find((n) => n.id === a.id)?.selected,
@@ -544,6 +559,7 @@ export function TeamCanvas(p: Props) {
           selected: a.id === p.selected,
           edit: p.edit,
           chat: p.chat,
+          blockers: p.openBlockers,
         },
       }));
       const known = Object.fromEntries(
@@ -645,6 +661,9 @@ export function TeamCanvas(p: Props) {
     );
   }
   const calm = p.data.agents.length > CALM_AGENTS;
+  // The Team Assistant is global; an otherwise empty team shows the getting-started card instead.
+  const members = p.data.agents.filter((a) => a.kind !== "team-assistant");
+  const groupBar = showGroups || groups.length > 0;
   return (
     <div
       className={"canvas-wrap" + (calm ? " calm" : "")}
@@ -669,17 +688,9 @@ export function TeamCanvas(p: Props) {
       }}
     >
       <div className="canvas-toolbar" role="toolbar" aria-label="Canvas">
-        <button className="primary" onClick={p.add}>
+        <button className="primary" aria-label="New agent" onClick={p.add}>
           <Plus size={15} />
           Agent
-        </button>
-        <button
-          onClick={() => {
-            setSimple(!simple);
-            persist("simpleCards", !simple);
-          }}
-        >
-          {simple ? "Detailed cards" : "Simple cards"}
         </button>
         <button
           title="Arrange as an org chart: leads on top, reports centered below (replaces manual positions)"
@@ -689,67 +700,67 @@ export function TeamCanvas(p: Props) {
           Arrange
         </button>
         <button
-          title="Select agents (Ctrl/Cmd-click or Shift-drag), then save them as a reusable team"
-          disabled={!selectedAgentIds.length}
-          onClick={() => setSavingTeam(true)}
+          aria-pressed={!simple}
+          title="Show more on each card: folders, invocations, priority and quick actions"
+          onClick={() => {
+            setSimple(!simple);
+            persist("simpleCards", !simple);
+          }}
         >
-          <Users size={15} />
-          Save as team
+          {simple ? "Detailed cards" : "Simple cards"}
         </button>
-        {p.openTeams && (
+        <button
+          aria-pressed={groupBar}
+          title="Group agents and walk the hierarchy (parent, child, sibling)"
+          onClick={() => setShowGroups(!groupBar)}
+        >
+          <Layers size={15} />
+          Groups
+        </button>
+        {selectedAgentIds.length > 0 && (
           <button
-            title="Insert a saved team onto the canvas"
-            onClick={p.openTeams}
+            title="Save the selected agents (Ctrl/Cmd-click or Shift-drag to select more) as a reusable team"
+            onClick={() => setSavingTeam(true)}
           >
             <Users size={15} />
-            Insert team
+            Save as team
           </button>
         )}
-        {p.openGraphs && (
-          <button
-            title="Executable workflow graphs: the steps inside a project (conditions, commands, human input)"
-            onClick={p.openGraphs}
-          >
-            Workflow graphs
-          </button>
-        )}
-        <div className="grow" />
-        <span className="connection-hint">
-          Connect two agents to choose how they work together
-        </span>
       </div>
-      <GroupBar
-        groups={groups}
-        selectionCount={selectedAgentIds.length}
-        create={(name) =>
-          setGroups((all) =>
-            createGroup(
-              all,
-              name,
-              selectedAgentIds,
-              "g" + Date.now().toString(36),
-            ),
-          )
-        }
-        toggle={(id) => setGroups((all) => toggleGroup(all, id))}
-        setAll={(c) => setGroups((all) => setAllCollapsed(all, c))}
-        selectMembers={(id) => {
-          const g = groups.find((x) => x.id === id);
-          if (!g) return;
-          if (g.collapsed) setGroups((all) => toggleGroup(all, id, false));
-          setNodes((ns) =>
-            ns.map((n) => ({ ...n, selected: g.agentIds.includes(n.id) })),
-          );
-        }}
-        remove={(id) => setGroups((all) => ungroup(all, id))}
-        nav={{
-          parent: rel.parent ? () => goto(rel.parent) : null,
-          child: rel.children[0] ? () => goto(rel.children[0]) : null,
-          sibling: rel.siblings[0]
-            ? () => goto(stepSibling(p.data.agents, p.selected, 1))
-            : null,
-        }}
-      />
+      {groupBar && (
+        <GroupBar
+          groups={groups}
+          selectionCount={selectedAgentIds.length}
+          create={(name) =>
+            setGroups((all) =>
+              createGroup(
+                all,
+                name,
+                selectedAgentIds,
+                "g" + Date.now().toString(36),
+              ),
+            )
+          }
+          toggle={(id) => setGroups((all) => toggleGroup(all, id))}
+          setAll={(c) => setGroups((all) => setAllCollapsed(all, c))}
+          selectMembers={(id) => {
+            const g = groups.find((x) => x.id === id);
+            if (!g) return;
+            if (g.collapsed) setGroups((all) => toggleGroup(all, id, false));
+            setNodes((ns) =>
+              ns.map((n) => ({ ...n, selected: g.agentIds.includes(n.id) })),
+            );
+          }}
+          remove={(id) => setGroups((all) => ungroup(all, id))}
+          nav={{
+            parent: rel.parent ? () => goto(rel.parent) : null,
+            child: rel.children[0] ? () => goto(rel.children[0]) : null,
+            sibling: rel.siblings[0]
+              ? () => goto(stepSibling(p.data.agents, p.selected, 1))
+              : null,
+          }}
+        />
+      )}
       {crossTeam.length > 0 && (
         <div
           className="cross-team-strip"
@@ -822,36 +833,51 @@ export function TeamCanvas(p: Props) {
           deleteKeyCode={["Backspace", "Delete"]}
           onInit={setFlow}
           onMoveEnd={(_, v) => persist(viewportKey, v)}
-          {...(viewport ? { defaultViewport: viewport } : { fitView: true })}
+          {...(viewport
+            ? { defaultViewport: viewport }
+            : { fitView: true, fitViewOptions: { maxZoom: 1, padding: 0.2 } })}
           minZoom={0.15}
           maxZoom={2}
           colorMode="dark"
         >
-          <Background gap={22} size={1} color="#30394a" />
-          <Controls />
-          <MiniMap nodeColor="#344c51" maskColor="#10141cbb" />
+          <Background gap={24} size={1} color="#262e3b" />
+          <Controls showInteractive={false} />
+          {members.length > 12 && (
+            <MiniMap nodeColor="#344c51" maskColor="#10141cbb" pannable />
+          )}
         </ReactFlow>
-        {!p.data.agents.some((a) => a.kind !== "team-assistant") && (
+        {!members.length && (
           <div className="canvas-empty" data-testid="canvas-empty">
-            <h2>No agents in {teamName}</h2>
+            <h2>No agents in {teamName} yet</h2>
             <p>
-              Add agents to this team, insert a saved team, or switch teams in
-              the top bar. Agents of other teams keep working while hidden.
+              Start with one agent and give it folders and skills, or insert a
+              ready-made example team you can adjust.
             </p>
             <div className="row center">
               <button className="primary" onClick={p.add}>
-                Create first agent
+                <Plus size={15} />
+                Add an agent
               </button>
               {p.openTeams && (
-                <button onClick={p.openTeams}>Insert a saved team</button>
+                <button onClick={p.openTeams}>
+                  <Users size={15} />
+                  Insert an example team
+                </button>
               )}
             </div>
+            <ol className="canvas-steps">
+              <li>Add an agent and pick its model.</li>
+              <li>Select it to add folders it may read or edit, and skills.</li>
+              <li>Drag between cards to let agents hand off work.</li>
+            </ol>
           </div>
         )}
-      </div>
-      <div className="canvas-help">
-        Drag handles to connect · Double-click to configure · Right-click to
-        open · Select a connection and Delete to remove
+        {members.length > 0 && !p.data.edges.length && (
+          <p className="canvas-tip" role="note">
+            Tip: drag from the dot under a card to another card to connect them.
+            Select a card to set it up.
+          </p>
+        )}
       </div>
       {savingTeam && (
         <SaveTeamDialog

@@ -10,6 +10,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openFeature } from "./helpers";
 
 // Fixture installations only (a scripted `claude` and the shared `codex` fixture): the real CLIs are
 // never started and no provider is invoked. Task states are driven through the API.
@@ -77,10 +78,7 @@ test("pipeline team then project: configure the team, assign a project, verify b
     // 1) The pipeline TEAM comes from the Saved teams library (worker caps and models are team
     //    settings); 2) a PROJECT (goal + workspace) is assigned to it from the Projects pane.
     const insertTeam = async (codexEffort?: string) => {
-      await page
-        .getByRole("button", { name: "Saved teams", exact: true })
-        .first()
-        .click();
+      await openFeature(page, "Team library");
       await page
         .getByRole("list", { name: "Example teams" })
         .getByRole("button", {
@@ -109,7 +107,7 @@ test("pipeline team then project: configure the team, assign a project, verify b
       await expect(page.getByRole("dialog")).toHaveCount(0);
     };
     const assign = async (goal: string) => {
-      await page.getByRole("button", { name: /^Projects/ }).click();
+      await openFeature(page, "Projects");
       await page
         .getByRole("button", { name: "Assign project", exact: true })
         .first()

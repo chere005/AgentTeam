@@ -8,6 +8,7 @@ import {
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openFeature } from "./helpers";
 
 // Active-team switcher (src/team-spaces.ts, ui/team-view.ts). Temp AGENTTEAM_DATA_DIR, fixture
 // data through the API, no provider is ever invoked (AGENTTEAM_TEST=1, execution stays off).
@@ -49,13 +50,11 @@ const api = (page: Page, method: string, path: string, body?: unknown) =>
   );
 const switcher = (page: Page) => page.getByTestId("team-switcher");
 const activeName = (page: Page) => page.getByTestId("active-team-name");
-// Agent list entries of the team, without the global Team Assistant (shown in every team).
+// The team's agents on the canvas (Canvas tab), without the global Team Assistant.
 const agentList = (page: Page) => ({
-  group: page.getByRole("group", { name: /^Agents in / }),
-  getByRole: (role: "button") =>
+  getByRole: (_role: "button") =>
     page
-      .getByRole("group", { name: /^Agents in / })
-      .getByRole(role)
+      .locator(".canvas .react-flow__node-agent")
       .filter({ hasNotText: "Team coordinator" }),
 });
 
@@ -115,13 +114,14 @@ test("team switcher: names the active team, filters canvas, conversations and wo
     await expect(canvas).toContainText("Beta");
     await expect(canvas).not.toContainText("Alpha");
     // Workflows: only this team's.
-    await page.getByRole("button", { name: /^Projects/ }).click();
+    await openFeature(page, "Projects");
     await expect(page.locator(".workflow")).toHaveCount(1);
     await expect(page.locator(".workflow")).toContainText("Research workflow");
     // Conversation agent picker: only this team's agents.
     await page
-      .getByRole("combobox", { name: "right pane" })
-      .selectOption("chat");
+      .getByRole("complementary", { name: "Side panel" })
+      .getByRole("tab", { name: "Chat" })
+      .click();
     await expect(
       page
         .locator(".right-pane")
@@ -150,9 +150,12 @@ test("team switcher: names the active team, filters canvas, conversations and wo
     ).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(activeName(page)).toHaveText("Main team");
+    // Open tabs are per team: Main never opened Projects, so it shows only the canvas.
+    await expect(page.getByRole("tab", { name: "Projects" })).toHaveCount(0);
+    await expect(agentList(page).getByRole("button")).toHaveText([/Alpha/]);
+    await openFeature(page, "Projects");
     await expect(page.locator(".workflow")).toHaveCount(1);
     await expect(page.locator(".workflow")).toContainText("Main workflow");
-    await expect(agentList(page).getByRole("button")).toHaveText([/Alpha/]);
 
     // Switch back to Research and relaunch on the same data directory: it is still active.
     await page.keyboard.press(
@@ -167,6 +170,12 @@ test("team switcher: names the active team, filters canvas, conversations and wo
     await app.close();
     ({ page, app, errors } = await start());
     await expect(activeName(page)).toHaveText("Research");
+    // Research's Projects tab survived the relaunch; the canvas is one tab away.
+    await expect(page.getByRole("tab", { name: "Projects" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await openFeature(page, "Canvas");
     await expect(agentList(page).getByRole("button")).toHaveText([/Beta/]);
     expect(errors).toEqual([]);
   });
@@ -193,10 +202,7 @@ test("example teams create their own team; other teams' running work and inbox i
     });
     // An example team from the library becomes its own (active) team with a notice. It is a team
     // only: no project until one is assigned.
-    await page
-      .getByRole("button", { name: "Saved teams", exact: true })
-      .first()
-      .click();
+    await openFeature(page, "Team library");
     await page
       .getByRole("list", { name: "Example teams" })
       .getByRole("button", { name: /Wolfram-validated reasoning team/ })
@@ -213,11 +219,12 @@ test("example teams create their own team; other teams' running work and inbox i
     await expect(page.getByTestId("team-notice")).toContainText(
       "Wolfram-validated reasoning",
     );
-    await page.getByRole("button", { name: /^Projects/ }).click();
+    await openFeature(page, "Projects");
     await expect(page.locator(".workflow")).toHaveCount(0);
     await expect(
       page.getByText(/^No projects in Wolfram-validated/),
     ).toBeVisible();
+    await openFeature(page, "Canvas");
     await expect(agentList(page).getByRole("button")).toHaveCount(3);
 
     // Work runs in the Main team while the sample team is shown: the switcher says so.
@@ -260,6 +267,11 @@ test("example teams create their own team; other teams' running work and inbox i
     await expect(page.getByTestId("team-notice")).toContainText(
       "to show: Main task that fails failed",
     );
+    // The item's target (Projects) opened in the Main team; the inbox is one tab away.
+    await expect(
+      page.getByRole("tab", { name: "Projects", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await openFeature(page, "Inbox");
     await expect(
       inbox.getByTestId("inbox-item").filter({
         hasText: "Main task that fails",

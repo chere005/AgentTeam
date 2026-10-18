@@ -8,6 +8,7 @@ import {
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openChatWith, openFeature } from "./helpers";
 
 // All tests use a temp AGENTTEAM_DATA_DIR (also Electron's userData, so localStorage is isolated)
 // and fixture data created through the API; no provider is ever invoked.
@@ -54,31 +55,35 @@ const api = (page: Page, method: string, path: string, body?: unknown) =>
 const store = (page: Page, key: string) =>
   page.evaluate((k) => localStorage.getItem("agentteam." + k), key);
 
-test("workspace persistence: panes, widths, selection and canvas viewport survive a relaunch", async () => {
+const side = (page: Page) =>
+  page.getByRole("complementary", { name: "Side panel" });
+const tab = (page: Page, name: string) =>
+  page.getByRole("tablist", { name: "Open views" }).getByRole("tab", { name });
+
+test("workspace persistence: open tabs, side panel width, selection and canvas viewport survive a relaunch", async () => {
   await withApp(async ({ start }) => {
     const first = await start();
     let page = first.page;
-    // Defaults: Canvas in the middle, Conversation on the right.
-    await expect(page.getByRole("combobox", { name: "main pane" })).toHaveValue(
-      "team",
+    // Defaults: only the canvas (no tab strip) and the conversation in the side panel.
+    await expect(page.getByRole("tablist", { name: "Open views" })).toHaveCount(
+      0,
     );
-    await expect(
-      page.getByRole("combobox", { name: "right pane" }),
-    ).toHaveValue("chat");
+    await expect(side(page).getByRole("tab", { name: "Chat" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     await api(page, "POST", "/agents", { name: "Alpha", environment: "codex" });
     await api(page, "POST", "/agents", { name: "Beta", environment: "codex" });
     await page.reload();
     await expect(
       page.getByText("Workspace connected", { exact: true }),
     ).toBeVisible();
-    // Selecting an agent from the list shows its conversation, so do that first.
-    await page.getByRole("button", { name: /Beta/ }).click();
-    await page
-      .getByRole("combobox", { name: "right pane" })
-      .selectOption("activity");
-    await page.getByRole("button", { name: "Toggle navigation" }).click();
+    await openChatWith(page, "Beta");
+    await openFeature(page, "Inbox");
+    await openFeature(page, "Activity log");
+    await openFeature(page, "Canvas");
     const separator = page.getByRole("separator", {
-      name: "Resize right pane",
+      name: "Resize side panel",
     });
     await separator.focus();
     for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowLeft");
@@ -95,138 +100,140 @@ test("workspace persistence: panes, widths, selection and canvas viewport surviv
 
     const second = await start();
     page = second.page;
-    await expect(page.getByRole("combobox", { name: "main pane" })).toHaveValue(
-      "team",
-    );
+    await expect(tab(page, "Inbox")).toBeVisible();
+    await expect(tab(page, "Activity log")).toBeVisible();
+    await expect(tab(page, "Canvas")).toHaveAttribute("aria-selected", "true");
     await expect(
-      page.getByRole("combobox", { name: "right pane" }),
-    ).toHaveValue("activity");
-    await expect(
-      page.getByRole("button", { name: "Toggle navigation" }),
-    ).toHaveAttribute("aria-expanded", "false");
-    await expect(
-      page.getByRole("separator", { name: "Resize right pane" }),
+      page.getByRole("separator", { name: "Resize side panel" }),
     ).toHaveAttribute("aria-valuenow", "500");
-    await expect(page.locator(".statusbar")).toContainText("Beta");
+    await expect(
+      side(page).getByRole("combobox", { name: "Agent", exact: true }),
+    ).toHaveValue(
+      (await api(page, "GET", "/agents")).find((a: any) => a.name === "Beta")
+        .id,
+    );
     expect(await store(page, "viewport")).toBe(viewport);
     const saved = JSON.parse(viewport!);
     const transform = await page
       .locator(".react-flow__viewport")
       .evaluate((el) => (el as HTMLElement).style.transform);
     expect(transform).toContain(`scale(${saved.zoom})`);
+    // Closing a tab persists too.
+    await page.getByRole("button", { name: "Close Activity log" }).click();
+    await expect(tab(page, "Activity log")).toHaveCount(0);
     expect(second.errors).toEqual([]);
   });
 });
 
-test("workspace layouts: presets apply, are editable, and custom layouts persist", async () => {
+test("workspace layouts (Settings): presets open sets of tabs, are editable, and custom layouts persist", async () => {
   await withApp(async ({ start }) => {
     let { page, app } = await start();
-    const menu = page.getByRole("button", { name: "Layouts" });
-    await menu.click();
-    for (const name of ["Planning", "Coding", "Review", "Monitoring"])
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    // A function: `page` changes after the relaunch.
+    const list = () => page.getByRole("list", { name: "Workspace layouts" });
+    for (const name of ["Canvas & chat", "Coding", "Review", "Monitoring"])
       await expect(
-        page.getByRole("button", { name, exact: true }),
+        list().getByRole("button", { name, exact: true }),
       ).toBeVisible();
-    await page.getByRole("button", { name: "Monitoring", exact: true }).click();
-    await expect(page.getByRole("combobox", { name: "main pane" })).toHaveValue(
-      "team",
-    );
-    await expect(
-      page.getByRole("combobox", { name: "right pane" }),
-    ).toHaveValue("inbox");
-    await expect(menu).toBeFocused();
-    await menu.click();
-    await page.getByRole("button", { name: "Coding", exact: true }).click();
-    await expect(page.getByRole("combobox", { name: "main pane" })).toHaveValue(
-      "workspace",
-    );
-    await expect(
-      page.getByRole("combobox", { name: "right pane" }),
-    ).toHaveValue("chat");
-    // Edit the Coding preset: change the right pane, then update it from the current panes.
+    await list()
+      .getByRole("button", { name: "Monitoring", exact: true })
+      .click();
+    await expect(tab(page, "Inbox")).toHaveAttribute("aria-selected", "true");
+    await expect(tab(page, "Timeline & inspector")).toBeVisible();
+    // Applied from Settings: the Settings tab stays open.
+    await tab(page, "Settings").click();
+    await list().getByRole("button", { name: "Coding", exact: true }).click();
+    await expect(tab(page, "Files")).toHaveAttribute("aria-selected", "true");
+    await expect(tab(page, "Git")).toBeVisible();
+    await expect(tab(page, "Inbox")).toHaveCount(0);
+    // Edit the Coding preset: swap Git for Projects, then update it from the current tabs.
+    await page.getByRole("button", { name: "Close Git" }).click();
+    await openFeature(page, "Projects");
+    await tab(page, "Settings").click();
     await page
-      .getByRole("combobox", { name: "right pane" })
-      .selectOption("workflows");
-    await menu.click();
-    await page
-      .getByRole("button", { name: "Update Coding from current panes" })
+      .getByRole("button", { name: "Update Coding from current tabs" })
       .click();
     await page.getByLabel("New layout name").fill("My review");
-    await page.getByRole("button", { name: "Save", exact: true }).click();
-    await expect(
-      page.getByRole("button", { name: "My review", exact: true }),
-    ).toBeVisible();
-    await page.keyboard.press("Escape");
     await page
-      .getByRole("combobox", { name: "main pane" })
-      .selectOption("skills");
+      .getByRole("button", { name: "Save layout", exact: true })
+      .click();
+    await expect(
+      list().getByRole("button", { name: "My review", exact: true }),
+    ).toBeVisible();
+    await page.waitForTimeout(300); // let localStorage flush before quitting
     await app.close();
 
     ({ page, app } = await start());
-    await page.getByRole("button", { name: "Layouts" }).click();
+    await tab(page, "Settings").click();
     await expect(
-      page.getByRole("button", { name: "Coding (edited)" }),
+      list().getByRole("button", { name: "Coding (edited)" }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "Planning", exact: true }).click();
-    await expect(
-      page.getByRole("combobox", { name: "right pane" }),
-    ).toHaveValue("chat");
-    await page.getByRole("button", { name: "Layouts" }).click();
-    await page.getByRole("button", { name: "Coding (edited)" }).click();
-    await expect(page.getByRole("combobox", { name: "main pane" })).toHaveValue(
-      "workspace",
-    );
-    await expect(
-      page.getByRole("combobox", { name: "right pane" }),
-    ).toHaveValue("workflows");
-    await page.getByRole("button", { name: "Layouts" }).click();
+    await list()
+      .getByRole("button", { name: "Canvas & chat", exact: true })
+      .click();
+    await expect(tab(page, "Files")).toHaveCount(0);
+    await expect(tab(page, "Canvas")).toHaveAttribute("aria-selected", "true");
+    await tab(page, "Settings").click();
+    await list().getByRole("button", { name: "Coding (edited)" }).click();
+    await expect(tab(page, "Files")).toBeVisible();
+    await expect(tab(page, "Projects")).toBeVisible();
+    await expect(tab(page, "Git")).toHaveCount(0);
+    await tab(page, "Settings").click();
     await page.getByRole("button", { name: "Delete My review" }).click();
     await page.getByRole("button", { name: "Reset Coding" }).click();
     await expect(
-      page.getByRole("button", { name: "Coding", exact: true }),
+      list().getByRole("button", { name: "Coding", exact: true }),
     ).toBeVisible();
-    await expect(page.getByRole("button", { name: /My review/ })).toHaveCount(
+    await expect(list().getByRole("button", { name: /My review/ })).toHaveCount(
       0,
     );
   });
 });
 
-test("a layout's right pane survives agent selection; an explicit open-conversation action switches it", async () => {
+test("agent panel: canvas selection opens it in place of the chat, explicit chat actions switch back, beside-chat placement, Esc closes", async () => {
   await withApp(async ({ start }) => {
     const { page, errors } = await start();
     await api(page, "POST", "/agents", {
       name: "Watcher",
       environment: "codex",
     });
-    await page.getByRole("button", { name: "Layouts" }).click();
-    await page.getByRole("button", { name: "Monitoring", exact: true }).click();
-    const right = page.getByRole("combobox", { name: "right pane" });
-    await expect(right).toHaveValue("inbox");
-    // Monitoring hides the navigation; show it and select the agent from the list.
-    await page.getByRole("button", { name: "Toggle navigation" }).click();
-    await page
-      .getByRole("group", { name: "Agents" })
-      .getByRole("button", { name: /Watcher/ })
-      .click();
-    await expect(right).toHaveValue("inbox");
-    // Selecting the agent on the canvas keeps the layout's pane too.
+    const chatTab = side(page).getByRole("tab", { name: "Chat" });
+    const setupTab = side(page).getByRole("tab", { name: "Agent setup" });
+    // Selecting the agent on the canvas opens its setup panel in place of the chat.
     const node = page.locator(".react-flow__node", { hasText: "Watcher" });
     await node.click();
-    await expect(right).toHaveValue("inbox");
+    await expect(setupTab).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByTestId("agent-panel-name")).toHaveText("Watcher");
+    await expect(page.getByRole("textbox", { name: "Message" })).toHaveCount(0);
     // Explicit action: "Chat in AgentTeam" from the canvas context menu opens the conversation.
     await node.click({ button: "right" });
     await page.getByRole("button", { name: "Chat in AgentTeam" }).click();
-    await expect(right).toHaveValue("chat");
-    // Without a pinning layout, plain selection still follows the conversation (default behavior).
+    await expect(chatTab).toHaveAttribute("aria-selected", "true");
+    await expect(
+      side(page).getByRole("combobox", { name: "Agent", exact: true }),
+    ).toHaveValue(
+      (await api(page, "GET", "/agents")).find((a: any) => a.name === "Watcher")
+        .id,
+    );
+    // The chat header's setup button and the side tab both lead back to the panel.
+    await page.getByRole("button", { name: "Set up Watcher" }).click();
+    await expect(setupTab).toHaveAttribute("aria-selected", "true");
+    await page.getByRole("button", { name: "Chat with Watcher" }).click();
+    await expect(chatTab).toHaveAttribute("aria-selected", "true");
+    // Beside the chat: both are visible at once; the choice persists.
+    await setupTab.click();
     await page
-      .getByRole("combobox", { name: "main pane" })
-      .selectOption("workflows");
-    await right.selectOption("activity");
-    await page
-      .getByRole("group", { name: "Agents" })
-      .getByRole("button", { name: /Watcher/ })
+      .getByRole("button", { name: "Show agent panel beside chat" })
       .click();
-    await expect(right).toHaveValue("chat");
+    const column = page.getByRole("complementary", { name: "Agent setup" });
+    await expect(column.getByTestId("agent-panel-name")).toHaveText("Watcher");
+    await expect(page.getByRole("textbox", { name: "Message" })).toBeVisible();
+    expect(await store(page, "agentPanel.placement")).toBe('"beside"');
+    // Esc closes the panel (focus is not in a text field).
+    await page.locator("body").click({ position: { x: 1, y: 1 } });
+    await page.keyboard.press("Escape");
+    await expect(column).toHaveCount(0);
+    await expect(page.getByRole("textbox", { name: "Message" })).toBeVisible();
     expect(errors).toEqual([]);
   });
 });
@@ -322,15 +329,17 @@ test("attention inbox lists failed, limit-stopped, validation and ready-review i
     const count = await items.count();
     await expect(inbox.getByTestId("inbox-count")).toHaveText(String(count));
     await expect(page.getByTestId("inbox-badge")).toHaveText(String(count));
-    // Linking: the failed item opens the Workflows pane in the main area.
+    // Linking: the failed item opens the Projects tab.
     await items
       .filter({ hasText: "Broken step failed" })
       .getByRole("button", { name: "Open" })
       .click();
-    await expect(page.getByRole("combobox", { name: "main pane" })).toHaveValue(
-      "workflows",
+    await expect(tab(page, "Projects")).toHaveAttribute(
+      "aria-selected",
+      "true",
     );
-    // Dismissing removes an item and the badge follows.
+    // Dismissing removes an item and the badge follows (back on the Inbox tab).
+    await tab(page, "Inbox").click();
     await items
       .filter({ hasText: "Finished step" })
       .getByRole("button", { name: /^Dismiss/ })
@@ -351,14 +360,17 @@ test("accessibility smoke: landmarks, names, tab order, dialog focus trap and re
     ).toBeVisible();
     // Landmarks.
     await expect(page.getByRole("banner")).toHaveCount(1);
-    await expect(page.getByRole("navigation", { name: "Panes" })).toBeVisible();
+    // No long pane navigation any more: views open on request (More / Ctrl+K).
+    await expect(page.getByRole("navigation", { name: "Panes" })).toHaveCount(
+      0,
+    );
     await expect(
       page.getByRole("main", { name: "Main content" }),
     ).toBeVisible();
+    await expect(side(page)).toBeVisible();
     await expect(
-      page.getByRole("complementary", { name: "Side pane" }),
-    ).toBeVisible();
-    await expect(page.getByRole("contentinfo")).toBeVisible();
+      page.getByRole("banner").getByText("Workspace connected"),
+    ).toHaveAttribute("aria-live", "polite");
     // Every visible control in the shell, canvas toolbar and chat has an accessible name.
     const unnamed = await page.evaluate(() => {
       const name = (el: Element) => {
@@ -412,9 +424,10 @@ test("accessibility smoke: landmarks, names, tab order, dialog focus trap and re
     }
     // The active-team switcher comes first in the top bar.
     expect(order[0]).toMatch(/^Active team: Main team, idle/);
-    expect(order[1]).toBe("Layouts");
-    expect(order[2]).toMatch(/^Attention inbox, \d+ item/);
-    expect(order).toContain("Toggle navigation");
+    expect(order[1]).toBe("Assign project");
+    expect(order).toContain("More");
+    expect(order).toContain("Settings");
+    expect(order.indexOf("More")).toBeLessThan(order.indexOf("Settings"));
     // Focus is visibly ringed.
     const outline = await page.evaluate(
       () => getComputedStyle(document.activeElement!).outlineStyle,
@@ -444,7 +457,7 @@ test("accessibility smoke: landmarks, names, tab order, dialog focus trap and re
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
     await expect(opener).toBeFocused();
-    // Shortcuts: help dialog, navigation toggle, inbox.
+    // Shortcuts: help dialog, side panel toggle, inbox, command palette.
     await page.locator("body").click({ position: { x: 1, y: 1 } });
     await page.keyboard.press("?");
     await expect(
@@ -453,14 +466,22 @@ test("accessibility smoke: landmarks, names, tab order, dialog focus trap and re
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog")).toHaveCount(0);
     const modifier = process.platform === "darwin" ? "Meta" : "Control";
-    await page.keyboard.press(`${modifier}+b`);
-    await expect(
-      page.getByRole("button", { name: "Toggle navigation" }),
-    ).toHaveAttribute("aria-expanded", "false");
+    await page.keyboard.press(`${modifier}+Backslash`);
+    await expect(side(page)).toHaveCount(0);
+    await page.getByRole("button", { name: "Show side panel" }).click();
+    await expect(side(page)).toBeVisible();
     await page.keyboard.press(`${modifier}+Shift+i`);
+    await expect(tab(page, "Inbox")).toHaveAttribute("aria-selected", "true");
+    await page.keyboard.press(`${modifier}+k`);
+    const palette = page.getByRole("dialog", { name: "Command palette" });
+    await expect(palette).toBeVisible();
     await expect(
-      page.getByRole("combobox", { name: "right pane" }),
-    ).toHaveValue("inbox");
+      palette.getByRole("combobox", {
+        name: "Search views, agents and actions",
+      }),
+    ).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(palette).toHaveCount(0);
     expect(errors).toEqual([]);
   });
 });
@@ -484,7 +505,7 @@ test("chat input: Enter sends, Shift+Enter newline, IME composition, duplicate-s
     await expect(
       page.getByText("Workspace connected", { exact: true }),
     ).toBeVisible();
-    await page.getByRole("button", { name: /Alpha/ }).click();
+    await openChatWith(page, "Alpha");
     const box = page.getByRole("textbox", { name: "Message" });
     const sent = async (agentId: string) =>
       page.evaluate(async (id) => {
@@ -548,17 +569,17 @@ test("chat input: Enter sends, Shift+Enter newline, IME composition, duplicate-s
     await expect.poll(() => sent(ids[0])).toEqual(["こんにちは"]);
     // Draft recovery per agent, surviving agent switches and a relaunch.
     await box.fill("draft for alpha");
-    await page.getByRole("button", { name: /Beta/ }).click();
+    await openChatWith(page, "Beta");
     await expect(box).toHaveValue("");
     await box.fill("draft for beta");
-    await page.getByRole("button", { name: /Alpha/ }).click();
+    await openChatWith(page, "Alpha");
     await expect(box).toHaveValue("draft for alpha");
     await page.waitForTimeout(300);
     await app.close();
     ({ page, app } = await start());
     const again = page.getByRole("textbox", { name: "Message" });
     await expect(again).toHaveValue("draft for alpha");
-    await page.getByRole("button", { name: /Beta/ }).click();
+    await openChatWith(page, "Beta");
     await expect(again).toHaveValue("draft for beta");
   });
 });
@@ -601,6 +622,8 @@ test("canvas groups: collapse hides members behind a group node, hierarchy navig
     await page.locator(`.react-flow__node[data-id="${ids[1]}"]`).click({
       modifiers: [process.platform === "darwin" ? "Meta" : "Control"],
     });
+    // Grouping and hierarchy navigation sit behind the canvas "Groups" toggle.
+    await page.getByRole("button", { name: "Groups", exact: true }).click();
     await page.getByLabel("Group name").fill("Core");
     await page.getByRole("button", { name: "Group selected" }).click();
     await page.getByRole("button", { name: "Collapse group Core" }).click();
@@ -621,9 +644,9 @@ test("canvas groups: collapse hides members behind a group node, hierarchy navig
     // Hierarchy navigation: Lead -> child Worker -> parent Lead.
     await page.locator(`.react-flow__node[data-id="${ids[0]}"]`).click();
     await page.getByRole("button", { name: "Child" }).click();
-    await expect(page.locator(".statusbar")).toContainText("Worker");
+    await expect(page.getByTestId("agent-panel-name")).toHaveText("Worker");
     await page.getByRole("button", { name: "Parent" }).click();
-    await expect(page.locator(".statusbar")).toContainText("Lead");
+    await expect(page.getByTestId("agent-panel-name")).toHaveText("Lead");
     expect(errors).toEqual([]);
   });
 });

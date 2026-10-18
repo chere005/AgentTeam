@@ -192,11 +192,13 @@ Implemented and verified on macOS with temp repos/local bare remotes (see `src/g
 
 ## 15 Layout and interaction quality — P1
 
+- [ ] Progressive-disclosure shell (`docs/ui-design.md`; canvas + chat at start, agent panel, More/Ctrl+K palette, feature tabs per team) is checked on macOS at 1440 and 1100 px wide only; remaining: closing the agent panel with unsaved edits discards them without asking; the "Review changes" entry polls Git status of the agent's write folder on events (no backend summary); the agent panel's skill picker lists at most 60 matches; the canvas keeps its stored viewport when the window narrows (cards can be cut off until Fit); dark theme only (tokens are ready for a light theme).
+
 - [ ] Active-team switcher (`src/team-spaces.ts`, `ui/team-view.ts`, `TeamSwitcher.tsx`): no UI to move an existing agent or workflow to another team (API `POST /team-spaces/:id/members` only); the approval popup, the diagnostic bundle and the Resources "shared resources" choice list stay global; the Run inspector's Transfers/Playground sections use the team's agents but the backend `/inspector/transfers` is not team-filtered; the switcher was checked at one window width only (screenshots at the default test window size).
 
 - [ ] Org-chart arrangement (`ui/org-layout.ts`): canvas positions are one global map, so the Team Assistant (shown in every team) moves with each team's Arrange; subtrees are spaced by full subtree width (no contour packing), so very wide teams fit at far zoom; collapsed groups are laid out as their members; agents added to an arranged team are placed relative to their parent and can overlap manually moved cards until Arrange; checked on macOS at one window size.
 - [ ] Make detailed cards' configuration summary (read-only grid added) visually verified at several widths, and verify the busy/failure/flow animations and `prefers-reduced-motion` behavior in a running app (CSS added in `canvas-cards.css`, only far-zoom card layout was inspected; large-graph "calm" mode above 40 agents is untested).
-- [ ] Attention inbox: awaiting-approval items are covered only by the pure `buildInbox` test (no e2e fixture for a pending approval), and "ready review" is a heuristic (completed task whose agent has an enabled outgoing review edge) because review state is per agent/git diff and not in the snapshot; consider a backend summary endpoint.
+- [ ] Attention inbox: "ready review" is a heuristic (completed task whose agent has an enabled outgoing review edge) because review state is per agent/git diff and not in the snapshot; consider a backend summary endpoint.
 - [ ] Groups now travel with saved teams/packs (template schema v2, `groups`), but live canvas group membership is still renderer localStorage, not a team entity; the saved-team Save dialog group path is backend-tested only (the desktop test covers pack insert).
 
 ## 16 Mobile continuation — P2

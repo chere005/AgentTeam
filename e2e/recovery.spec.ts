@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openFeature } from "./helpers";
 
 const launch = (directory: string) =>
   electron.launch({
@@ -79,7 +80,7 @@ test("recovery: interrupted task shows its checkpoint, pending approval survives
     await expect(
       page.getByText("Workspace connected", { exact: true }),
     ).toBeVisible();
-    await page.getByRole("button", { name: /^Projects/ }).click();
+    await openFeature(page, "Recovery");
     const wf = page.locator(".workflow", { hasText: "Crash demo" });
     const panel = wf.getByTestId("recovery-panel");
     await expect(panel).toContainText("Write notes");

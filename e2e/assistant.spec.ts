@@ -2,6 +2,7 @@ import { test, expect, _electron as electron } from "@playwright/test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openFeature } from "./helpers";
 
 test("assistant changes: reviewable diff, approval, stale proposals, audit log, coordination, ownership and message search", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentteam-e2e-assistant-"));
@@ -71,7 +72,7 @@ test("assistant changes: reviewable diff, approval, stale proposals, audit log, 
     });
 
     // ---- proposals: diff, approval before apply, audit ------------------------------------
-    await page.getByRole("button", { name: /^Assistant changes/ }).click();
+    await openFeature(page, "Assistant changes");
     const list = page.getByTestId("proposal-list");
     await list.getByRole("button", { name: /Add a Builder/ }).click();
     const diff = page.getByTestId("proposal-diff");
@@ -137,6 +138,8 @@ test("assistant changes: reviewable diff, approval, stale proposals, audit log, 
 
     // ---- conversation: ownership, duplicate-driving guard, search ---------------------------
     await page.getByLabel("Agent", { exact: true }).selectOption(ids.lead);
+    // Ownership and the CLI/native modes sit behind the chat's "Conversation options".
+    await page.getByRole("button", { name: "Conversation options" }).click();
     const holder = page.getByTestId("ownership-holder");
     await expect(holder).toContainText("Team");
     await page.getByRole("button", { name: "Take control" }).click();

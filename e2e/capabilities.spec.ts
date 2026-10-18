@@ -2,6 +2,7 @@ import { test, expect, _electron as electron } from "@playwright/test";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openFeature } from "./helpers";
 
 const skill = (body: string) =>
   `---\nname: e2e-style-guide\ndescription: House style guide for the capability test\nmetadata:\n  version: "1.0.0"\n---\n\n${body}\n`;
@@ -56,9 +57,7 @@ test("skills, tools and knowledge: validation, adapters, change acceptance, MCP 
       },
       { workspace },
     );
-    await page
-      .getByRole("button", { name: /^Skills, tools & knowledge/ })
-      .click();
+    await openFeature(page, "Skills, tools & knowledge");
     const root = page.getByTestId("capabilities");
     await expect(root).toBeVisible();
     await root
@@ -99,7 +98,7 @@ test("skills, tools and knowledge: validation, adapters, change acceptance, MCP 
     await expect(row).toContainText("unchanged");
 
     // ---- tools: add a local stdio fixture, metadata-only test, grant ------------------------
-    await page.getByRole("tab", { name: "Tools" }).click();
+    await page.getByRole("tab", { name: "Tools", exact: true }).click();
     const form = page.getByTestId("tool-form");
     await form.getByLabel("Name", { exact: true }).fill("Fixture MCP");
     await form.getByLabel("Command", { exact: true }).fill(process.execPath);
@@ -139,7 +138,7 @@ test("skills, tools and knowledge: validation, adapters, change acceptance, MCP 
     await expect(fixture).toContainText("granted to Capable (all tools)");
 
     // ---- knowledge: attached folder only, status, citation ----------------------------------
-    await page.getByRole("tab", { name: "Knowledge" }).click();
+    await page.getByRole("tab", { name: "Knowledge", exact: true }).click();
     const kform = page.getByTestId("knowledge-form");
     await kform.getByLabel("Name", { exact: true }).fill("Docs");
     await kform.getByLabel(/^Folder/).selectOption(workspace);
@@ -160,7 +159,9 @@ test("skills, tools and knowledge: validation, adapters, change acceptance, MCP 
     );
 
     // ---- effective instructions -------------------------------------------------------------
-    await page.getByRole("tab", { name: "Effective instructions" }).click();
+    await page
+      .getByRole("tab", { name: "Effective instructions", exact: true })
+      .click();
     await expect(page.getByTestId("effective-sections")).toContainText("Role");
     await expect(page.getByTestId("effective-sections")).toContainText(
       "Persistent instructions",

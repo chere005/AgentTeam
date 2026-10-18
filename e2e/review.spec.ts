@@ -3,6 +3,7 @@ import { test, expect, _electron as electron } from "@playwright/test";
 import { mkdtemp, rm, mkdir, writeFile, rename, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openFeature } from "./helpers";
 
 test("review: branch compare, side-by-side, keyboard navigation and narrow layout", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentteam-review2-"));
@@ -57,8 +58,7 @@ test("review: branch compare, side-by-side, keyboard navigation and narrow layou
         workspaces: [{ path: folder, access: "write", active: true }],
       });
     }, project);
-    await page.getByRole("button", { name: "Workspace", exact: true }).click();
-    await page.getByRole("button", { name: "Review", exact: true }).click();
+    await openFeature(page, "Review changes");
     const review = page.getByRole("region", { name: "Code review" });
     await expect(review.getByText("dirty.txt").first()).toBeVisible();
 

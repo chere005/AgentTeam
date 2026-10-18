@@ -2,6 +2,7 @@ import { test, expect, _electron as electron } from "@playwright/test";
 import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openFeature } from "./helpers";
 
 test("effective access, shared resources, queue reasons and external-editor labels are visible", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentteam-coop-ui-"));
@@ -65,13 +66,13 @@ test("effective access, shared resources, queue reasons and external-editor labe
       await req("POST", `/tasks/${holder.id}/status`, { status: "running" });
       return { id, waiting: waiting.id };
     }, project);
-    // Cards: rules and exclusions are summarized next to the folder access.
+    // Detailed cards: rules and exclusions are summarized next to the folder access.
+    await page.getByRole("button", { name: "Detailed cards" }).click();
     await expect(page.locator(".card-access").first()).toContainText(
       "RW −1 excluded",
     );
     // Workspace > Access: exact allowed and denied paths with reasons, plus the external-editor label.
-    await page.getByRole("button", { name: "Workspace", exact: true }).click();
-    await page.getByRole("button", { name: "Access", exact: true }).click();
+    await openFeature(page, "Access & resources");
     const effective = page.getByTestId("effective-access");
     await expect(effective).toContainText("Effective access");
     await expect(effective.getByLabel("Denied paths")).toContainText("secrets");
@@ -86,11 +87,11 @@ test("effective access, shared resources, queue reasons and external-editor labe
       "External editors, interactive CLI sessions and native apps are outside",
     );
     // Hidden folders do not show up when browsing.
-    await page.getByRole("button", { name: "Files", exact: true }).click();
+    await openFeature(page, "Files");
     await expect(page.getByText("readme.md").first()).toBeVisible();
     await expect(page.getByText("secrets", { exact: true })).toHaveCount(0);
     // Resources: shared paths, owner, queue position and wait reason.
-    await page.getByRole("button", { name: "Resources", exact: true }).click();
+    await openFeature(page, "Access & resources");
     const coop = page.getByTestId("cooperation");
     await expect(coop.getByTestId("shared-resource").first()).toContainText(
       project,
@@ -109,7 +110,7 @@ test("effective access, shared resources, queue reasons and external-editor labe
       "outside this enforcement",
     );
     // Task launch review shows what the task would reserve and wait for.
-    await page.getByRole("button", { name: /^Projects/ }).click();
+    await openFeature(page, "Projects");
     const wf = page.locator(".workflow").first();
     await wf.getByRole("button", { name: "Add task" }).click();
     const review = wf.getByTestId("launch-review");

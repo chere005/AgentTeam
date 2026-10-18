@@ -4,6 +4,7 @@ import { test, expect, _electron as electron } from "@playwright/test";
 import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openChatWith, openFeature } from "./helpers";
 test("desktop connects, persists agents, configures limits and queues chat", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentteam-e2e-"));
   const app = await electron.launch({
@@ -24,6 +25,8 @@ test("desktop connects, persists agents, configures limits and queues chat", asy
     await expect(page.locator(".form-grid label").first()).toContainText(
       "Role type",
     );
+    // Priority and concurrency live under the agent form's collapsed "Advanced" section.
+    await page.getByTestId("agent-advanced").locator("> summary").click();
     await page.getByLabel("Scheduling priority").selectOption("101");
     await page.getByLabel("Name", { exact: true }).fill("Database Architect");
     await page
@@ -34,9 +37,11 @@ test("desktop connects, persists agents, configures limits and queues chat", asy
       .getByRole("button", { name: "Create agent", exact: true })
       .click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
-    await page
-      .getByRole("button", { name: "Database Architect codex" })
-      .click();
+    // The new agent's setup panel opens; switch the side panel to its conversation.
+    await expect(page.getByTestId("agent-panel-name")).toHaveText(
+      "Database Architect",
+    );
+    await openChatWith(page, "Database Architect");
     await page
       .getByRole("textbox", { name: "Message", exact: true })
       .fill("Design a small database");
@@ -53,10 +58,10 @@ test("desktop connects, persists agents, configures limits and queues chat", asy
     await expect(
       page.getByText("queued", { exact: true }).first(),
     ).toBeVisible();
-    await page
-      .getByRole("button", { name: "Team canvas", exact: true })
-      .click();
+    await openFeature(page, "Canvas");
     await expect(page.locator(".agent-card")).toHaveCount(2);
+    // The invocation count is part of the detailed cards.
+    await page.getByRole("button", { name: "Detailed cards" }).click();
     await expect(
       page.getByText("0 / 3 invoked", { exact: true }),
     ).toBeVisible();
@@ -103,19 +108,21 @@ test("desktop connects, persists agents, configures limits and queues chat", asy
         completionCriteria: "Reviewed",
       });
     }, directory);
-    await page
-      .getByRole("button", { name: "Database Architect codex" })
-      .click();
-    await page.getByRole("button", { name: "Workspace", exact: true }).click();
+    // Access & resources: the agent's explicit folder access, then shared resources.
+    await openFeature(page, "Access & resources");
+    const main = page.getByRole("main", { name: "Main content" });
+    await main
+      .locator(".access-page")
+      .getByRole("combobox", { name: "Agent", exact: true })
+      .selectOption({ label: "Database Architect" });
     await expect(page.getByText("EXPLICIT FILE ACCESS")).toBeVisible();
     await expect(page.locator(".access-folder .full-path")).toContainText(
       process.platform === "darwin"
         ? directory.replace(/^\/var\//, "/private/var/")
         : directory,
     );
-    await page.getByRole("button", { name: "Resources", exact: true }).click();
-    await page.getByRole("button", { name: "Resource", exact: true }).click();
-    await page.getByLabel("Name", { exact: true }).fill("Shared project");
+    await main.getByRole("button", { name: "Resource", exact: true }).click();
+    await main.getByLabel("Name", { exact: true }).fill("Shared project");
     await page.getByLabel("Priority for Database Architect").selectOption("75");
     await page
       .getByRole("button", { name: "Save resource", exact: true })
@@ -190,8 +197,7 @@ test("review feedback, local preview and isolated worktree flow", async () => {
         workspaces: [{ path: folder, access: "write", active: true }],
       });
     }, project);
-    await page.getByRole("button", { name: "Workspace", exact: true }).click();
-    await page.getByRole("button", { name: "Review", exact: true }).click();
+    await openFeature(page, "Review changes");
     await expect(
       page.getByRole("table", { name: "Side-by-side diff" }),
     ).toContainText("after");
@@ -209,7 +215,7 @@ test("review feedback, local preview and isolated worktree flow", async () => {
     await expect(
       page.getByRole("region", { name: "Review summary" }),
     ).toContainText("1 unresolved");
-    await page.getByRole("button", { name: "Preview", exact: true }).click();
+    await openFeature(page, "Preview");
     await page
       .getByLabel("Server command")
       .fill(`"${process.execPath}" dev.cjs`);
@@ -234,7 +240,7 @@ test("review feedback, local preview and isolated worktree flow", async () => {
       .getByRole("button", { name: "Stop server", exact: true })
       .click();
     await expect(page.getByText(/Server: Stopped/)).toBeVisible();
-    await page.getByRole("button", { name: "Git", exact: true }).click();
+    await openFeature(page, "Git");
     await page.getByText("Create isolated worktree", { exact: true }).click();
     await page
       .getByLabel("New branch", { exact: true })
@@ -358,15 +364,14 @@ test("team templates: save selection, library preview and mapped insert", async 
       });
     }, project);
     await page.reload();
-    await page
-      .getByRole("button", { name: "Team canvas", exact: true })
-      .click();
+    await openFeature(page, "Canvas");
     await expect(page.locator(".agent-card")).toHaveCount(4);
     const saveButton = page.getByRole("button", {
       name: "Save as team",
       exact: true,
     });
-    await expect(saveButton).toBeDisabled();
+    // Nothing selected: saving a team is not offered.
+    await expect(saveButton).toHaveCount(0);
     await page
       .locator(".react-flow__node")
       .filter({ hasText: "Alpha Dev" })
@@ -387,10 +392,7 @@ test("team templates: save selection, library preview and mapped insert", async 
       "Outside Helper",
     );
     await save.getByRole("button", { name: "Done", exact: true }).click();
-    await page
-      .getByRole("button", { name: "Saved teams", exact: true })
-      .first()
-      .click();
+    await openFeature(page, "Team library");
     await page
       .getByRole("list", { name: "Saved teams" })
       .getByRole("button", { name: /Pair/ })

@@ -2,6 +2,7 @@ import { test, expect, _electron as electron } from "@playwright/test";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openFeature } from "./helpers";
 
 // Fake `wolframscript` (never the real kernel): reads the validation source from the wrapper
 // and prints the markers WolframscriptRunner parses. FAIL/SLEEP in the source pick the outcome.
@@ -45,10 +46,7 @@ test("validation gate: Wolfram team project, model verification, panel, cancel, 
       window.agentteam.request("PUT", "/execution", { enabled: true }),
     );
     // The Wolfram-validated TEAM from the library, then a PROJECT assigned to it.
-    await page
-      .getByRole("button", { name: "Saved teams", exact: true })
-      .first()
-      .click();
+    await openFeature(page, "Team library");
     await page
       .getByRole("list", { name: "Example teams" })
       .getByRole("button", { name: /Wolfram-validated reasoning team/ })
@@ -60,7 +58,7 @@ test("validation gate: Wolfram team project, model verification, panel, cancel, 
       .getByRole("button", { name: "Insert as new team", exact: true })
       .click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
-    await page.getByRole("button", { name: /^Projects/ }).click();
+    await openFeature(page, "Projects");
     await page
       .getByRole("button", { name: "Assign project", exact: true })
       .first()

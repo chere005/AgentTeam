@@ -3,6 +3,7 @@ import { test, expect, _electron as electron } from "@playwright/test";
 import { mkdtemp, rm, mkdir, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openFeature } from "./helpers";
 
 test("worktree manager: create with setup, duplicate error, dirty remove refusal, archive", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentteam-wt-ui-"));
@@ -37,8 +38,7 @@ test("worktree manager: create with setup, duplicate error, dirty remove refusal
         workspaces: [{ path: folder, access: "write", active: true }],
       });
     }, project);
-    await page.getByRole("button", { name: "Workspace", exact: true }).click();
-    await page.getByRole("button", { name: "Git", exact: true }).click();
+    await openFeature(page, "Git");
     await page.getByText("Create isolated worktree", { exact: true }).click();
     await page
       .getByLabel("New branch", { exact: true })

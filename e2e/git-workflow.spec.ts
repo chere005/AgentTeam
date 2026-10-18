@@ -3,6 +3,7 @@ import { test, expect, _electron as electron } from "@playwright/test";
 import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { devNull, tmpdir } from "node:os";
 import { join } from "node:path";
+import { openFeature } from "./helpers";
 
 // Fixtures only: a local bare "origin" in a temp directory. Nothing touches a real remote, the
 // network, a browser, or the user's AgentTeam data directory.
@@ -57,8 +58,7 @@ test("git workflow: fetch/pull/push feedback, branch safety, conflicts, PR link,
         workspaces: [{ path: folder, access: "write", active: true }],
       });
     }, project);
-    await page.getByRole("button", { name: "Workspace", exact: true }).click();
-    await page.getByRole("button", { name: "Git", exact: true }).click();
+    await openFeature(page, "Git");
     const panel = page.getByRole("region", { name: "Git workflow" });
     await expect(panel).toContainText("main");
     await expect(panel).toContainText("ahead 0 · behind 0");
@@ -194,7 +194,7 @@ test("git workflow: fetch/pull/push feedback, branch safety, conflicts, PR link,
     expect(git(project, "status", "--porcelain").trim()).toBe("");
 
     // Files: typed previews and live refresh after an external edit (no manual refresh).
-    await page.getByRole("button", { name: "Files", exact: true }).click();
+    await openFeature(page, "Files");
     await expect(page.getByRole("button", { name: /a\.txt/ })).toBeVisible();
     await writeFile(
       join(project, "table.csv"),

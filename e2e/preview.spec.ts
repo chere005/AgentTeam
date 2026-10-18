@@ -3,6 +3,7 @@ import { test, expect, _electron as electron } from "@playwright/test";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openFeature } from "./helpers";
 
 const freePort = async () => {
   const probe = createServer();
@@ -67,8 +68,7 @@ http.createServer((req,res)=>{
         workspaces: [{ path: folder, access: "write", active: true }],
       });
     }, project);
-    await page.getByRole("button", { name: "Workspace", exact: true }).click();
-    await page.getByRole("button", { name: "Preview", exact: true }).click();
+    await openFeature(page, "Preview");
     await page
       .getByLabel("Server command")
       .fill(`"${process.execPath}" dev.cjs`);

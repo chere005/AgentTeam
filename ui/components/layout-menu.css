@@ -1,50 +1,49 @@
-.layout-menu {
-  position: relative;
-}
-.layout-popup {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 6px);
-  z-index: 90;
-  width: 340px;
-  background: #222d3b;
-  border: 1px solid #3b4f61;
-  border-radius: 8px;
-  padding: 8px;
-  box-shadow: 0 12px 30px #0006;
-}
-.layout-popup ul {
+/* Settings → Layouts (saved sets of tabs). */
+.layout-list {
   list-style: none;
-  margin: 0 0 8px;
+  margin: 0 0 12px;
   padding: 0;
 }
-.layout-popup li {
+.layout-list li {
   display: flex;
-  gap: 4px;
+  gap: 8px;
   align-items: center;
-  padding: 2px 0;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line-soft);
 }
-.layout-popup li form {
+.layout-list li:last-child {
+  border-bottom: 0;
+}
+.layout-list li form {
   display: flex;
-  gap: 4px;
+  gap: 6px;
   width: 100%;
 }
-.layout-popup li.active .layout-apply {
+.layout-list .layout-apply {
+  min-width: 130px;
+  justify-content: flex-start;
+}
+.layout-list li.active .layout-apply {
   border-color: var(--accent);
+  color: var(--accent);
 }
-.layout-popup .layout-apply {
+.layout-list .layout-desc {
   flex: 1;
-  text-align: left;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.layout-popup button {
+.layout-list .text-button {
   font-size: 11px;
+  padding: 4px 6px;
 }
 .layout-new {
   display: flex;
-  gap: 4px;
+  gap: 6px;
 }
 .layout-new input,
-.layout-popup li input {
+.layout-list li input {
   flex: 1;
   min-width: 0;
 }

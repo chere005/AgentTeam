@@ -14,6 +14,16 @@ import {
 } from "../ui/workspace.ts";
 import { buildInbox } from "../ui/inbox.ts";
 import {
+  FEATURES,
+  FEATURE_GROUPS,
+  closeTab,
+  matchScore,
+  openTab,
+  sanitizeTabs,
+  searchFeatures,
+  startTabs,
+} from "../ui/features.ts";
+import {
   createGroup,
   descendants,
   hiddenAgents,
@@ -25,34 +35,45 @@ import {
   visibleEdges,
 } from "../ui/groups.ts";
 
-test("layout sanitising falls back to Canvas center / Conversation right", () => {
+test("layout sanitising falls back to Canvas only with the side panel (first run)", () => {
   assert.deepEqual(sanitizeLayout(undefined), defaultLayout);
   assert.deepEqual(sanitizeLayout("junk"), defaultLayout);
+  assert.deepEqual(defaultLayout.tabs, []);
+  assert.equal(defaultLayout.active, "canvas");
+  assert.equal(defaultLayout.showRight, true);
   const l = sanitizeLayout({
-    main: "nope",
-    right: "inbox",
+    tabs: ["inbox", "nope", "inbox", "files"],
+    active: "nope",
     rightWidth: 99999,
-    showLeft: "x",
+    showRight: "x",
   });
-  assert.equal(l.main, "team");
-  assert.equal(l.right, "inbox");
+  assert.deepEqual(l.tabs, ["inbox", "files"]);
+  assert.equal(l.active, "canvas");
   assert.equal(l.rightWidth, 650);
-  assert.equal(l.showLeft, true);
+  assert.equal(l.showRight, true);
+  // The active tab must be open; otherwise the canvas is shown.
+  assert.equal(
+    sanitizeLayout({ tabs: ["git"], active: "files" }).active,
+    "canvas",
+  );
+  assert.equal(sanitizeLayout({ tabs: ["git"], active: "git" }).active, "git");
   assert.equal(clampWidth(NaN), 440);
-  assert.equal(defaultLayout.main, "team");
-  assert.equal(defaultLayout.right, "chat");
 });
 test("four preset layouts; presets are editable and resettable, custom layouts CRUD", () => {
   assert.deepEqual(
     presetLayouts.map((p) => p.id),
-    ["planning", "coding", "review", "monitoring"],
+    ["simple", "coding", "review", "monitoring"],
   );
   let store = sanitizeStore(null);
-  const edited = { ...defaultLayout, main: "skills" as const };
+  const edited = {
+    ...defaultLayout,
+    tabs: ["capabilities" as const],
+    active: "capabilities" as const,
+  };
   store = updateLayout(store, "coding", edited);
-  assert.equal(
-    allLayouts(store).find((l) => l.id === "coding")!.layout.main,
-    "skills",
+  assert.deepEqual(
+    allLayouts(store).find((l) => l.id === "coding")!.layout.tabs,
+    ["capabilities"],
   );
   assert.ok(allLayouts(store).find((l) => l.id === "coding")!.edited);
   store = addLayout(store, "  My view ", edited, "custom-1");
@@ -62,24 +83,68 @@ test("four preset layouts; presets are editable and resettable, custom layouts C
   assert.equal(store.custom[0].name, "Renamed");
   store = removeLayout(removeLayout(store, "custom-1"), "coding");
   assert.equal(store.custom.length, 0);
-  assert.equal(
-    allLayouts(store).find((l) => l.id === "coding")!.layout.main,
-    "workspace",
+  assert.deepEqual(
+    allLayouts(store).find((l) => l.id === "coding")!.layout.tabs,
+    ["files", "git"],
   );
   // Corrupt stored data is repaired, preset ids cannot be shadowed by custom entries.
   const bad = sanitizeStore({
-    overrides: { coding: { main: "zzz" }, other: {} },
+    overrides: { coding: { tabs: ["zzz"], active: "zzz" }, other: {} },
     custom: [
-      { id: "planning", name: "x", layout: {} },
-      { id: "c", name: "ok", layout: { main: "chat" } },
+      { id: "simple", name: "x", layout: {} },
+      { id: "c", name: "ok", layout: { tabs: ["inbox"], active: "inbox" } },
       null,
     ],
   });
-  assert.equal(bad.overrides.coding.main, "workspace");
+  assert.deepEqual(bad.overrides.coding.tabs, []);
+  assert.equal(bad.overrides.coding.active, "canvas");
   assert.deepEqual(
     bad.custom.map((c) => c.id),
     ["c"],
   );
+});
+test("feature registry: every feature named, described and grouped; search ranks names first", () => {
+  assert.equal(new Set(FEATURES.map((f) => f.id)).size, FEATURES.length);
+  for (const f of FEATURES) {
+    assert.ok(f.name && f.description.length > 10, f.id);
+    assert.ok(f.group === null || FEATURE_GROUPS.includes(f.group), f.id);
+  }
+  // Only Settings lives outside the More menu groups (it has its own top-bar gear).
+  assert.deepEqual(
+    FEATURES.filter((f) => !f.group).map((f) => f.id),
+    ["settings"],
+  );
+  assert.equal(searchFeatures("rev")[0].id, "review");
+  assert.equal(searchFeatures("git")[0].id, "git");
+  // Old pane names still find their new home.
+  assert.equal(searchFeatures("saved teams")[0].id, "library");
+  assert.equal(searchFeatures("run inspector")[0].id, "inspector");
+  assert.equal(searchFeatures("resources")[0].id, "access");
+  assert.deepEqual(searchFeatures("zzzz"), []);
+  assert.equal(searchFeatures("").length, FEATURES.length);
+  assert.equal(matchScore("x", "Inbox"), 1);
+  assert.equal(matchScore("inbox", "Inbox") > matchScore("in", "Inbox"), true);
+});
+test("tabs: open appends and focuses, close falls back left, stored state is sanitised", () => {
+  let t = startTabs;
+  assert.deepEqual(t, { tabs: [], active: "canvas" });
+  t = openTab(t, "projects");
+  t = openTab(t, "inbox");
+  t = openTab(t, "projects");
+  assert.deepEqual(t, { tabs: ["projects", "inbox"], active: "projects" });
+  t = openTab(t, "canvas");
+  assert.equal(t.active, "canvas");
+  t = openTab(t, "inbox");
+  t = closeTab(t, "inbox");
+  assert.deepEqual(t, { tabs: ["projects"], active: "projects" });
+  t = closeTab(t, "projects");
+  assert.deepEqual(t, { tabs: [], active: "canvas" });
+  assert.deepEqual(closeTab(t, "git"), t);
+  assert.deepEqual(sanitizeTabs({ tabs: ["git", 3, "git"], active: "git" }), {
+    tabs: ["git"],
+    active: "git",
+  });
+  assert.deepEqual(sanitizeTabs(null), startTabs);
 });
 
 const agents = [

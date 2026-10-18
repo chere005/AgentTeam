@@ -244,10 +244,13 @@ export function OwnershipBar({
   agent,
   events,
   act,
+  quiet = false,
 }: {
   agent: Agent;
   events: TeamEvent[];
   act: (fn: () => Promise<unknown>) => Promise<void>;
+  /** Hide the bar while the team drives the agent as usual (no warning): nothing to decide. */
+  quiet?: boolean;
 }) {
   const [view, setView] = useState<OwnershipView | null>(null);
   const last = events.length ? events[events.length - 1].seq : 0;
@@ -262,6 +265,7 @@ export function OwnershipBar({
     };
   }, [agent.id, agent.control, last]);
   if (!view) return null;
+  if (quiet && view.holder === "team" && !view.warning) return null;
   const take = (mode: "embedded" | "cli" | "native") =>
     void act(() => api("/ownership/" + agent.id + "/take", "POST", { mode }));
   return (

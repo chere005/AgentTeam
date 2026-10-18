@@ -2,6 +2,7 @@ import { test, expect, _electron as electron } from "@playwright/test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openFeature } from "./helpers";
 
 test("workflow limits: trip reason, honest usage, rejected then extended resume", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentteam-e2e-limits-"));
@@ -51,7 +52,7 @@ test("workflow limits: trip reason, honest usage, rejected then extended resume"
         () => undefined,
       );
     });
-    await page.getByRole("button", { name: /^Projects/ }).click();
+    await openFeature(page, "Limits");
     const wf = page.locator(".workflow", { hasText: "Bounded run" });
     await wf.locator("details.limits-panel > summary").click();
     await expect(wf.getByTestId("limit-trip")).toHaveText(

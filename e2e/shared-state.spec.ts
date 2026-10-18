@@ -2,6 +2,7 @@ import { test, expect, _electron as electron } from "@playwright/test";
 import { mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openFeature } from "./helpers";
 
 test("shared state viewer: typed field, history, stale-write conflict, artifact preview and provenance", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentteam-e2e-shared-"));
@@ -94,7 +95,7 @@ test("shared state viewer: typed field, history, stale-write conflict, artifact 
     expect(conflict.message).toMatch(/current version is 2/);
     expect(conflict.escape).toMatch(/escapes the attached workspace/);
 
-    await page.getByRole("button", { name: /^Projects/ }).click();
+    await openFeature(page, "Shared state");
     const panel = page
       .locator(".workflow", { hasText: "Shared demo" })
       .getByTestId("shared-panel");

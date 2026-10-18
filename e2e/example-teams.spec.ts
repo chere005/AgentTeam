@@ -7,6 +7,7 @@ import {
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openFeature } from "./helpers";
 
 // Example TEAMS in the Saved teams library (src/example-teams.ts), inserted as teams only, then
 // auto-arranged as a top-down org chart (ui/org-layout.ts); a project is assigned afterwards.
@@ -132,11 +133,7 @@ test("example teams: listed with shape and org preview, inserted as teams (no pr
     await expect(
       page.getByText("Workspace connected", { exact: true }),
     ).toBeVisible();
-    const openLibrary = () =>
-      page
-        .getByRole("button", { name: "Saved teams", exact: true })
-        .first()
-        .click();
+    const openLibrary = () => openFeature(page, "Team library");
     await openLibrary();
     const list = page.getByRole("list", { name: "Example teams" });
     await expect(list.getByRole("button")).toHaveCount(3);

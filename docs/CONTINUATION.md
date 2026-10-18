@@ -5,10 +5,25 @@ Updated October 18, 2026. Read with `AGENTS.md` (rules), `CLAUDE.md` (commands a
 ## Repository state
 
 - Repository `/Users/scheren/CLAUDIO/AgentTeam`, public remote https://github.com/chere005/AgentTeam, branch `main`.
-- Last commit `2452238` (app icon); the active-team switcher is committed (`45ad3c8`). The team-vs-project change set below is **uncommitted**; commit only when the user asks.
+- HEAD `985de2c` (teams vs projects, committed). The progressive-disclosure UI redesign below is **uncommitted**; commit only when the user asks.
 - Package version 0.1.0. No release tag or published artifacts are established by this handoff.
 
-## Teams vs projects, example teams, org-chart layout (uncommitted, this session)
+## Progressive-disclosure UI redesign (uncommitted, this session)
+
+User feedback: the workspace was cluttered (≈20 always-visible panes, overlapping pages); start with the graph and the chat plus how to give agents folders and skills, and bring in other features on request. Design note with the before-problems, principles, information architecture and a "what moved where" table: `docs/ui-design.md`.
+
+- Shell (`ui/App.tsx`): no left navigation, no pane dropdowns, no status bar. Top bar: logo, team switcher, "Assign project" (team has agents), "Execution paused" (only while paused), attention button (only when something needs you), More (Ctrl/Cmd+K), Settings. Main area = canvas; features open as closable tabs, remembered per team (`agentteam.tabs[.team-<id>]`, `ui/features.ts` pure registry + tab logic). Side panel = Chat or Agent setup (or the agent panel as its own column beside the chat; Settings → Agent panel).
+- `ui/components/AgentPanel.tsx` replaces `AgentEditor.tsx` (deleted): sections Identity & role, Model, Folders ("Can read" / "Can read and edit", working folder), Skills (add from library/installed, Always loaded / On demand), Talks to (connections + Connect), collapsed Advanced (effort, priority, concurrency, invocation panel, instructions, tool ids, access rules). Explicit Save/Discard. The New agent dialog uses the same sections and opens the panel after creating. Contextual "Review changes (N)" / "View blockers (N)".
+- `ui/components/CommandMenu.tsx`: More menu (grouped features with one-line descriptions) and search over features, actions and agents.
+- Consolidation (UI only, no backend change): Workspace pane split into Files / Git / Review changes / Preview tabs; Access + Resources (+ Cooperation) = "Access & resources"; Skills library pane removed (agent panel Skills + "Skills, tools & knowledge"); Limits / Recovery / Shared state moved out of every project card into their own tabs (cards link to them); Layouts moved to Settings and now store sets of tabs (presets Canvas & chat, Coding, Review, Monitoring; `ui/workspace.ts`), no longer re-applied on team switch; chat ownership + CLI/native tabs behind "Conversation options"; canvas toolbar trimmed (+ Agent, Arrange, Detailed cards, Groups, Save as team only with a selection), getting-started card on empty teams (lone Team Assistant hidden until the team has a member), simple cards = name, role, model, status.
+- Tests: `test/ui-logic.test.ts` (layout model rewritten; feature registry/search and tab open/close/sanitise tests); `e2e/helpers.ts` (`openFeature`, `openChatWith`, `openAgentPanel`); every spec moved to the new navigation with its behaviour assertions kept; `e2e/workspace-ux.spec.ts` persistence/layouts/selection tests rewritten for tabs and the agent panel; new `e2e/navigation.spec.ts` (first run = canvas + chat only, More lists and palette opens every feature, tabs per team across relaunch, agent panel folder/skill add + save, pending approval → attention button → Inbox).
+- Screenshots: before (inspected, then removed by the next Playwright run, which cleans `test-results/`) and after in `test-results/ui-redesign/` (regenerate with a script like the one described in the report; any `npm run test:ui` deletes them).
+
+Checks after this change (macOS, Node 26): `npm run typecheck` passed; `npm test` twice: 390 tests, 389 passed, 0 failed, 1 skipped both times; `npm run build` passed (chunk-size warning only); full `npm run test:ui` twice: 43 of 43 passed both times; prettier check clean; `node scripts/audit-release.mjs` passed.
+
+Not done / limits: dark theme only (no light mode exists); checked at 1440 and 1100 px on macOS only; closing the agent panel with unsaved edits discards them silently; the canvas keeps its stored viewport when the window narrows; "View blockers" is hidden on far-zoom cards (the card border and attention button still show it). See `TODO.md` section 15.
+
+## Teams vs projects, example teams, org-chart layout (committed in `985de2c`)
 
 User feedback: the two "workflows" (Wolfram-validated reasoning; Opus → Sonnet → Codex/Fable review → adjudication → fix → final review → report) are outlines of two whole TEAMS that can be assigned projects; show them with a third constructed example; auto-arrange should be a top-down org tree.
 
@@ -98,7 +113,7 @@ Results of this session (macOS, Darwin 25, Node 26 only), after the team/project
 
 ## Next steps
 
-1. Get the user's go-ahead to commit the change set (never commit unasked); review `git diff` first.
+1. Get the user's go-ahead to commit the UI redesign (never commit unasked); review `git diff` first, and look at the app with real data.
 2. Pipeline team and projects (`src/pipeline.ts`, `src/handoffs.ts`, `src/projects.ts`, `test/pipeline.test.ts`, `test/projects.test.ts`, `e2e/pipeline.spec.ts`): implemented, fixture-tested only, never run against a live provider; the real model ids and Codex's top effort name are unconfirmed. Defaults: `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-fable-5-1`, Codex model `default` at effort `max`; all configurable, none substituted (an unadvertised model/effort blocks verification). Known limits: the Fable/Sonnet ids on alias-only Claude discovery are surfaced as warnings (passed unchanged), the integrator is one extra Sonnet agent beyond the worker caps, fix-worker worktrees are created after the first integration (scheduler sweep or `POST /pipelines/:id/stage2`), and adjudication gating uses completion-check/dependency gates (not orchestration rules). The team now carries delegate/review edges along its org tree.
 3. Wolfram-validated team: run the opt-in real-kernel smoke test before claiming end-to-end validation. Product feature team: a live run of one project to see the required review and security consult fire on real changed files.
 4. Wire provider exposure (MCP grants, teammate tools, assistant proposals as a tool) with runtime enforcement; then live-provider smoke tests.

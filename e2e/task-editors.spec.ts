@@ -7,6 +7,7 @@ import {
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openFeature } from "./helpers";
 
 // Fixture data only (temp AGENTTEAM_DATA_DIR, AGENTTEAM_TEST=1): no provider is ever invoked; task
 // states are driven through the API.
@@ -35,15 +36,15 @@ const api = (page: Page, method: string, path: string, body?: unknown) =>
     ([m, p, b]) => window.agentteam.request(m as string, p as string, b),
     [method, path, body] as const,
   );
-async function openWorkflows(page: Page) {
-  await page.getByRole("button", { name: /^Projects/ }).click();
+async function openWorkflows(page: Page, view = "Projects") {
+  await openFeature(page, view);
 }
-async function reload(page: Page) {
+async function reload(page: Page, view = "Projects") {
   await page.reload();
   await expect(
     page.getByText("Workspace connected", { exact: true }),
   ).toBeVisible();
-  await openWorkflows(page);
+  await openWorkflows(page, view);
 }
 async function fixture(page: Page) {
   const a = await api(page, "POST", "/agents", {
@@ -308,7 +309,7 @@ test("shared state editor: define field with permissions, edit, backend error, p
       name: "Spare",
       environment: "codex",
     });
-    await openWorkflows(page);
+    await openWorkflows(page, "Shared state");
     const editor = page.getByTestId("state-editor");
     await editor.locator("summary").click();
     await editor.getByRole("button", { name: "Define field" }).click();
@@ -349,7 +350,7 @@ test("shared state editor: define field with permissions, edit, backend error, p
     });
 
     // Persistence: reload and edit again.
-    await reload(page);
+    await reload(page, "Shared state");
     const editor2 = page.getByTestId("state-editor");
     await editor2.locator("summary").click();
     await editor2
@@ -504,7 +505,7 @@ test("routing rule editing: mode, priority, persistence and backend error", asyn
 test("workflow limits editor covers every limit key", async () => {
   await withApp(async (page) => {
     const { wf } = await fixture(page);
-    await openWorkflows(page);
+    await openWorkflows(page, "Limits");
     const w = page.locator(".workflow", { hasText: "Editable flow" });
     await w.locator("details.limits-panel > summary").click();
     const labels: [string, string, number][] = [
@@ -533,7 +534,7 @@ test("workflow limits editor covers every limit key", async () => {
     await expect(w.getByRole("alert")).toContainText(
       "Max handoffs must be a whole number of at least 1",
     );
-    await reload(page);
+    await reload(page, "Limits");
     await page
       .locator(".workflow", { hasText: "Editable flow" })
       .locator("details.limits-panel > summary")
