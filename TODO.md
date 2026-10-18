@@ -2,9 +2,17 @@
 
 Updated October 18, 2026. This is the remaining work for the desktop application, including the approved additions from AutoGen Studio, Flowise, Happy, and Vibe Kanban. A feature is complete only when its interface, backend behavior, persistence, and relevant tests work together.
 
+**Maintenance:** remove completed tasks after verification; keep this file focused on remaining work. Record completed behavior in release notes or implementation documentation.
+
 **Status:** unchecked items remain open, including partial implementations. **P0** means required for a dependable first release; **P1** means the next complete workflow; **P2** means an approved expansion after the local workflow works. These priorities describe implementation order, not agent scheduling priority.
 
 ## Current baseline
+
+**Continuation checkpoint:** see [docs/CONTINUATION.md](docs/CONTINUATION.md) for the detailed code map, verified baseline, limitations, and next implementation steps. Work is paused at the user's request. The newest requested deliverable is still unimplemented:
+
+- [ ] Create a paused sample: Opus 5.5 plan → Sonnet 5.5 implementation with up to five workers → parallel Codex max/Fable reviews → separate Fable adjudication → up to five additional Sonnet workers → parallel final reviews → concise Fable stage report.
+- [ ] Preserve immutable Markdown handoff/attempt notes across stages and retries, with a scrollable workflow history and references to the exact inputs consumed.
+- [ ] Make model mappings and worker caps configurable; validate provider availability and real parallel resource access before running the sample.
 
 The local application already has a three-pane layout; compact and detailed agent cards; a communication graph; agent configuration; persistent conversations; workflow tasks and dependencies; resource locks with waiting-time aging; skill inventories; a file browser; basic Git operations; and cross-platform packaging configuration.
 
@@ -14,15 +22,22 @@ Automatic harness discovery, model choices, and manual executable overrides need
 
 At this checkpoint, type checking and the production build pass. All 43 backend tests pass, including ACP protocol and permission tests. Desktop tests pass for agent configuration/chat, review/preview/worktree flow, and ACP settings/approval/conversation delivery. Live-provider and other-platform ACP validation remain pending. Release workflow configuration exists; publication and downloadable artifacts still need verification.
 
+## Wolfram-validated math/physics sample — next sample workflow
+
+- [ ] Add a paused, configurable problem-solving workflow led by Opus 5.5; verify the model mapping before execution.
+- [ ] Whenever mathematical reasoning/calculation is needed, invoke one or two Wolfram agents (hard concurrency cap of two) to derive and independently validate the result where appropriate.
+- [ ] Require executable Wolfram Language validation code and actual kernel execution; agent agreement, generated code, or prose alone must never satisfy the gate.
+- [ ] Save each validation explicitly: problem/claim, assumptions/domains/units, derivation, `.wl` source, actual inputs/outputs, kernel version, assertions/test report, tolerances and precision where numeric, and pass/fail/inconclusive status. Distinguish symbolic proof from numerical evidence.
+- [ ] Block every dependent reasoning step until its exact mathematical inputs pass validation. Failure, unresolved symbolic conditions, missing kernel, timeout, disagreement, or changed inputs keep the gate closed and trigger bounded correction/revalidation.
+- [ ] Show validation state and blockers in the workflow UI; preserve all attempts and scrollable Markdown notes with links to saved mathematical evidence. Finish with a concise answer stating the validated scope and any remaining limitations.
+- [ ] Test the gate with correct and deliberately incorrect math, stale evidence, cancellation/restart, unavailable Wolfram runtime, and the two-agent limit; include a real-kernel smoke test before claiming end-to-end validation.
+
 ## 1 Complete the current development tools — P0
 
 ### Code review viewer
 
 - [ ] Verify the Review tab in the running desktop app, in both the main and right panes, including narrow layouts and keyboard navigation.
 - [ ] Finish inline comments: select a changed line, show its file and old/new line anchor, write feedback, and choose a recipient agent.
-- [x] Include the relevant diff excerpt, workspace, staged/unstaged mode, and snapshot identity in the agent's message.
-- [x] Reject feedback against a stale diff and offer refresh without losing the user's draft.
-- [x] Make delivery idempotent so retrying a failed UI request cannot send the same comment twice.
 - [ ] Show whether feedback was sent, queued, or scheduled; offer Open conversation for the recipient.
 - [ ] Persist review comments and expose unresolved/resolved status; mark outdated anchors when the diff changes.
 - [ ] Add an overall review summary and explicit Request changes / Approve review actions. Approval must not silently commit or merge.
@@ -64,12 +79,6 @@ At this checkpoint, type checking and the production build pass. All 43 backend 
 
 ## 2 Finish the requested agent editor changes — P0
 
-- [x] Move Role type to the top of the new/edit agent form.
-- [x] Replace numeric scheduling priority with **Low, Medium, High, Max, Preempt** in both agent and resource interfaces.
-- [x] Implement Preempt as first in the eligible queue, ahead of aged normal-priority work. Explain that it does not forcibly terminate an already running agent.
-- [x] Preserve waiting-time fairness among normal priorities and document that continuous Preempt traffic is an explicit exception.
-- [x] Migrate existing numeric priorities without silently changing their relative meaning; keep routing-rule priority distinct from scheduling priority.
-- [x] Verify the single maximum-invoked-agents dropdown, Unlimited default, persistence, and legacy custom values. Remove any remaining duplicate numeric controls.
 - [ ] Show which running children count toward the limit and why additional invocations are waiting.
 - [ ] Validate model dropdowns against the selected installation and preserve a clearly labeled custom model option.
 - [ ] Expose only supported effort choices, including appropriate choices for the installation's default model.
@@ -83,21 +92,8 @@ At this checkpoint, type checking and the production build pass. All 43 backend 
 
 **Workflow engine decision remains open:** prototype XState versus LangGraph before implementing durable checkpoint/resume. XState is a candidate for explicit lifecycle transitions; LangGraph is a candidate for executable workflow state/checkpoints. Do not install both by default or mistake database persistence for recoverable execution.
 
-Implemented ACP foundation:
-
-- [x] Pin the stable Apache-2.0 ACP TypeScript SDK (1.9.0) and use its ACP v1 entry point, avoiding experimental v2.
-- [x] Introduce shared runtime command/event types and an adapter execution contract. Dispatch ACP and direct commands through the common execution path used by chat and scheduled tasks.
-- [x] Initialize capability negotiation, create sessions, load supported sessions, prompt, and stream assistant text/tool/plan/config events. Suppress history replay from being appended as a new answer.
-- [x] Reject unsupported protocol versions, resume requests, and model/effort values instead of silently falling back.
-- [x] Add per-provider Direct CLI/ACP settings, explicit adapter executable paths, and literal argument arrays. Do not silently download adapters or migrate conversations.
-- [x] Bind stored ACP session IDs to the adapter executable/argument identity. Keep direct and ACP sessions separate.
-- [x] Route ACP permission requests to a pending-approval UI and return the selected advertised option; cancel requests if no handler exists or the run is cancelled.
-- [x] Preserve scheduler/resource gates before ACP dispatch. This covers AgentTeam-launched work, not unexposed provider-native subagents.
-- [x] Add protocol-fixture tests for streaming, resume replay, configuration, permission decisions, crash handling, cancellation, and transport identity.
-
 Remaining ACP and orchestration work:
 
-- [x] Verify desktop settings, approval interactions, and actual chat delivery end to end with the protocol fixture.
 - [ ] Evaluate released Codex ACP and Claude Agent ACP adapters, including version compatibility, licenses, installation/distribution, and actual account authentication. The SDK fixture passing does not establish live-provider compatibility.
 - [ ] Verify existing subscription authentication and installed-runtime selection for each adapter; do not assume an SDK-based adapter inherits CLI login or billing behavior.
 - [ ] Add metadata-only Test connection and show negotiated capabilities/configuration choices in the agent editor. Current editor choices still come from direct runtime discovery.
@@ -128,12 +124,14 @@ References: [ACP protocol](https://agentclientprotocol.com/protocol/overview), [
 - [ ] Validate Wolfram execution with a configured local installation, evaluator selection, error handling, and session context.
 - [ ] Add a runtime capability table: streaming, tools, effort, model discovery, session resume, subagents, and cancellation.
 - [ ] Preserve provider session identity and verify resume after restart, model changes, and human takeover.
-- [ ] Distinguish authentication, quota/rate-limit, model availability, process failure, and user cancellation errors.
 - [ ] Provide a guided first-run check that does not require an Enable execution checkbox and does not unexpectedly drain old queued work.
 - [ ] Correct README and release notes that still describe execution as off by default.
 
 ## 4 Saved teams and reusable configurations — P1
 
+- [ ] Package reusable specialist teams with agents, lead, skills, internal rules, and required reviews; start with a Swift development pack alongside the existing starter gallery.
+- [ ] Add a versioned team-pack manifest with source attribution, licenses, pinned skill dependencies, supported harnesses/tools, and model mappings. Preview compatibility and installation changes before atomic insertion; never import credentials or silently grant permissions.
+- [ ] Support explicit pack updates with a configuration diff while preserving local customizations; check companion-skill licenses separately and retain required upstream notices.
 - [ ] Select a group of agents on the canvas and save it as a named team.
 - [ ] Save agent roles, instructions, models/effort, skills, limits, priorities, internal communication edges, routing rules, and relative layout.
 - [ ] Include only relationships inside the selection, or explicitly identify external dependencies that need remapping.
@@ -163,6 +161,8 @@ References: [ACP protocol](https://agentclientprotocol.com/protocol/overview), [
 
 ## 6 Real agent-to-agent orchestration — P1
 
+- [ ] Add coordinator, implementer, reviewer, and adjudicator role presets with suitable default tool grants and output contracts; coordinators delegate/synthesize and reviewers/adjudicators default to read-only access.
+- [ ] Trigger specialist reviews from task scope and changed files: UI → accessibility, concurrency → concurrency review, sensitive data → security, migrations → database review. Allow multiple specialists and show the evidence, matched rule, and reason for each invocation.
 - [ ] Expose teammate invocation as actual provider tools, rather than relying only on routing preview and manually configured tasks.
 - [ ] Enforce directed/bidirectional communication permissions on every invocation, result, review, and notification.
 - [ ] Pass structured request context and return results to the invoking agent with traceable parent/child IDs.
@@ -194,7 +194,6 @@ References: [ACP protocol](https://agentclientprotocol.com/protocol/overview), [
 - [ ] Distinguish subscription quotas from API monetary costs; do not invent a dollar estimate for opaque subscription usage.
 - [ ] Show budget consumption and the exact reason a workflow stopped.
 - [ ] Allow safe pause/resume or an explicit budget extension while preserving work.
-- [ ] Replace the fixed provider timeout with configurable bounds appropriate to chat and longer coding tasks.
 
 ## 9 Team playground and run inspector — P1
 
@@ -221,6 +220,12 @@ References: [ACP protocol](https://agentclientprotocol.com/protocol/overview), [
 
 ## 11 Conditional workflows and deterministic steps — P1
 
+**P0 exception — required validation gates, before autonomous sample execution:**
+
+- [ ] Distinguish advisory routing from mandatory validation in the rule editor and scheduler. Required reviews/checks block dependent steps; prompt instructions alone cannot satisfy them, and explicit recipient overrides cannot bypass them.
+- [ ] Bind gate evidence to exact inputs/revisions and require the configured check/review outcome; missing, failed, inconclusive, cancelled, or stale evidence keeps the gate closed. Surface blockers and retain decisions across restart. Use this mechanism for the Wolfram sample's actual kernel-validation requirement.
+- [ ] Test gate bypass attempts and stale evidence with controlled fixtures, then verify provider/kernel execution separately. Preserve mock-based orchestration tests; do not adopt a blanket ban on mocks or treat fixture success as live-provider validation.
+
 - [ ] Add workflow nodes for conditions, tool/command calls, human input, parallel fan-out, join, and bounded loops.
 - [ ] Keep the agent communication graph distinct from an executable workflow graph while letting users navigate between them.
 - [ ] Support rules such as “tests fail → Builder; tests pass → Reviewer.”
@@ -236,6 +241,7 @@ References: [ACP protocol](https://agentclientprotocol.com/protocol/overview), [
 - [ ] Expand useful coverage of popular languages, frameworks, databases, testing, security review, and Wolfram work where gaps remain.
 - [ ] Keep curated defaults and locally installed harness skills in separate sections, grouped/filterable by environment.
 - [ ] Show Always load versus On demand accurately for each adapter; implement on-demand loading where it is currently unsupported.
+- [ ] Keep permanent role instructions short and focused on responsibilities/output contracts; load deep reference skills only when relevant. Record which skill versions loaded and why, expose their context cost, and disclose adapters that cannot support on-demand loading.
 - [ ] Provide effective-instructions preview showing role, persistent instructions, loaded skills, and tool requirements.
 - [ ] Detect skill changes, missing files, duplicates, and incompatible versions; let the user control updates.
 - [ ] Add an MCP/tool registry with per-agent grants, connection state, authentication configuration, and test connection.
@@ -321,9 +327,9 @@ References: [ACP protocol](https://agentclientprotocol.com/protocol/overview), [
 
 1. Finish Review, inline feedback, worktree setup, and dev-server preview as one tested coding workflow.
 2. Finish editor refinements, then establish the common runtime interface and validate ACP adapters before expanding provider-specific execution. Verify discovery, model/effort choices, existing account authentication, and real coding permissions.
-3. Add saved teams and actual teammate invocation, then make Team Assistant configuration actions usable.
+3. Implement scheduler-enforced validation gates and durable handoff evidence before running either requested sample autonomously. Add role presets and explainable conditional specialist routing alongside actual teammate invocation.
 4. Add checkpoints, stopping conditions, and the run inspector before expanding autonomous workflows.
-5. Add shared state, conditional/tool steps, MCP, and reference knowledge.
+5. Add saved-team packs and their versioned manifests, lean instructions/on-demand skills, and Team Assistant configuration actions; extend shared state, conditional/tool steps, MCP, and reference knowledge. Pack distribution follows gate correctness and local template validation.
 6. Harden resource coordination, Git integration, packaging, and cross-platform behavior throughout the above work.
 7. Add mobile continuation and shared human sessions once local session ownership/recovery is reliable.
 
@@ -334,4 +340,5 @@ These are references for the approved features, not dependencies selected for Ag
 - [AutoGen Studio](https://microsoft.github.io/autogen/dev/user-guide/autogenstudio-user-guide/index.html): team playground, component gallery, message-flow inspection, termination conditions.
 - [Flowise Agentflow](https://docs.flowiseai.com/using-flowise/agentflowv2): checkpoints, human input, shared state, conditional/tool steps, MCP and knowledge sources.
 - [Happy](https://github.com/slopus/happy): subscription-backed sessions, encrypted mobile continuation, shared sessions with other people.
+- [Swift Agents](https://github.com/Techopolis/swift-agents): approved inspiration for specialist team packs, lean role prompts/on-demand skills, conditional specialist reviews, and coordinator separation. Keep the cross-platform Electron/TypeScript and hybrid ACP architecture; enforce required gates in AgentTeam rather than relying on prompt hooks. Repository is MIT; verify each companion skill separately before redistribution.
 - [Vibe Kanban](https://www.vibekanban.com/): worktree setup, code review/feedback, development preview. Its website currently announces sunsetting with community maintenance continuing.

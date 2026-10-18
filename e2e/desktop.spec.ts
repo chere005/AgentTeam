@@ -205,6 +205,10 @@ test("review feedback, local preview and isolated worktree flow", async () => {
     await expect(
       page.getByText(/Feedback queued for Team Assistant/),
     ).toBeVisible();
+    // The comment is persisted and listed as unresolved in the review summary.
+    await expect(
+      page.getByRole("region", { name: "Review summary" }),
+    ).toContainText("1 unresolved");
     await page.getByRole("button", { name: "Preview", exact: true }).click();
     await page
       .getByLabel("Server command")

@@ -133,6 +133,13 @@ export default function App() {
       act,
       events,
       edit: (a: Agent) => setEditor(a),
+      openChat: (id: string) => {
+        setSelected(id);
+        if (main !== "chat") {
+          setRight("chat");
+          setShowRight(true);
+        }
+      },
     };
     switch (id) {
       case "team":

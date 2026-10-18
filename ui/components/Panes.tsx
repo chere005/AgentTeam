@@ -38,6 +38,8 @@ export type PaneProps = {
   act: (fn: () => Promise<unknown>) => Promise<void>;
   events: TeamEvent[];
   edit: (a: Agent) => void;
+  /** Select an agent and show its conversation pane. */
+  openChat?: (id: string) => void;
 };
 function AgentPicker(p: PaneProps) {
   return (
@@ -1071,6 +1073,7 @@ export function Workspace(p: PaneProps) {
               agentId={agent.id}
               workspace={root}
               agents={p.data.agents}
+              onOpenConversation={p.openChat}
             />
           ) : tab === "files" ? (
             <>

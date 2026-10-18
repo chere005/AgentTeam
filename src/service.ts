@@ -4,6 +4,7 @@ import { realpath, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { ResourceCoordinator } from "./resources.ts";
+import { ValidationService } from "./validation.ts";
 import { Store } from "./store.ts";
 import { SkillCatalog } from "./skills.ts";
 import {
@@ -26,12 +27,14 @@ export class TeamService {
   store: Store;
   skills: SkillCatalog;
   resources: ResourceCoordinator;
+  validation: ValidationService;
   approvals: Approvals;
   constructor(store: Store, skills: SkillCatalog) {
     this.store = store;
     this.approvals = new Approvals(store);
     this.skills = skills;
     this.resources = new ResourceCoordinator(store);
+    this.validation = new ValidationService(store, this.resources);
   }
   async saveAgent(input: unknown, id?: string) {
     const data = agentSchema.parse(input);
@@ -337,15 +340,17 @@ export class TeamService {
               ? "human-control"
               : blockers.length
                 ? "dependencies"
-                : task.invokedBy && !this.capacity(task.invokedBy).available
-                  ? "invocation-limit"
-                  : this.resources.conflicts(
-                        task.agentId,
-                        task.workflowId,
-                        task.id,
-                      ).length
-                    ? "resource-busy"
-                    : null,
+                : !this.validation.gate(task).open
+                  ? "validation-required"
+                  : task.invokedBy && !this.capacity(task.invokedBy).available
+                    ? "invocation-limit"
+                    : this.resources.conflicts(
+                          task.agentId,
+                          task.workflowId,
+                          task.id,
+                        ).length
+                      ? "resource-busy"
+                      : null,
     };
   }
   transitionTask(id: string, input: unknown) {
@@ -400,6 +405,11 @@ export class TeamService {
           ),
           "dependency_pending",
           "Dependencies must complete first",
+        );
+        assert(
+          this.validation.gate(task).open,
+          "validation_required",
+          "Required validation has not passed for the task's current inputs",
         );
         assert(
           !this.store

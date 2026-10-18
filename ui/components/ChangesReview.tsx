@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type Agent } from "../api";
+import { ReviewComments } from "./ReviewComments";
 
 type Change = { path: string; status: string; from?: string };
 type Review = {
@@ -45,10 +46,12 @@ export function ChangesReview({
   agentId,
   workspace,
   agents,
+  onOpenConversation,
 }: {
   agentId: string;
   workspace: string;
   agents: Agent[];
+  onOpenConversation?: (agentId: string) => void;
 }) {
   const [staged, setStaged] = useState(false),
     [path, setPath] = useState("");
@@ -63,36 +66,38 @@ export function ChangesReview({
     staged: boolean;
     diffHash: string;
     line: string;
+    side: "old" | "new";
+    lineNo: number;
     requestId: string;
   } | null>(null);
   const [text, setText] = useState(""),
     [recipient, setRecipient] = useState(agentId);
   const [sending, setSending] = useState(false),
-    [sent, setSent] = useState("");
+    [sent, setSent] = useState(""),
+    [sentTo, setSentTo] = useState("");
   async function sendFeedback() {
     if (!comment) return;
     setSending(true);
     setError("");
     try {
-      const result = await api(
-        `/agents/${agentId}/development/feedback`,
-        "POST",
-        {
-          workspace,
-          path: comment.path,
-          staged: comment.staged,
-          diffHash: comment.diffHash,
-          row: comment.row,
-          requestId: comment.requestId,
-          targetId: recipient,
-          text,
-        },
-      );
+      const result = await api(`/agents/${agentId}/reviews/comment`, "POST", {
+        workspace,
+        path: comment.path,
+        staged: comment.staged,
+        side: comment.side,
+        line: comment.lineNo,
+        diffHash: comment.diffHash,
+        requestId: comment.requestId,
+        targetId: recipient,
+        text,
+      });
       setSent(
         `Feedback ${result.execution} for ${agents.find((a) => a.id === recipient)?.name}. It is available in their conversation.`,
       );
+      setSentTo(recipient);
       setComment(null);
       setText("");
+      refresh((n) => n + 1);
     } catch (e) {
       setError(String((e as Error).message));
     } finally {
@@ -171,7 +176,25 @@ export function ChangesReview({
           {error}
         </p>
       )}
-      {sent && <p role="status">{sent}</p>}
+      {sent && (
+        <p role="status">
+          {sent}{" "}
+          {onOpenConversation && sentTo && (
+            <button onClick={() => onOpenConversation(sentTo)}>
+              Open conversation
+            </button>
+          )}
+        </p>
+      )}
+      <ReviewComments
+        agentId={agentId}
+        workspace={workspace}
+        staged={staged}
+        path={path}
+        agents={agents}
+        revision={revision}
+        onOpenConversation={onOpenConversation}
+      />
       {comment && (
         <section className="review-comment">
           <strong>
@@ -301,6 +324,11 @@ export function ChangesReview({
                                       staged,
                                       diffHash: review.diffHash,
                                       line: r.line,
+                                      side:
+                                        r.kind === "removed" ? "old" : "new",
+                                      lineNo: Number(
+                                        r.kind === "removed" ? r.old : r.next,
+                                      ),
                                       requestId: crypto.randomUUID(),
                                     });
                                   }}

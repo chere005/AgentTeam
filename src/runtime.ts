@@ -3,7 +3,8 @@ import { spawn } from "node:child_process";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { projectRoot } from "./config.ts";
+import { projectRoot, providerLimits } from "./config.ts";
+import { toProviderError, errorKindOf } from "./provider-errors.ts";
 import { randomUUID } from "node:crypto";
 import {
   AppError,
@@ -180,6 +181,20 @@ export async function executeCommand(
   signal: AbortSignal,
   hooks?: RuntimeHooks,
 ) {
+  try {
+    await executeCommandRaw(command, environment, onEvent, signal, hooks);
+  } catch (e) {
+    throw toProviderError(e, { cancelled: signal.aborted });
+  }
+}
+async function executeCommandRaw(
+  command: Command,
+  environment: string,
+  onEvent: (event: RuntimeEvent) => void,
+  signal: AbortSignal,
+  hooks?: RuntimeHooks,
+) {
+  const limits = providerLimits(hooks?.profile ?? "chat");
   if (command.acp)
     return acpAdapter.execute(command, environment, onEvent, signal, hooks);
   signal.throwIfAborted();
@@ -220,10 +235,10 @@ export async function executeCommand(
             new AppError(
               504,
               "runtime_timeout",
-              "Provider exceeded the 180-second limit",
+              `Provider exceeded the ${limits.timeoutMs / 1000}-second limit`,
             ),
           ),
-        180_000,
+        limits.timeoutMs,
       );
       const consume = (line: string) => {
         if (!line.trim() || failure) return;
@@ -237,8 +252,12 @@ export async function executeCommand(
       child.stdout.setEncoding("utf8");
       child.stdout.on("data", (chunk) => {
         bytes += Buffer.byteLength(chunk);
-        if (bytes > 4_000_000) {
-          stop(new Error("Provider output exceeded 4 MB"));
+        if (bytes > limits.maxOutputBytes) {
+          stop(
+            new Error(
+              `Provider output exceeded ${limits.maxOutputBytes / 1_000_000} MB`,
+            ),
+          );
           return;
         }
         buffer += chunk;
@@ -480,7 +499,10 @@ export class RunManager {
         store.emit(
           controller.signal.aborted ? "session.cancelled" : "session.failed",
           id,
-          { message: e instanceof Error ? e.message : "Runtime failed" },
+          {
+            message: e instanceof Error ? e.message : "Runtime failed",
+            kind: errorKindOf(e),
+          },
         );
       });
     } finally {

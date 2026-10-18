@@ -2,6 +2,7 @@ import { DevelopmentService } from "./development.ts";
 import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { RuntimeDiscovery } from "./discovery.ts";
+import { TeamTemplates } from "./teams.ts";
 import {
   createServer,
   type IncomingMessage,
@@ -12,6 +13,7 @@ import { z } from "zod";
 import { TeamService } from "./service.ts";
 import { RunManager } from "./runtime.ts";
 import { WorkspaceService } from "./workspaces.ts";
+import { ReviewService } from "./reviews.ts";
 import { recommendations } from "./config.ts";
 import {
   AppError,
@@ -19,6 +21,7 @@ import {
   type Session,
   type Message,
   type Workflow,
+  type Task,
 } from "./model.ts";
 async function body(req: IncomingMessage) {
   let bytes = 0;
@@ -46,6 +49,8 @@ export function createApi(
   const store = service.store;
   const workspaces = new WorkspaceService(store);
   const development = new DevelopmentService(service);
+  const teams = new TeamTemplates(service, () => discovery.runtimes);
+  const reviews = new ReviewService(service, workspaces);
   const server = createServer(async (req, res) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Cache-Control", "no-store");
@@ -118,6 +123,43 @@ export function createApi(
         if (!processInfo || processInfo.info.agentId !== agentId)
           throw new AppError(404, "server_missing", "Server not found");
         return send(await development.stop(processId));
+      }
+      if (
+        method === "POST" &&
+        (match = path.match(
+          /^\/agents\/([^/]+)\/reviews\/(state|comment|resolve|reviewed|decide)$/,
+        ))
+      ) {
+        const agentId = id(match[1]),
+          action = match[2],
+          data = await body(req);
+        store.get<Agent>("agent", agentId);
+        if (action === "state") return send(await reviews.state(agentId, data));
+        if (action === "resolve") return send(reviews.resolve(agentId, data));
+        if (action === "reviewed")
+          return send(await reviews.setReviewed(agentId, data));
+        const result: any =
+          action === "comment"
+            ? await reviews.comment(agentId, data)
+            : await reviews.decide(agentId, data);
+        const sessionId = result.sessionId;
+        let execution = "queued";
+        // Idempotent comment replays that were already scheduled/sent must not start a second run.
+        if (
+          sessionId &&
+          runs.enabled &&
+          result.delivery !== "sent" &&
+          result.delivery !== "scheduled"
+        ) {
+          try {
+            await runs.start(sessionId);
+            execution = "scheduled";
+            if (action === "comment") reviews.markScheduled(result.id);
+          } catch {
+            execution = "queued — open the conversation to run it";
+          }
+        }
+        return send({ ...result, execution });
       }
       if (method === "GET" && path === "/approvals")
         return send(service.approvals.list());
@@ -402,6 +444,43 @@ export function createApi(
         (match = path.match(/^\/agents\/([^/]+)\/activity$/))
       )
         return send(service.activity(id(match[1])));
+      if (
+        (match = path.match(/^\/tasks\/([^/]+)\/validations$/)) &&
+        (method === "GET" || method === "POST")
+      ) {
+        const taskId = id(match[1]);
+        const task = store.get<Task>("task", taskId);
+        if (method === "GET")
+          return send({
+            gate: service.validation.gate(task),
+            records: service.validation.records(taskId),
+            active: service.validation
+              .activeRuns()
+              .filter((r) => r.taskId === taskId),
+          });
+        const spec = await body(req);
+        // Kernel runs are live execution: honor the same switch as provider runs.
+        if (!runs.enabled)
+          throw new AppError(
+            403,
+            "live_disabled",
+            "Live execution is disabled; enable it before running a Wolfram validation",
+          );
+        const started = service.validation.start(taskId, spec);
+        if (url.searchParams.get("wait") === "1")
+          return send(await started.done, 201);
+        started.done.catch(() => undefined);
+        return send({ runId: started.runId, state: "queued" }, 202);
+      }
+      if (method === "GET" && path === "/validations/runs")
+        return send(service.validation.activeRuns());
+      if (
+        method === "POST" &&
+        (match = path.match(/^\/validations\/runs\/([^/]+)\/cancel$/))
+      )
+        return send(service.validation.cancel(id(match[1])));
+      if (method === "GET" && (match = path.match(/^\/validations\/([^/]+)$/)))
+        return send(service.validation.record(id(match[1])));
       if (method === "PUT" && (match = path.match(/^\/edges\/([^/]+)$/)))
         return send(service.saveEdge(await body(req), id(match[1])));
       if (method === "GET" && path === "/edges")
@@ -527,6 +606,31 @@ export function createApi(
           store.events.off("event", write);
         });
         return;
+      }
+      if (path === "/teams" || path.startsWith("/teams/")) {
+        const t = path.split("/").slice(2).map(id);
+        if (method === "GET" && !t.length) return send(teams.list());
+        if (method === "POST" && !t.length)
+          return send(teams.create(await body(req)), 201);
+        if (method === "POST" && t[0] === "import")
+          return send(teams.import(await body(req)), 201);
+        if (method === "POST" && t[0] === "insert" && !t[1])
+          return send(await teams.insert(await body(req)), 201);
+        if (method === "POST" && t[0] === "preview" && !t[1])
+          return send(await teams.preview(await body(req)));
+        if (t.length === 1) {
+          if (method === "GET") return send(teams.get(t[0]));
+          if (method === "PUT")
+            return send(teams.update(t[0], await body(req)));
+          if (method === "DELETE") {
+            teams.delete(t[0]);
+            return send({ status: "deleted" });
+          }
+        }
+        if (t.length === 2 && method === "GET" && t[1] === "export")
+          return send(teams.export(t[0]));
+        if (t.length === 2 && method === "POST" && t[1] === "duplicate")
+          return send(teams.duplicate(t[0]), 201);
       }
       throw new AppError(404, "not_found", "Unknown API endpoint");
     } catch (error) {

@@ -15,6 +15,8 @@ export type RuntimeEvent = {
   data: unknown;
 };
 export type RuntimeHooks = {
+  /** Selects provider timeout/output bounds; defaults to "chat". */
+  profile?: "chat" | "task";
   permission?: (
     request: RequestPermissionRequest,
     signal: AbortSignal,

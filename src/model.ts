@@ -121,6 +121,7 @@ export const taskSchema = z
     instructions: z.string().default(""),
     dependsOn: z.array(z.string()).default([]),
     completionCriteria: z.string().min(1),
+    requiresValidation: z.boolean().optional(),
   })
   .strict();
 export type AgentInput = z.infer<typeof agentSchema>;

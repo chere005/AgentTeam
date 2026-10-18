@@ -138,6 +138,38 @@ export class ResourceCoordinator {
       this.store.emit("resource.released", id);
     }
   }
+  /** Counted slots for capped pools (e.g. Wolfram validation runs); separate from path leases. */
+  acquireSlot(pool: string, id: string, cap: number) {
+    return this.store.transaction(() => {
+      const held = this.store
+        .list<{ id: string; pool: string }>("slot")
+        .filter((s) => s.pool === pool);
+      assert(
+        held.length < cap,
+        "resource_busy",
+        `Concurrency cap of ${cap} reached for ${pool}`,
+      );
+      const slot = { id, pool, acquiredAt: new Date().toISOString() };
+      this.store.put("slot", slot);
+      this.store.emit("resource.slot.acquired", id, slot);
+      return slot;
+    });
+  }
+  releaseSlot(id: string) {
+    if (this.store.list<{ id: string }>("slot").some((s) => s.id === id)) {
+      this.store.remove("slot", id);
+      this.store.emit("resource.slot.released", id);
+    }
+  }
+  releasePool(pool: string) {
+    for (const s of this.store.list<{ id: string; pool: string }>("slot"))
+      if (s.pool === pool) this.releaseSlot(s.id);
+  }
+  slotCount(pool: string) {
+    return this.store
+      .list<{ pool: string }>("slot")
+      .filter((s) => s.pool === pool).length;
+  }
   async save(input: unknown) {
     const value = z
       .object({

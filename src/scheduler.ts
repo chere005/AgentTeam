@@ -135,6 +135,7 @@ export class Scheduler {
         },
         controller.signal,
         {
+          profile: "task",
           permission: (request, signal) =>
             this.service.approvals.request(task.agentId, request, signal),
         },
