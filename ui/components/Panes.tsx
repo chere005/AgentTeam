@@ -11,14 +11,10 @@ import {
   GateBadge,
   SampleSetup,
   TaskValidation,
-  WolframSampleButton,
   WorkflowGateSummary,
 } from "./Validation";
-import {
-  PipelineHistory,
-  PipelineSample,
-  PIPELINE_SAMPLE_ID,
-} from "./Pipeline";
+import { PipelineHistory, PIPELINE_SAMPLE_ID } from "./Pipeline";
+import { AssignProject, useAssignRequest } from "./Projects";
 import { WorkflowLimits } from "./Limits";
 import { WorkflowRecovery } from "./Recovery";
 import { WorkflowSharedState } from "./SharedState";
@@ -477,23 +473,49 @@ export function Workflows(p: PaneProps) {
     [files, setFiles] = useState(""),
     [target, setTarget] = useState(""),
     [match, setMatch] = useState("");
+  const [assigning, setAssigning] = useState(false);
+  useAssignRequest(() => setAssigning(true));
   const selected = p.data.agents.find((a) => a.id === p.selected);
+  const teamName = p.data.teamView?.team.name ?? "this team";
   return (
     <div className="scroll section">
       <div className="section-title">
         <div>
-          <span className="eyebrow">ORCHESTRATION</span>
-          <h2>Workflows</h2>
+          <span className="eyebrow">TEAM WORK</span>
+          <h2>Projects</h2>
         </div>
         <div className="row">
-          <WolframSampleButton act={p.act} />
-          <button title="New workflow" onClick={() => setCreating(!creating)}>
+          <button
+            className="primary"
+            title={`Give ${teamName} a project: goal, workspace and tasks for its existing agents`}
+            aria-expanded={assigning}
+            onClick={() => setAssigning(!assigning)}
+          >
             <Plus size={16} />
-            New
+            Assign project
+          </button>
+          <button
+            title="New blank project with one coordinator (no team setup, starts unpaused)"
+            onClick={() => setCreating(!creating)}
+          >
+            Blank project
           </button>
         </div>
       </div>
-      <PipelineSample act={p.act} />
+      <p className="hint projects-hint">
+        A team ({teamName}) is the persistent group of agents; a project is one
+        piece of work assigned to it, with its own goal, workspace, tasks and
+        gates. Executable step graphs inside a project are under Workflow
+        graphs.
+      </p>
+      {assigning && (
+        <AssignProject
+          teamId={p.data.activeTeamId ?? "main"}
+          teamName={teamName}
+          act={p.act}
+          close={() => setAssigning(false)}
+        />
+      )}
       <div className="summary-grid">
         <div>
           <strong>
@@ -534,7 +556,7 @@ export function Workflows(p: PaneProps) {
             });
           }}
         >
-          <h3>Create workflow</h3>
+          <h3>Create blank project</h3>
           <label>
             Name
             <input
@@ -564,19 +586,19 @@ export function Workflows(p: PaneProps) {
             <AgentPicker {...p} />
           </label>
           <button className="primary" disabled={!p.selected}>
-            Create workflow
+            Create project
           </button>
         </form>
       )}
-      {!p.data.workflows.length && !creating && (
+      {!p.data.workflows.length && !creating && !assigning && (
         <div className="empty compact">
           <ListTodoIcon />
-          <h3>No workflows in {p.data.teamView?.team.name ?? "this team"}</h3>
+          <h3>No projects in {teamName}</h3>
           <p>
-            Create a workflow, add tasks, and watch the team move them forward.
-            Other teams’ workflows are listed when you switch to that team.
+            Assign this team a project: a goal and a workspace for its agents.
+            Other teams’ projects are listed when you switch to that team.
           </p>
-          <button onClick={() => setCreating(true)}>Create workflow</button>
+          <button onClick={() => setAssigning(true)}>Assign project</button>
         </div>
       )}
       {p.data.workflows.map((w) => (

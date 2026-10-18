@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, Plus, Pencil, Trash2, Users } from "lucide-react";
+import {
+  Briefcase,
+  Check,
+  ChevronDown,
+  Plus,
+  Pencil,
+  Trash2,
+  Users,
+} from "lucide-react";
 import { teamActivityLabel, MAIN_TEAM_ID } from "../team-view";
 import type { TeamSummary } from "../api";
 import "./team-switcher.css";
@@ -23,12 +31,15 @@ export function TeamSwitcher({
   create,
   rename,
   remove,
+  assignProject,
 }: {
   teams: TeamSummary[];
   active: TeamSummary;
   switchTo: (id: string) => void;
   create: (name: string) => Promise<void>;
   rename: (id: string, name: string) => Promise<void>;
+  /** Open the Projects pane's "Assign project" form for the active team. */
+  assignProject?: () => void;
   remove: (
     id: string,
     options: { agents: "move" | "delete"; moveTo: string },
@@ -179,7 +190,7 @@ export function TeamSwitcher({
                           "team-row" + (t.id === active.id ? " current" : "")
                         }
                         aria-current={t.id === active.id ? "true" : undefined}
-                        aria-label={`${t.name}: ${t.agents} agent${t.agents === 1 ? "" : "s"}, ${t.workflows} workflow${t.workflows === 1 ? "" : "s"}, ${statusText(t)}${label ? ", " + label : ""}${t.id === active.id ? " (active)" : ""}`}
+                        aria-label={`${t.name}: ${t.agents} agent${t.agents === 1 ? "" : "s"}, ${t.workflows} project${t.workflows === 1 ? "" : "s"}, ${statusText(t)}${label ? ", " + label : ""}${t.id === active.id ? " (active)" : ""}`}
                         onClick={() => {
                           if (t.id !== active.id) switchTo(t.id);
                           close();
@@ -190,7 +201,7 @@ export function TeamSwitcher({
                           <b>{t.name}</b>
                           <small>
                             {t.agents} agent{t.agents === 1 ? "" : "s"} ·{" "}
-                            {t.workflows} workflow
+                            {t.workflows} project
                             {t.workflows === 1 ? "" : "s"}
                             {label ? " · " + label : ""}
                           </small>
@@ -202,6 +213,19 @@ export function TeamSwitcher({
                 })}
               </ul>
               <div className="team-popup-actions">
+                {assignProject && (
+                  <button
+                    className="primary"
+                    aria-label={`Assign a project to ${active.name}`}
+                    onClick={() => {
+                      close();
+                      assignProject();
+                    }}
+                  >
+                    <Briefcase size={14} />
+                    Assign project
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     setName("");
@@ -303,7 +327,7 @@ export function TeamSwitcher({
                 </p>
               )}
               <label>
-                Move its workflows{agentsChoice === "move" ? " and agents" : ""}{" "}
+                Move its projects{agentsChoice === "move" ? " and agents" : ""}{" "}
                 to
                 <select
                   value={moveTo}
@@ -335,7 +359,7 @@ export function TeamSwitcher({
                     onChange={() => setAgentsChoice("delete")}
                   />
                   Delete them (refused if any has tasks, conversations, child
-                  agents or workflows)
+                  agents or projects)
                 </label>
               </fieldset>
               <div className="row">

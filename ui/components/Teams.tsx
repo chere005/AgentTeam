@@ -3,6 +3,7 @@ import { X, Download, Upload, Copy, Trash2, Pencil, Plus } from "lucide-react";
 import { api, type TeamEvent } from "../api";
 import { starterTeams } from "./starterTeams";
 import { TeamPacks, applyInsertedGroups } from "./TeamPacks";
+import { requestArrange } from "../arrange-request";
 import "./teams.css";
 
 export type Point = { x: number; y: number };
@@ -10,9 +11,11 @@ export type TemplateAgent = {
   key: string;
   name: string;
   role: string;
+  roleType?: string;
   environment: string;
   model: string;
   effort: string | null;
+  parentKey?: string | null;
   workspaces: {
     slot: string;
     label: string;
@@ -29,6 +32,32 @@ export type TemplateView = {
   rules: unknown[];
   externalDependencies: ExternalDependency[];
   includesAbsolutePaths: boolean;
+  project?: { type: string };
+};
+type ExampleField =
+  | {
+      key: string;
+      label: string;
+      kind: "count";
+      min: number;
+      max: number;
+      default: number;
+    }
+  | { key: string; label: string; kind: "text"; default: string };
+type Example = {
+  id: string;
+  name: string;
+  shape: string;
+  description: string;
+  projectType: string;
+  projectLabel: string;
+  fields: ExampleField[];
+  template: TemplateView;
+};
+type ModelCheck = {
+  verified: boolean;
+  issues: string[];
+  warnings: string[];
 };
 export type ExternalDependency = {
   type: string;
@@ -588,6 +617,249 @@ export function InsertTeamDialog({
   );
 }
 
+/** Indented org tree of a template (from parentKey): leads first, reports nested below. */
+export function OrgTreePreview({
+  agents,
+  label = "Org chart preview",
+}: {
+  agents: TemplateAgent[];
+  label?: string;
+}) {
+  const keys = new Set(agents.map((a) => a.key));
+  const kids = (key: string | null) =>
+    agents.filter((a) =>
+      key === null
+        ? !a.parentKey || !keys.has(a.parentKey)
+        : a.parentKey === key && a.key !== key,
+    );
+  const seen = new Set<string>();
+  const branch = (list: TemplateAgent[]): React.ReactNode =>
+    list.length ? (
+      <ul>
+        {list
+          .filter((a) => !seen.has(a.key) && seen.add(a.key))
+          .map((a) => (
+            <li key={a.key}>
+              <span className="org-node">
+                <b>{a.name}</b>
+                <small>
+                  {a.roleType && a.roleType !== "custom"
+                    ? a.roleType + " · "
+                    : ""}
+                  {a.environment} · {a.model}
+                </small>
+              </span>
+              {branch(kids(a.key))}
+            </li>
+          ))}
+      </ul>
+    ) : null;
+  return (
+    <div className="org-tree" aria-label={label} data-testid="org-tree-preview">
+      {branch(kids(null))}
+    </div>
+  );
+}
+
+/**
+ * Configure an example team (worker caps, model mappings), see the model check, then insert it as
+ * a new active team. No goal, workspace or project: those come with "Assign project".
+ */
+export function ExampleInsertDialog({
+  example,
+  close,
+  inserted,
+}: {
+  example: Example;
+  close: () => void;
+  inserted: (r: InsertResult) => void;
+}) {
+  const [options, setOptions] = useState<Record<string, string | number>>(() =>
+      Object.fromEntries(example.fields.map((f) => [f.key, f.default])),
+    ),
+    [teamName, setTeamName] = useState(example.name.slice(0, 80)),
+    [accept, setAccept] = useState(false),
+    [state, setState] = useState<{
+      template: TemplateView;
+      modelCheck: ModelCheck;
+      preview: Preview;
+    } | null>(null),
+    [error, setError] = useState(""),
+    [busy, setBusy] = useState(false);
+  const latest = useRef(0);
+  useEffect(() => {
+    const run = ++latest.current;
+    const timer = setTimeout(() => {
+      api(`/teams/examples/${example.id}/preview`, "POST", { options })
+        .then((r) => {
+          if (run !== latest.current) return;
+          setState(r);
+          setError("");
+        })
+        .catch((e) => run === latest.current && setError(message(e)));
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [options]);
+  const check = state?.modelCheck;
+  const blocked =
+    !state || !state.preview.ok || busy || (!check?.verified && !accept);
+  async function insert() {
+    setBusy(true);
+    try {
+      inserted(
+        await api(`/teams/examples/${example.id}/insert`, "POST", {
+          options,
+          teamName: teamName.trim() || example.name,
+          acceptUnverifiedModels: accept,
+        }),
+      );
+    } catch (e) {
+      setError(message(e));
+      setBusy(false);
+    }
+  }
+  return (
+    <Modal
+      title={`Insert “${example.name}”`}
+      eyebrow="EXAMPLE TEAM"
+      close={close}
+      footer={
+        <>
+          <span className="hint">
+            {state
+              ? `${state.preview.counts.agents} agents · ${state.preview.counts.edges} connections · ${state.preview.counts.rules} rules`
+              : "Checking…"}
+          </span>
+          <div className="row">
+            <button onClick={close}>Cancel</button>
+            <button
+              className="primary"
+              disabled={blocked}
+              onClick={() => void insert()}
+            >
+              Insert as new team
+            </button>
+          </div>
+        </>
+      }
+    >
+      <p className="hint">{example.description}</p>
+      <div className="team-note">
+        <b>A team, not a project.</b> Inserting creates the agents, their
+        hierarchy, connections and rules as a new active team. Nothing runs.
+        Give it work later with <b>Assign project</b> (goal and workspace); each
+        project starts paused and re-verifies the models.
+      </div>
+      <label>
+        Team name
+        <input
+          aria-label="New team name"
+          value={teamName}
+          maxLength={80}
+          onChange={(e) => setTeamName(e.target.value)}
+        />
+      </label>
+      <h3>Team settings</h3>
+      <div className="team-slots example-fields">
+        {example.fields.map((f) => (
+          <label key={f.key} className="team-slot models">
+            <span>
+              <b>{f.label}</b>
+              {f.kind === "count" && (
+                <small>
+                  {f.min}-{f.max}
+                </small>
+              )}
+            </span>
+            {f.kind === "count" ? (
+              <select
+                aria-label={f.label}
+                value={options[f.key]}
+                onChange={(e) =>
+                  setOptions({ ...options, [f.key]: Number(e.target.value) })
+                }
+              >
+                {Array.from({ length: f.max - f.min + 1 }, (_, i) => (
+                  <option key={i}>{f.min + i}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                aria-label={f.label}
+                value={options[f.key]}
+                onChange={(e) =>
+                  setOptions({ ...options, [f.key]: e.target.value })
+                }
+              />
+            )}
+          </label>
+        ))}
+      </div>
+      {state && <OrgTreePreview agents={state.template.agents} />}
+      <h3>Model verification</h3>
+      {error && (
+        <div className="team-note bad" role="alert">
+          {error}
+        </div>
+      )}
+      {check && (
+        <div
+          className={"team-note " + (check.verified ? "ok" : "warn")}
+          data-testid="example-model-check"
+        >
+          <b>
+            {check.verified
+              ? "Models verified against the installed environments."
+              : `Not verified (${check.issues.length})`}
+          </b>
+          {check.issues.length > 0 && (
+            <ul>
+              {check.issues.slice(0, 8).map((i, n) => (
+                <li key={n}>{i}</li>
+              ))}
+              {check.issues.length > 8 && (
+                <li>…and {check.issues.length - 8} more</li>
+              )}
+            </ul>
+          )}
+          {check.warnings.length > 0 && (
+            <ul>
+              {check.warnings.map((w, n) => (
+                <li key={n}>Note: {w}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+      {check && !check.verified && (
+        <label className="inline team-check">
+          <input
+            type="checkbox"
+            checked={accept}
+            onChange={(e) => setAccept(e.target.checked)}
+          />
+          <span>
+            Insert with unverified models
+            <small>
+              Projects assigned to this team stay paused until their models
+              verify; nothing is substituted.
+            </small>
+          </span>
+        </label>
+      )}
+      {state?.preview.issues.length ? (
+        <div className="team-note bad">
+          <ul>
+            {state.preview.issues.map((i, n) => (
+              <li key={n}>{i.message}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </Modal>
+  );
+}
+
 /** Place inserted teams to the right of everything already on the canvas. */
 export function nextOffset(agentIds: string[]): Point {
   try {
@@ -629,8 +901,10 @@ export function TeamLibrary({
   goCanvas: () => void;
 }) {
   const [list, setList] = useState<Summary[]>([]),
+    [examples, setExamples] = useState<Example[]>([]),
+    [insertingExample, setInsertingExample] = useState<Example | null>(null),
     [current, setCurrent] = useState<{
-      kind: "saved" | "starter";
+      kind: "saved" | "starter" | "example";
       id: string;
     } | null>(null),
     [detail, setDetail] = useState<TemplateView | null>(null),
@@ -648,20 +922,34 @@ export function TeamLibrary({
   useEffect(() => {
     load().catch((e) => setError(message(e)));
   }, [events.length]);
+  useEffect(() => {
+    api("/teams/examples")
+      .then(setExamples)
+      .catch((e) => setError(message(e)));
+  }, []);
+  const example =
+    current?.kind === "example"
+      ? examples.find((x) => x.id === current.id)
+      : undefined;
   const starter =
     current?.kind === "starter"
       ? starterTeams.find((s) => s.id === current.id)
       : undefined;
-  const source: Source | null = current
-    ? current.kind === "saved"
-      ? { templateId: current.id }
-      : { envelope: starter?.envelope }
-    : null;
+  const source: Source | null =
+    current && current.kind !== "example"
+      ? current.kind === "saved"
+        ? { templateId: current.id }
+        : { envelope: starter?.envelope }
+      : null;
   useEffect(() => {
     setDetail(null);
     setPreview(null);
     setEditing(null);
     setConfirmDelete(false);
+    if (current?.kind === "example") {
+      if (example) setDetail(example.template);
+      return;
+    }
     if (!current || !source) return;
     let live = true;
     (async () => {
@@ -680,7 +968,7 @@ export function TeamLibrary({
     return () => {
       live = false;
     };
-  }, [current?.kind, current?.id, events.length]);
+  }, [current?.kind, current?.id, events.length, examples.length]);
   async function exportFile(id: string, name: string) {
     const envelope = await api(`/teams/${id}/export`);
     const url = URL.createObjectURL(
@@ -748,6 +1036,20 @@ export function TeamLibrary({
       )}
       <div className="team-columns">
         <div className="team-lists">
+          <h3>Example teams</h3>
+          <ul className="team-list" aria-label="Example teams">
+            {examples.map((x) => (
+              <li key={x.id}>
+                <button
+                  className={current?.id === x.id ? "selected" : ""}
+                  onClick={() => setCurrent({ kind: "example", id: x.id })}
+                >
+                  <b>{x.name}</b>
+                  <small data-testid="example-shape">{x.shape}</small>
+                </button>
+              </li>
+            ))}
+          </ul>
           <h3>Your teams</h3>
           {list.length ? (
             <ul className="team-list" aria-label="Saved teams">
@@ -843,12 +1145,17 @@ export function TeamLibrary({
                   <div className="row team-actions">
                     <button
                       className="primary"
-                      onClick={() => setInserting(true)}
+                      onClick={() =>
+                        example
+                          ? setInsertingExample(example)
+                          : setInserting(true)
+                      }
                     >
                       <Plus size={15} />
                       Insert…
                     </button>
-                    {current.kind === "saved" ? (
+                    {current.kind === "example" ? null : current.kind ===
+                      "saved" ? (
                       <>
                         <button
                           onClick={() =>
@@ -925,6 +1232,13 @@ export function TeamLibrary({
                   </div>
                 )}
               </div>
+              {example && (
+                <div className="team-note" data-testid="example-projects">
+                  <b>Takes projects:</b> {example.projectLabel}. Insert it once,
+                  then use <b>Assign project</b> for each piece of work.
+                </div>
+              )}
+              <OrgTreePreview agents={detail.agents} />
               <div className="team-agents">
                 {detail.agents.map((a) => (
                   <div className="team-agent" key={a.key}>
@@ -1012,8 +1326,30 @@ export function TeamLibrary({
           close={() => setInserting(false)}
           inserted={(r) => {
             applyLayout(r.layout);
+            // Arranged as an org chart once the canvas shows the agents.
+            requestArrange(
+              r.teamId,
+              r.agents.map((a) => a.id),
+            );
             applyInsertedGroups(r.groups, agentIds, r.teamId);
             setInserting(false);
+            goCanvas();
+          }}
+        />
+      )}
+      {insertingExample && (
+        <ExampleInsertDialog
+          example={insertingExample}
+          close={() => setInsertingExample(null)}
+          inserted={(r) => {
+            requestArrange(
+              r.teamId,
+              r.agents.map((a) => a.id),
+            );
+            setInsertingExample(null);
+            setNotice(
+              `Inserted “${r.teamName}” as a new team. Assign it a project from the Projects pane or the team menu.`,
+            );
             goCanvas();
           }}
         />

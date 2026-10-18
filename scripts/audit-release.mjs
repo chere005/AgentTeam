@@ -213,6 +213,35 @@ for (const f of templates) {
 }
 notes.push(`team templates: ${templates.length}`);
 
+// 4a. Example teams (Saved teams library): bundled team definitions validated with the same
+// schema the app uses; skills they reference must be bundled; no absolute paths or secrets.
+{
+  const { checkCompatibility } = await import("../src/teams.ts");
+  const files = readdirSync(at("assets", "example-teams")).filter((f) =>
+    f.endsWith(".json"),
+  );
+  for (const f of files) {
+    try {
+      const raw = readFileSync(at("assets", "example-teams", f), "utf8");
+      const t = checkCompatibility(JSON.parse(raw));
+      if (t.includesAbsolutePaths)
+        fail(`example team ${f}: contains absolute paths`);
+      if (!t.project) fail(`example team ${f}: no project profile`);
+      if (/(api[_-]?key|secret|token|password)\s*"?\s*:/i.test(raw))
+        fail(`example team ${f}: contains a secret-looking field`);
+      for (const a of t.agents)
+        for (const s of a.skills) {
+          const dir = s.id.replace(/^curated:/, "");
+          if (!existsSync(at("assets", "skills", dir, "SKILL.md")))
+            fail(`example team ${f}: skill ${s.id} is not bundled`);
+        }
+    } catch (e) {
+      fail(`example team ${f}: ${e.message}`);
+    }
+  }
+  notes.push(`example teams: ${files.length} bundled template(s)`);
+}
+
 // 4b. Team packs: pack license and every referenced companion skill's license/notice and pins are
 // checked separately; a pack referencing a skill without license text fails. (AGENTTEAM_AUDIT_ASSETS
 // points the pack audit at another assets directory; used by tests.)

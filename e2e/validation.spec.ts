@@ -1,5 +1,5 @@
 import { test, expect, _electron as electron } from "@playwright/test";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,8 +18,10 @@ console.log("@@AGENTTEAM-ASSERTIONS@@" + JSON.stringify([{ name: "identity", pas
 
 test.skip(process.platform === "win32", "fake kernel script is POSIX-only");
 
-test("validation gate: sample, model verification, panel, cancel, fail then pass", async () => {
+test("validation gate: Wolfram team project, model verification, panel, cancel, fail then pass", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentteam-e2e-val-"));
+  const work = join(directory, "work");
+  await mkdir(work);
   const fake = join(directory, "fake-wolframscript");
   await writeFile(fake, FAKE);
   await chmod(fake, 0o755);
@@ -42,12 +44,35 @@ test("validation gate: sample, model verification, panel, cancel, fail then pass
     await page.evaluate(() =>
       window.agentteam.request("PUT", "/execution", { enabled: true }),
     );
-    await page.getByRole("button", { name: /^Workflows/ }).click();
+    // The Wolfram-validated TEAM from the library, then a PROJECT assigned to it.
     await page
-      .getByRole("button", { name: "Sample: Wolfram-validated reasoning" })
+      .getByRole("button", { name: "Saved teams", exact: true })
+      .first()
       .click();
+    await page
+      .getByRole("list", { name: "Example teams" })
+      .getByRole("button", { name: /Wolfram-validated reasoning team/ })
+      .click();
+    await page.getByRole("button", { name: "Insert…", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: /Insert “/ });
+    await dialog.getByLabel("Insert with unverified models").check();
+    await dialog
+      .getByRole("button", { name: "Insert as new team", exact: true })
+      .click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await page.getByRole("button", { name: /^Projects/ }).click();
+    await page
+      .getByRole("button", { name: "Assign project", exact: true })
+      .first()
+      .click();
+    const form = page.getByRole("form", { name: "Assign project" });
+    await form
+      .getByLabel("Project goal")
+      .fill("Check that Sin^2 + Cos^2 equals 1 for real arguments");
+    await form.getByLabel("Project workspace").fill(work);
+    await form.getByRole("button", { name: "Create paused project" }).click();
     const wf = page.locator(".workflow").first();
-    await expect(wf).toContainText("Opus plan → Wolfram-validated reasoning");
+    await expect(wf).toContainText("Sin^2 + Cos^2 equals 1");
     await expect(wf.locator(".badge").first()).toHaveText("paused");
     // Gate summary lists every validation-required step as blocked.
     await expect(wf.getByTestId("gate-line").first()).toContainText(

@@ -120,7 +120,7 @@ test("orchestration: role presets, advisory vs required rules, ties and blocked 
     expect(state.explain.gate.open).toBe(false);
     expect(state.explain.triggers[0].status).toBe("tie");
     // Rule editor: advisory vs mandatory is explicit; ties and the winner are visible.
-    await page.getByRole("button", { name: /^Workflows/ }).click();
+    await page.getByRole("button", { name: /^Projects/ }).click();
     await page.getByRole("button", { name: "Rule", exact: true }).click();
     await expect(page.getByTestId("rule-mode-hint")).toContainText(
       "nothing waits",

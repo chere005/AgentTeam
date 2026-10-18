@@ -36,7 +36,7 @@ const api = (page: Page, method: string, path: string, body?: unknown) =>
     [method, path, body] as const,
   );
 async function openWorkflows(page: Page) {
-  await page.getByRole("button", { name: /^Workflows/ }).click();
+  await page.getByRole("button", { name: /^Projects/ }).click();
 }
 async function reload(page: Page) {
   await page.reload();

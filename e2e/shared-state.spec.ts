@@ -94,7 +94,7 @@ test("shared state viewer: typed field, history, stale-write conflict, artifact 
     expect(conflict.message).toMatch(/current version is 2/);
     expect(conflict.escape).toMatch(/escapes the attached workspace/);
 
-    await page.getByRole("button", { name: /^Workflows/ }).click();
+    await page.getByRole("button", { name: /^Projects/ }).click();
     const panel = page
       .locator(".workflow", { hasText: "Shared demo" })
       .getByTestId("shared-panel");

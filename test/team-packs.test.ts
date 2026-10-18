@@ -655,9 +655,9 @@ test("update retains notices and requires acknowledging license or revision chan
   );
 });
 
-test("team templates persist group membership additively (schema v2) and v1 files still import", async (t) => {
+test("team templates persist group membership additively (schema v2, current v3) and v1 files still import", async (t) => {
   const { service, teams, store, project } = await setup(t);
-  assert.equal(TEAM_TEMPLATE_SCHEMA_VERSION, 2);
+  assert.equal(TEAM_TEMPLATE_SCHEMA_VERSION, 3);
   const a = await service.saveAgent({
     name: "A",
     environment: "codex",
@@ -675,7 +675,7 @@ test("team templates persist group membership additively (schema v2) and v1 file
   });
   assert.deepEqual(saved.groups, [{ name: "Core", agentKeys: ["a1", "a2"] }]);
   const env = JSON.parse(JSON.stringify(teams.export(saved.id)));
-  assert.equal(env.schemaVersion, 2);
+  assert.equal(env.schemaVersion, 3);
   const result = await teams.insert({
     envelope: env,
     workspaces: { "a1/w1": project },

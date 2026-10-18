@@ -108,3 +108,49 @@
   align-items: flex-start;
   margin: 10px 0;
 }
+/* Org chart preview of a template: nested list with connector lines. */
+.org-tree {
+  border: 1px solid #303b4d;
+  border-radius: 9px;
+  background: #161e29;
+  padding: 10px 12px;
+  margin: 10px 0;
+  max-height: 320px;
+  overflow: auto;
+  font-size: 12px;
+}
+.org-tree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.org-tree ul ul {
+  margin-left: 10px;
+  padding-left: 14px;
+  border-left: 1px solid #3a475b;
+}
+.org-tree li {
+  position: relative;
+  padding: 3px 0;
+}
+.org-tree ul ul > li::before {
+  content: "";
+  position: absolute;
+  left: -14px;
+  top: 13px;
+  width: 10px;
+  border-top: 1px solid #3a475b;
+}
+.org-node {
+  display: inline-flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.org-node small {
+  color: #8193a9;
+}
+.example-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+}

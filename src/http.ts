@@ -35,6 +35,8 @@ import { pipelineRoute } from "./pipeline-routes.ts";
 import { capabilityRoute } from "./capability-routes.ts";
 import { orchestrationRoute } from "./orchestration.ts";
 import { teamSpaceRoute, teamIdSchema } from "./team-spaces.ts";
+import { projectRoute } from "./projects.ts";
+import { ExampleTeams } from "./example-teams.ts";
 import {
   AppError,
   type Agent,
@@ -81,6 +83,7 @@ export function createApi(
   const development = new DevelopmentService(service);
   const devservers = new DevServerService(service);
   const teams = new TeamTemplates(service, () => discovery.runtimes);
+  const examples = new ExampleTeams(service, teams, () => discovery.runtimes);
   const packs = new TeamPacks(service, teams, () =>
     join(projectRoot, "assets"),
   );
@@ -311,6 +314,11 @@ export function createApi(
         body(req),
       );
       if (orchestrated) return send(orchestrated.data, orchestrated.status);
+      // Projects assigned to a team (src/projects.ts); before the team container routes.
+      const projected = await projectRoute(service, method, url, () =>
+        body(req),
+      );
+      if (projected) return send(projected.data, projected.status);
       const teamed = await teamSpaceRoute(service, method, url, () =>
         body(req),
       );
@@ -920,6 +928,15 @@ export function createApi(
       if (path === "/teams" || path.startsWith("/teams/")) {
         const t = path.split("/").slice(2).map(id);
         if (method === "GET" && !t.length) return send(teams.list());
+        // Example teams (src/example-teams.ts): team definitions, never projects.
+        if (t[0] === "examples") {
+          if (method === "GET" && t.length === 1) return send(examples.list());
+          if (method === "POST" && t.length === 3 && t[2] === "preview")
+            return send(await examples.preview(t[1], await body(req)));
+          if (method === "POST" && t.length === 3 && t[2] === "insert")
+            return send(examples.insert(t[1], await body(req)), 201);
+          throw new AppError(404, "not_found", "Unknown example team endpoint");
+        }
         if (method === "POST" && !t.length)
           return send(teams.create(await body(req)), 201);
         if (method === "POST" && t[0] === "import")

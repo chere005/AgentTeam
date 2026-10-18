@@ -109,7 +109,7 @@ test("effective access, shared resources, queue reasons and external-editor labe
       "outside this enforcement",
     );
     // Task launch review shows what the task would reserve and wait for.
-    await page.getByRole("button", { name: /^Workflows/ }).click();
+    await page.getByRole("button", { name: /^Projects/ }).click();
     const wf = page.locator(".workflow").first();
     await wf.getByRole("button", { name: "Add task" }).click();
     const review = wf.getByTestId("launch-review");

@@ -82,3 +82,21 @@
   gap: 4px;
   font-size: 11px;
 }
+.projects-hint {
+  margin: -4px 0 12px;
+}
+.assign-project h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+.assign-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid #303b4d;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.assign-tasks .row input {
+  flex: 1;
+}

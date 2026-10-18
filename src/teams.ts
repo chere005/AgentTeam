@@ -4,6 +4,7 @@ import { basename, isAbsolute } from "node:path";
 import { z } from "zod";
 import {
   AppError,
+  ROLE_TYPES,
   agentSchema,
   edgeSchema,
   environment,
@@ -13,6 +14,12 @@ import {
   type Edge,
   type Rule,
 } from "./model.ts";
+import {
+  PROJECT_TYPES,
+  profileFromTemplate,
+  templateProjectFromProfile,
+  type TeamProfile,
+} from "./team-profiles.ts";
 import type { TeamService } from "./service.ts";
 import type { DetectedRuntime } from "./discovery.ts";
 
@@ -20,8 +27,11 @@ export const TEAM_TEMPLATE_FORMAT = "agentteam.team-template";
 /**
  * Highest schema version this build can read and the one it writes.
  * v2 (additive) adds optional `groups` (canvas selection groups). v1 envelopes still read; groups default to [].
+ * v3 (additive) adds optional agent `roleType` and the optional template `project` profile (what
+ * kind of project the team can be assigned, which agent plays which project role, the project
+ * workspace access per agent and model expectations). v1/v2 envelopes still read unchanged.
  */
-export const TEAM_TEMPLATE_SCHEMA_VERSION = 2;
+export const TEAM_TEMPLATE_SCHEMA_VERSION = 3;
 
 const kindEnum = z.enum(["delegate", "consult", "review", "notify"]);
 const key = z.string().min(1).max(64);
@@ -32,6 +42,8 @@ const templateAgent = z
     key,
     name: z.string().trim().min(1).max(120),
     role: z.string().max(4000).default(""),
+    /** Role preset (src/roles.ts); absent = custom (schema v3). */
+    roleType: z.enum(ROLE_TYPES).optional(),
     environment,
     model: z.string().min(1).default("default"),
     effort: z.string().min(1).nullable().default(null),
@@ -90,6 +102,49 @@ const externalDependency = z
   })
   .strict();
 
+const modelExpectation = z
+  .object({
+    label: z.string().max(80),
+    family: z.string().max(40),
+    version: z.string().max(20),
+    effort: z.string().max(40).optional(),
+  })
+  .strict();
+/**
+ * What a team can be assigned (schema v3). The team is the persistent org; a project is one unit
+ * of work given to it later (src/projects.ts). `roles` names which agents play which project role
+ * (e.g. planner, implement, adjudicator); `workspace.access` is how the project's workspace is
+ * attached to each agent when a project is assigned (agents not listed get no access).
+ */
+export const templateProjectSchema = z
+  .object({
+    type: z.enum(PROJECT_TYPES),
+    lead: key,
+    roles: z
+      .record(
+        z.string().regex(/^[a-z][a-zA-Z0-9-]{0,39}$/),
+        z.array(key).min(1).max(50),
+      )
+      .default({}),
+    workspace: z
+      .object({
+        label: z.string().max(200).default("Project workspace"),
+        access: z.record(key, z.enum(["read", "write"])),
+      })
+      .strict()
+      .optional(),
+    settings: z
+      .record(
+        z.string().max(40),
+        z.union([z.string().max(200), z.number(), z.boolean()]),
+      )
+      .default({}),
+    expectations: z.record(key, modelExpectation).default({}),
+    /** Generic model check label for the lead (e.g. "Opus 5.5"); absent = no lead expectation. */
+    intendedLead: z.string().max(80).optional(),
+  })
+  .strict();
+
 const templateGroup = z
   .object({
     name: z.string().trim().min(1).max(40),
@@ -109,11 +164,24 @@ export const teamTemplateSchema = z
     includesAbsolutePaths: z.boolean().default(false),
     /** Canvas selection groups (schema v2); membership is by agent key and exclusive. */
     groups: z.array(templateGroup).max(50).default([]),
+    /** Project profile (schema v3); absent = free-form projects with default access. */
+    project: templateProjectSchema.optional(),
   })
   .strict()
   .superRefine((t, ctx) => {
     const keys = new Set(t.agents.map((a) => a.key));
     const bad = (message: string) => ctx.addIssue({ code: "custom", message });
+    if (t.project) {
+      const p = t.project;
+      if (!keys.has(p.lead)) bad(`Project lead ${p.lead} is not an agent`);
+      for (const [role, ks] of Object.entries(p.roles))
+        for (const k of ks)
+          if (!keys.has(k)) bad(`Project role ${role} references unknown ${k}`);
+      for (const k of Object.keys(p.workspace?.access ?? {}))
+        if (!keys.has(k)) bad(`Project workspace access names unknown ${k}`);
+      for (const k of Object.keys(p.expectations))
+        if (!keys.has(k)) bad(`Model expectation names unknown ${k}`);
+    }
     const grouped = new Set<string>();
     for (const g of t.groups) {
       for (const k of g.agentKeys) {
@@ -200,7 +268,7 @@ const createSchema = z
       .default([]),
   })
   .strict();
-const insertSchema = z
+const insertBase = z
   .object({
     templateId: z.string().optional(),
     envelope: z.unknown().optional(),
@@ -221,7 +289,8 @@ const insertSchema = z
     teamId: z.string().min(1).max(64).optional(),
     teamName: z.string().trim().min(1).max(80).optional(),
   })
-  .strict()
+  .strict();
+const insertSchema = insertBase
   .refine((v) => !(v.teamId && v.teamName), {
     message: "Provide at most one of teamId or teamName",
   })
@@ -229,6 +298,17 @@ const insertSchema = z
     message: "Provide exactly one of templateId or envelope",
   });
 export type InsertOptions = z.input<typeof insertSchema>;
+export type InsertHook = (
+  result: {
+    teamId: string;
+    agents: Agent[];
+    edges: Edge[];
+    rules: Rule[];
+    idMap: Record<string, string>;
+    profile: TeamProfile | null;
+  },
+  template: TeamTemplate,
+) => void;
 
 export type Issue = {
   code: string;
@@ -324,6 +404,9 @@ export class TeamTemplates {
         key: k,
         name: a.name,
         role: a.role,
+        ...(a.roleType && a.roleType !== "custom"
+          ? { roleType: a.roleType }
+          : {}),
         environment: a.environment,
         model: a.model,
         effort: a.effort,
@@ -392,9 +475,21 @@ export class TeamTemplates {
           externalName: nameOf(a ? r.targetId! : r.agentId),
         });
     }
+    // A project profile travels with the selection only when every agent it names is selected.
+    const teamIds = new Set(selected.map((a) => a.teamId ?? "main"));
+    const sourceProfile =
+      teamIds.size === 1
+        ? this.store
+            .list<TeamProfile>("team-profile")
+            .find((p) => p.id === [...teamIds][0])
+        : undefined;
+    const project = sourceProfile
+      ? templateProjectFromProfile(sourceProfile, keyOf)
+      : undefined;
     return teamTemplateSchema.parse({
       name: data.name,
       description: data.description,
+      ...(project ? { project } : {}),
       agents,
       edges,
       rules,
@@ -454,6 +549,8 @@ export class TeamTemplates {
       version: t.version,
       agents: t.agents.length,
       updatedAt: t.updatedAt,
+      /** Project type the team supports (schema v3 profile); free-form when absent. */
+      projectType: t.project?.type ?? "free-form",
       ...(t.sourceTeam ? { sourceTeam: t.sourceTeam } : {}),
     }));
   }
@@ -551,7 +648,7 @@ export class TeamTemplates {
   /** Pure validation of the template against this installation; no writes. */
   private validate(
     t: TeamTemplate,
-    opts: z.output<typeof insertSchema>,
+    opts: z.output<typeof insertBase>,
     mapped: Map<string, string>,
   ): Preview {
     const issues: Issue[] = [];
@@ -699,22 +796,52 @@ export class TeamTemplates {
    * `inTransaction` (used by team packs) runs synchronously inside the same transaction, after the
    * entities are written, so related records commit or roll back together with the team.
    */
-  async insert(
-    input: unknown,
-    inTransaction?: (
-      result: {
-        agents: Agent[];
-        edges: Edge[];
-        rules: Rule[];
-        idMap: Record<string, string>;
-      },
-      template: TeamTemplate,
-    ) => void,
-  ) {
+  async insert(input: unknown, inTransaction?: InsertHook) {
     const opts = insertSchema.parse(input);
     const t = this.resolve(opts);
     const { mapped, problems } = await this.mapWorkspaces(t, opts);
-    return this.store.transaction(() => {
+    return this.store.transaction(() =>
+      this.insertInTx(t, opts, mapped, problems, inTransaction),
+    );
+  }
+
+  /**
+   * Synchronous insert of an already-parsed template that has no workspace slots (the example
+   * teams and the legacy one-shot samples, which build the team and its first project in one
+   * transaction). Same validation and writes as `insert`; joins an enclosing transaction.
+   */
+  insertTemplate(
+    template: TeamTemplate,
+    input: Omit<InsertOptions, "templateId" | "envelope"> = {},
+    inTransaction?: InsertHook,
+  ) {
+    const t = teamTemplateSchema.parse(template);
+    const opts = insertBase.parse(input);
+    assert(
+      !(opts.teamId && opts.teamName),
+      "invalid_input",
+      "Provide at most one of teamId or teamName",
+      400,
+    );
+    assert(
+      t.agents.every((a) => !a.workspaces.length),
+      "workspace_unmapped",
+      "This template has workspace slots; insert it through /teams/insert",
+      400,
+    );
+    return this.store.transaction(() =>
+      this.insertInTx(t, opts, new Map(), [], inTransaction),
+    );
+  }
+
+  private insertInTx(
+    t: TeamTemplate,
+    opts: z.output<typeof insertBase>,
+    mapped: Map<string, string>,
+    problems: Issue[],
+    inTransaction?: InsertHook,
+  ) {
+    {
       // Re-validate inside the synchronous section so state cannot change between check and write.
       const p = this.validate(t, opts, mapped);
       p.issues.push(...problems);
@@ -743,6 +870,7 @@ export class TeamTemplates {
         const data = agentSchema.parse({
           name: a.name,
           role: a.role,
+          ...(a.roleType ? { roleType: a.roleType } : {}),
           kind: "agent",
           environment: a.environment,
           model: opts.modelMap[`${a.environment}:${a.model}`] ?? a.model,
@@ -797,9 +925,27 @@ export class TeamTemplates {
         this.store.put("rule", r);
         this.store.emit("rule.created", r.id);
       }
+      // The project profile (schema v3) says what this team can be assigned. A team keeps the
+      // profile it got first; inserting another profiled template into it only adds agents.
+      let profile: TeamProfile | null = null;
+      if (t.project) {
+        const existing = this.store
+          .list<TeamProfile>("team-profile")
+          .find((x) => x.id === team.id);
+        if (existing)
+          p.warnings.push(
+            `${team.name} already has a ${existing.type} project profile; the inserted agents keep their roles but projects use the existing profile`,
+          );
+        else {
+          profile = profileFromTemplate(team.id, t, ids);
+          this.store.put("team-profile", profile);
+          this.store.emit("team.profile", team.id, { type: profile.type });
+        }
+      }
       const result = {
         teamId: team.id,
         teamName: team.name,
+        profile,
         agents,
         edges,
         rules,
@@ -818,6 +964,6 @@ export class TeamTemplates {
         agentIds: agents.map((a) => a.id),
       });
       return result;
-    });
+    }
   }
 }

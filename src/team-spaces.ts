@@ -322,6 +322,8 @@ export class TeamSpaces {
         }
       const wasActive = this.active() === id;
       this.store.remove("team-space", id);
+      // The project profile describes this team's roles; it does not follow moved agents.
+      this.store.remove("team-profile", id);
       if (wasActive) {
         this.store.put("settings", { id: "active-team", teamId: data.moveTo });
         this.store.emit("team.activated", data.moveTo);

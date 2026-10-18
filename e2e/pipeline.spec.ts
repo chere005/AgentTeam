@@ -22,7 +22,7 @@ test.skip(
   "fixture executables are POSIX scripts",
 );
 
-test("pipeline sample: configure, verify before resume, handoff history across a retry", async () => {
+test("pipeline team then project: configure the team, assign a project, verify before resume, handoff history across a retry", async () => {
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), "agentteam-e2e-pipe-")),
   );
@@ -74,32 +74,69 @@ test("pipeline sample: configure, verify before resume, handoff history across a
     await request("PUT", "/runtimes/claude", { path: claude });
     await request("POST", "/runtimes/refresh");
 
-    await page.getByRole("button", { name: /^Workflows/ }).click();
-    await page
-      .getByRole("button", { name: /^Sample: Plan → implement/ })
-      .click();
-    const form = page.getByRole("form", {
-      name: "Pipeline sample configuration",
-    });
-    await form.getByLabel("Pipeline goal").fill("Add a greeting feature");
-    await form.getByLabel("Pipeline workspace").fill(repo);
-    await form.getByLabel("Pipeline isolation").selectOption("paths");
-    await form
-      .getByLabel("Worker paths")
-      .fill(`${join(repo, "a")}\n${join(repo, "b")}`);
-    await form.getByLabel("Implementation workers").selectOption("2");
-    await form.getByLabel("Fix workers").selectOption("2");
-    // Hard cap: the selects offer 1-5 only.
-    await expect(
-      form.getByLabel("Implementation workers").locator("option"),
-    ).toHaveCount(5);
-    await expect(form.getByLabel("Planner model (Opus 5.5)")).toHaveValue(
-      "claude-opus-5-5",
-    );
-    await form.getByRole("button", { name: "Create paused pipeline" }).click();
+    // 1) The pipeline TEAM comes from the Saved teams library (worker caps and models are team
+    //    settings); 2) a PROJECT (goal + workspace) is assigned to it from the Projects pane.
+    const insertTeam = async (codexEffort?: string) => {
+      await page
+        .getByRole("button", { name: "Saved teams", exact: true })
+        .first()
+        .click();
+      await page
+        .getByRole("list", { name: "Example teams" })
+        .getByRole("button", {
+          name: /Plan → implement → review pipeline team/,
+        })
+        .click();
+      await page.getByRole("button", { name: "Insert…", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: /Insert “/ });
+      await dialog.getByLabel("Implementation workers").selectOption("2");
+      await dialog.getByLabel("Fix workers").selectOption("2");
+      // Hard cap: the selects offer 1-5 only.
+      await expect(
+        dialog.getByLabel("Implementation workers").locator("option"),
+      ).toHaveCount(5);
+      await expect(dialog.getByLabel("Planner model (Opus 5.5)")).toHaveValue(
+        "claude-opus-5-5",
+      );
+      if (codexEffort)
+        await dialog.getByLabel("Codex reviewer effort").fill(codexEffort);
+      await expect(dialog.getByTestId("example-model-check")).toBeVisible();
+      const unverified = dialog.getByLabel("Insert with unverified models");
+      if (await unverified.count()) await unverified.check();
+      await dialog
+        .getByRole("button", { name: "Insert as new team", exact: true })
+        .click();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+    };
+    const assign = async (goal: string) => {
+      await page.getByRole("button", { name: /^Projects/ }).click();
+      await page
+        .getByRole("button", { name: "Assign project", exact: true })
+        .first()
+        .click();
+      const form = page.getByRole("form", { name: "Assign project" });
+      await expect(form.getByTestId("assign-project-type")).toContainText(
+        "Plan → implement",
+      );
+      await form.getByLabel("Project goal").fill(goal);
+      await form.getByLabel("Project workspace").fill(repo);
+      await form.getByLabel("Project isolation").selectOption("paths");
+      await form
+        .getByLabel("Worker paths")
+        .fill(`${join(repo, "a")}\n${join(repo, "b")}`);
+      await expect(
+        form.getByLabel("Implementation workers").locator("option"),
+      ).toHaveCount(2);
+      await form.getByRole("button", { name: "Create paused project" }).click();
+      await expect(form).toHaveCount(0);
+    };
+    await insertTeam();
+    // The team alone has no project yet.
+    expect((await request("GET", "/snapshot")).workflows).toHaveLength(0);
+    await assign("Add a greeting feature");
 
     const wf = page.locator(".workflow").first();
-    await expect(wf).toContainText("Opus 5.5 plan");
+    await expect(wf).toContainText("Add a greeting feature");
     await expect(wf.locator(".badge").first()).toHaveText("paused");
     const pipeline = wf.getByLabel("Pipeline", { exact: true });
     await expect(pipeline).toContainText("not verified");
@@ -130,25 +167,11 @@ test("pipeline sample: configure, verify before resume, handoff history across a
       (await request("GET", `/workflows/${workflowId}/parallel`)).plan,
     ).toBeNull();
 
-    // Second pipeline with an advertised Codex effort: verification passes, resume works.
-    await page
-      .getByRole("button", { name: /^Sample: Plan → implement/ })
-      .click();
-    const form2 = page.getByRole("form", {
-      name: "Pipeline sample configuration",
-    });
-    await form2.getByLabel("Pipeline goal").fill("Add a farewell feature");
-    await form2.getByLabel("Pipeline workspace").fill(repo);
-    await form2.getByLabel("Pipeline isolation").selectOption("paths");
-    await form2
-      .getByLabel("Worker paths")
-      .fill(`${join(repo, "a")}\n${join(repo, "b")}`);
-    await form2.getByLabel("Implementation workers").selectOption("2");
-    await form2.getByLabel("Fix workers").selectOption("2");
-    await form2.getByLabel("Codex reviewer effort").fill("high");
-    await form2.getByRole("button", { name: "Create paused pipeline" }).click();
-    // Each pipeline sample gets its own team; the second one is now the active team.
+    // Second pipeline team with an advertised Codex effort (a team setting): its project verifies
+    // and resumes. Each inserted team is its own team; the second one is now the active team.
+    await insertTeam("high");
     await expect(page.getByTestId("active-team-name")).toHaveText(/ 2$/);
+    await assign("Add a farewell feature");
     await expect(page.locator(".workflow")).toHaveCount(1);
     const pipeline2 = page
       .locator(".workflow")

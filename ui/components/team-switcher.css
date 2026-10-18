@@ -156,6 +156,7 @@
 }
 .team-popup-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   border-top: 1px solid #34465a;
   padding-top: 8px;

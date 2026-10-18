@@ -79,7 +79,7 @@ test("recovery: interrupted task shows its checkpoint, pending approval survives
     await expect(
       page.getByText("Workspace connected", { exact: true }),
     ).toBeVisible();
-    await page.getByRole("button", { name: /^Workflows/ }).click();
+    await page.getByRole("button", { name: /^Projects/ }).click();
     const wf = page.locator(".workflow", { hasText: "Crash demo" });
     const panel = wf.getByTestId("recovery-panel");
     await expect(panel).toContainText("Write notes");

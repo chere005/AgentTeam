@@ -450,20 +450,3 @@ export function SampleSetup({
     </div>
   );
 }
-
-export function WolframSampleButton({
-  act,
-}: {
-  act: (fn: () => Promise<unknown>) => Promise<void>;
-}) {
-  return (
-    <button
-      title="Create the paused sample workflow"
-      onClick={() =>
-        void act(() => api("/samples/wolfram-validated-reasoning", "POST", {}))
-      }
-    >
-      Sample: Wolfram-validated reasoning
-    </button>
-  );
-}

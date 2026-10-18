@@ -1,0 +1,230 @@
+{
+  "format": "agentteam.team-template",
+  "schemaVersion": 3,
+  "template": {
+    "name": "Product feature team",
+    "description": "An Engineering Manager over frontend, backend and QA engineers, a technical writer, a mandatory code reviewer and an advisory security reviewer. Assign it product features as projects; every source change waits for the Code Reviewer's approval, and changes to auth, crypto or secrets code also get a security consultation.",
+    "agents": [
+      {
+        "key": "manager",
+        "name": "Engineering Manager",
+        "role": "Turns the feature request into delegated tasks, tracks them and reports the outcome",
+        "roleType": "coordinator",
+        "environment": "claude",
+        "model": "default",
+        "effort": null,
+        "schedulingPriority": 60,
+        "maxConcurrentInvocations": null,
+        "instructions": "Restate the feature as acceptance criteria. Split it into frontend, backend, test and documentation tasks and delegate them through AgentTeam only. A change is not done until the Code Reviewer approved it; never mark a task complete on an engineer's word alone. Report only checks that actually ran. Finish with one JSON object: plan, delegations (task, recipient, reason) and synthesis (what shipped, what is unverified, open risks).",
+        "tools": [],
+        "skills": [],
+        "workspaces": [],
+        "parentKey": null,
+        "position": { "x": 0, "y": 0 }
+      },
+      {
+        "key": "frontend",
+        "name": "Frontend Engineer",
+        "role": "Implements user-facing changes in the client code",
+        "roleType": "implementer",
+        "environment": "codex",
+        "model": "default",
+        "effort": null,
+        "schedulingPriority": 50,
+        "maxConcurrentInvocations": null,
+        "instructions": "Implement only the frontend slice you were given, following the project's existing components, styling and state patterns. Keep accessibility (labels, keyboard, contrast) intact. Run the project's own lint, type and test commands when they exist. Finish with one JSON object: summary, changedFiles (every path you changed) and tests (commands run with their actual outcomes, or \"not run\" with the reason).",
+        "tools": ["read", "grep", "glob", "edit", "write", "shell"],
+        "skills": [],
+        "workspaces": [],
+        "parentKey": "manager",
+        "position": { "x": 0, "y": 0 }
+      },
+      {
+        "key": "backend",
+        "name": "Backend Engineer",
+        "role": "Implements server, API and data changes",
+        "roleType": "implementer",
+        "environment": "codex",
+        "model": "default",
+        "effort": null,
+        "schedulingPriority": 50,
+        "maxConcurrentInvocations": null,
+        "instructions": "Implement only the backend slice you were given: APIs, data access and migrations, following the project's existing structure. Validate inputs, keep changes backward compatible unless told otherwise, and never put credentials in code or logs. Run the project's own checks when they exist. Finish with one JSON object: summary, changedFiles (every path you changed) and tests (commands run with their actual outcomes, or \"not run\" with the reason).",
+        "tools": ["read", "grep", "glob", "edit", "write", "shell"],
+        "skills": [],
+        "workspaces": [],
+        "parentKey": "manager",
+        "position": { "x": 0, "y": 0 }
+      },
+      {
+        "key": "qa",
+        "name": "QA/Test Engineer",
+        "role": "Writes and runs tests for the changed behavior",
+        "roleType": "implementer",
+        "environment": "codex",
+        "model": "default",
+        "effort": null,
+        "schedulingPriority": 50,
+        "maxConcurrentInvocations": null,
+        "instructions": "Write focused tests for the acceptance criteria and the edge cases of the changed behavior, using the test framework the project already uses. Change test files only; report product bugs instead of fixing them. Record the exact commands and outputs; if tests could not run, say so instead of passing. Finish with one JSON object: summary, changedFiles and tests (commands with actual outcomes).",
+        "tools": ["read", "grep", "glob", "edit", "write", "shell"],
+        "skills": [
+          {
+            "id": "curated:jeffallan--test-master",
+            "mode": "on-demand",
+            "allowUnverified": false
+          }
+        ],
+        "workspaces": [],
+        "parentKey": "manager",
+        "position": { "x": 0, "y": 0 }
+      },
+      {
+        "key": "security",
+        "name": "Security Reviewer",
+        "role": "Advisory read-only review of authentication, cryptography and secrets handling",
+        "roleType": "reviewer",
+        "environment": "claude",
+        "model": "default",
+        "effort": null,
+        "schedulingPriority": 55,
+        "maxConcurrentInvocations": null,
+        "instructions": "You review read-only and only for security: authentication and authorization, session and token handling, cryptography use, secret storage and leakage, injection and unsafe deserialization. Your review is advisory and does not replace the Code Reviewer's required approval. Do not modify files. Finish with one JSON object: verdict (approve, request-changes or inconclusive), findings (file, severity, issue, suggested fix) and evidence (what you inspected).",
+        "tools": ["read", "grep", "glob"],
+        "skills": [
+          {
+            "id": "curated:jeffallan--security-reviewer",
+            "mode": "on-demand",
+            "allowUnverified": false
+          }
+        ],
+        "workspaces": [],
+        "parentKey": "manager",
+        "position": { "x": 0, "y": 0 }
+      },
+      {
+        "key": "reviewer",
+        "name": "Code Reviewer",
+        "role": "Required read-only reviewer for every source change",
+        "roleType": "reviewer",
+        "environment": "claude",
+        "model": "default",
+        "effort": null,
+        "schedulingPriority": 55,
+        "maxConcurrentInvocations": null,
+        "instructions": "You review read-only. Check correctness, error handling, tests for the changed behavior, readability and consistency with the surrounding code. Approve only what you actually read; use inconclusive when you could not inspect enough. Do not modify files. Finish with one JSON object: verdict (approve, request-changes or inconclusive), findings (file, line, severity, reason) and evidence (files and lines inspected).",
+        "tools": ["read", "grep", "glob"],
+        "skills": [
+          {
+            "id": "curated:jeffallan--code-reviewer",
+            "mode": "on-demand",
+            "allowUnverified": false
+          }
+        ],
+        "workspaces": [],
+        "parentKey": "manager",
+        "position": { "x": 0, "y": 0 }
+      },
+      {
+        "key": "writer",
+        "name": "Technical Writer",
+        "role": "Updates user and developer documentation for the feature",
+        "roleType": "custom",
+        "environment": "claude",
+        "model": "default",
+        "effort": null,
+        "schedulingPriority": 45,
+        "maxConcurrentInvocations": null,
+        "instructions": "Update the README, user guides, changelog and API docs for the delivered feature. Edit documentation files only and describe only behavior the engineers reported as implemented and tested; mark anything unverified. Finish with one JSON object: summary, changedFiles and openQuestions.",
+        "tools": ["read", "grep", "glob", "edit", "write"],
+        "skills": [],
+        "workspaces": [],
+        "parentKey": "manager",
+        "position": { "x": 0, "y": 0 }
+      }
+    ],
+    "edges": [
+      { "from": "manager", "to": "frontend", "kind": "delegate", "bidirectional": false, "enabled": true },
+      { "from": "manager", "to": "backend", "kind": "delegate", "bidirectional": false, "enabled": true },
+      { "from": "manager", "to": "qa", "kind": "delegate", "bidirectional": false, "enabled": true },
+      { "from": "manager", "to": "writer", "kind": "delegate", "bidirectional": false, "enabled": true },
+      { "from": "manager", "to": "reviewer", "kind": "delegate", "bidirectional": false, "enabled": true },
+      { "from": "manager", "to": "security", "kind": "consult", "bidirectional": false, "enabled": true },
+      { "from": "frontend", "to": "reviewer", "kind": "review", "bidirectional": false, "enabled": true },
+      { "from": "backend", "to": "reviewer", "kind": "review", "bidirectional": false, "enabled": true },
+      { "from": "qa", "to": "reviewer", "kind": "review", "bidirectional": false, "enabled": true },
+      { "from": "writer", "to": "reviewer", "kind": "review", "bidirectional": false, "enabled": true },
+      { "from": "frontend", "to": "security", "kind": "review", "bidirectional": false, "enabled": true },
+      { "from": "backend", "to": "security", "kind": "review", "bidirectional": false, "enabled": true },
+      { "from": "qa", "to": "security", "kind": "review", "bidirectional": false, "enabled": true }
+    ],
+    "rules": [
+      {
+        "agentKey": "reviewer",
+        "scope": "intake",
+        "priority": 10,
+        "enabled": true,
+        "mode": "mandatory",
+        "specialty": "code-review",
+        "kind": "review",
+        "match": {
+          "textIncludes": [],
+          "tagsAny": [],
+          "changedFilesAny": [
+            "*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.py", "*.go", "*.rs",
+            "*.java", "*.kt", "*.swift", "*.rb", "*.php", "*.cs", "*.c", "*.cc",
+            "*.cpp", "*.h", "*.hpp", "*.sql", "*.vue", "*.svelte"
+          ],
+          "catchAll": false
+        }
+      },
+      {
+        "agentKey": "security",
+        "scope": "intake",
+        "priority": 20,
+        "enabled": true,
+        "mode": "advisory",
+        "specialty": "security",
+        "kind": "review",
+        "match": {
+          "textIncludes": [],
+          "tagsAny": [],
+          "changedFilesAny": [
+            "**/auth/**", "*auth*", "**/crypto/**", "*crypto*", "**/secrets/**",
+            "*secret*", "*session*", "*token*", "*password*"
+          ],
+          "catchAll": false
+        }
+      }
+    ],
+    "externalDependencies": [],
+    "includesAbsolutePaths": false,
+    "groups": [],
+    "project": {
+      "type": "free-form",
+      "lead": "manager",
+      "roles": {
+        "lead": ["manager"],
+        "implement": ["frontend", "backend"],
+        "test": ["qa"],
+        "review": ["reviewer"],
+        "security": ["security"],
+        "docs": ["writer"]
+      },
+      "workspace": {
+        "label": "Product repository",
+        "access": {
+          "manager": "read",
+          "frontend": "write",
+          "backend": "write",
+          "qa": "write",
+          "security": "read",
+          "reviewer": "read",
+          "writer": "write"
+        }
+      },
+      "settings": {},
+      "expectations": {}
+    }
+  }
+}

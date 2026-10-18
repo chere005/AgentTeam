@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ReactFlow,
   Background,
@@ -54,6 +54,8 @@ import {
 } from "../groups";
 import "./canvas-cards.css";
 import { teamKey, MAIN_TEAM_ID } from "../team-view";
+import { CARD_HEIGHT, CARD_WIDTH, orgLayout, type Size } from "../org-layout";
+import { clearArrange, peekArrange } from "../arrange-request";
 import { accessLabel, accessTitle } from "../access-view";
 import {
   api,
@@ -378,25 +380,115 @@ export function TeamCanvas(p: Props) {
     "positions",
     {},
   );
-  function layout() {
-    const byLevel = new Map<number, number>();
-    const result: Record<string, { x: number; y: number }> = {};
-    for (const a of p.data.agents) {
-      let depth = 0,
-        parent = a.parentId;
-      const visited = new Set<string>();
-      while (parent && !visited.has(parent)) {
-        visited.add(parent);
-        depth++;
-        parent = p.data.agents.find((a) => a.id === parent)?.parentId ?? null;
-      }
-      const index = byLevel.get(depth) ?? 0;
-      byLevel.set(depth, index + 1);
-      result[a.id] = { x: index * 310, y: depth * (simple ? 180 : 300) };
+  const assistantIds = p.data.agents
+    .filter((a) => a.kind === "team-assistant")
+    .map((a) => a.id);
+  const memberIds = p.data.agents
+    .filter((a) => a.kind !== "team-assistant")
+    .map((a) => a.id);
+  const cardSize = (): Size => ({
+    width: CARD_WIDTH,
+    height: simple ? CARD_HEIGHT.compact : CARD_HEIGHT.detailed,
+  });
+  /**
+   * Measured card sizes (React Flow), so rows fit compact and detailed cards alike. Below
+   * FAR_ZOOM the cards show the smaller glance layout, so measurements taken then would be too
+   * small once zoomed in again: the nominal sizes are used instead.
+   */
+  const measuredSizes = (ns: Node[]) =>
+    Object.fromEntries(
+      ns
+        .filter(
+          (n) =>
+            n.type === "agent" &&
+            n.measured?.width &&
+            (flow?.getZoom() ?? 1) >= FAR_ZOOM,
+        )
+        .map((n) => [
+          n.id,
+          { width: n.measured!.width!, height: n.measured!.height! },
+        ]),
+    );
+  const orgInput = (agents: Agent[]) =>
+    agents.map((a) => ({ id: a.id, parentId: a.parentId }));
+  const orgEdges = () =>
+    p.data.edges.map((e) => ({ from: e.from, to: e.to, kind: e.kind }));
+  /**
+   * Arrange as a top-down org chart (ui/org-layout.ts) from agent.parentId (delegation edges only
+   * for agents without a parent); the Team Assistant goes top-left, outside the tree. With
+   * `subset`, only those agents are arranged, as their own tree to the right of the others (an
+   * insert into an existing team keeps everyone else where the user put them). Then re-fit.
+   */
+  function arrange(subset?: string[], fit = true) {
+    const only = subset ? new Set(subset) : null;
+    const agents = only
+      ? p.data.agents.filter((a) => only.has(a.id))
+      : p.data.agents;
+    let origin = { x: 0, y: 0 };
+    if (only) {
+      const others = nodes.filter(
+        (n) =>
+          n.type === "agent" && !only.has(n.id) && !assistantIds.includes(n.id),
+      );
+      if (others.length)
+        origin = {
+          x:
+            Math.max(
+              ...others.map(
+                (n) => n.position.x + (n.measured?.width ?? CARD_WIDTH),
+              ),
+            ) + 120,
+          y: Math.min(...others.map((n) => n.position.y)),
+        };
     }
-    persist("positions", result);
-    setNodes((old) => old.map((n) => ({ ...n, position: result[n.id] })));
+    const result = orgLayout(orgInput(agents), orgEdges(), {
+      sizes: measuredSizes(nodes),
+      defaultSize: cardSize(),
+      origin,
+      aside: only ? [] : assistantIds,
+    }).positions;
+    persist("positions", { ...saved("positions", {}), ...result });
+    setNodes((old) =>
+      old.map((n) => (result[n.id] ? { ...n, position: result[n.id] } : n)),
+    );
+    if (fit)
+      setTimeout(
+        () => flow?.fitView({ padding: 0.15, duration: 200, maxZoom: 1 }),
+        80,
+      );
   }
+  // Automatic arrangement, once the cards have been measured: a pending request from an insert
+  // (team, template, pack, example team) for this team, or a team none of whose agents has a
+  // stored position yet (a new team). Manual drag positions are never touched otherwise.
+  const autoChecked = useRef(false);
+  useEffect(() => {
+    if (!flow) return;
+    const agentNodes = nodes.filter((n) => n.type === "agent" && !n.hidden);
+    if (!agentNodes.length) return;
+    if (!agentNodes.every((n) => n.measured?.width && n.measured?.height))
+      return;
+    const request = peekArrange(teamId);
+    if (request) {
+      const present = new Set(p.data.agents.map((a) => a.id));
+      if (!request.agentIds.every((id) => present.has(id))) return;
+      clearArrange();
+      autoChecked.current = true;
+      const all = memberIds.every((id) => request.agentIds.includes(id));
+      arrange(all ? undefined : request.agentIds);
+      return;
+    }
+    if (autoChecked.current) return;
+    autoChecked.current = true;
+    const stored = saved<Record<string, unknown>>("positions", {});
+    if (memberIds.length && !memberIds.some((id) => stored[id]))
+      arrange(undefined, !saved(viewportKey, null));
+  }, [flow, nodes]);
+  useEffect(() => {
+    // An insert finishing while this canvas is open re-runs the check above.
+    const again = () => setNodes((ns) => [...ns]);
+    window.addEventListener("agentteam:arrange-request", again);
+    return () => window.removeEventListener("agentteam:arrange-request", again);
+  }, []);
   // Prune groups when agents are deleted, and persist every change.
   const agentIdKey = p.data.agents.map((a) => a.id).join(",");
   useEffect(() => {
@@ -416,15 +508,35 @@ export function TeamCanvas(p: Props) {
   useEffect(() => {
     setNodes((old) => {
       const pos = (id: string) => old.find((n) => n.id === id)?.position;
-      const agentNodes: Node[] = p.data.agents.map((a, i) => ({
+      // An agent without a position (added after the team was arranged) is placed where the org
+      // layout puts it relative to its parent's current position; nothing else moves.
+      const fresh = p.data.agents.filter((a) => !pos(a.id) && !positions[a.id]);
+      const tree = fresh.length
+        ? orgLayout(orgInput(p.data.agents), orgEdges(), {
+            sizes: measuredSizes(old),
+            defaultSize: cardSize(),
+            aside: assistantIds,
+          })
+        : null;
+      const placed = (a: Agent) => {
+        const at = tree!.positions[a.id];
+        const parent = tree!.parent[a.id];
+        const anchor = parent ? (pos(parent) ?? positions[parent]) : undefined;
+        return anchor && parent
+          ? {
+              x: anchor.x + at.x - tree!.positions[parent].x,
+              y: anchor.y + at.y - tree!.positions[parent].y,
+            }
+          : at;
+      };
+      const agentNodes: Node[] = p.data.agents.map((a) => ({
         id: a.id,
         type: "agent",
         hidden: hidden.has(a.id),
         selected: hidden.has(a.id)
           ? false
           : old.find((n) => n.id === a.id)?.selected,
-        position: pos(a.id) ??
-          positions[a.id] ?? { x: (i % 3) * 310, y: Math.floor(i / 3) * 270 },
+        position: pos(a.id) ?? positions[a.id] ?? placed(a),
         data: {
           agent: a,
           activity: p.data.activity.find((x) => x.agentId === a.id),
@@ -569,7 +681,10 @@ export function TeamCanvas(p: Props) {
         >
           {simple ? "Detailed cards" : "Simple cards"}
         </button>
-        <button title="Arrange team hierarchy" onClick={layout}>
+        <button
+          title="Arrange as an org chart: leads on top, reports centered below (replaces manual positions)"
+          onClick={() => arrange()}
+        >
           <GitBranch size={15} />
           Arrange
         </button>
@@ -592,7 +707,7 @@ export function TeamCanvas(p: Props) {
         )}
         {p.openGraphs && (
           <button
-            title="Executable workflow graphs: steps, conditions, commands, human input"
+            title="Executable workflow graphs: the steps inside a project (conditions, commands, human input)"
             onClick={p.openGraphs}
           >
             Workflow graphs

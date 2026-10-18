@@ -51,7 +51,7 @@ test("workflow limits: trip reason, honest usage, rejected then extended resume"
         () => undefined,
       );
     });
-    await page.getByRole("button", { name: /^Workflows/ }).click();
+    await page.getByRole("button", { name: /^Projects/ }).click();
     const wf = page.locator(".workflow", { hasText: "Bounded run" });
     await wf.locator("details.limits-panel > summary").click();
     await expect(wf.getByTestId("limit-trip")).toHaveText(

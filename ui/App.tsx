@@ -49,6 +49,7 @@ import {
 import { InboxPane, useInbox } from "./components/Inbox";
 import { LayoutMenu, rememberedLayout } from "./components/LayoutMenu";
 import { TeamSwitcher, TeamNotice } from "./components/TeamSwitcher";
+import { openAssignProject } from "./components/Projects";
 import { filterSnapshot, itemTeam, teamIndex } from "./team-view";
 import { DialogFocusManager, ShortcutHelp } from "./components/A11y";
 import { focusables } from "./components/A11y";
@@ -72,7 +73,8 @@ export type Panel =
 const panels: { id: Panel; name: string; icon: typeof Network }[] = [
   { id: "chat", name: "Conversations", icon: MessageSquare },
   { id: "team", name: "Team canvas", icon: Network },
-  { id: "workflows", name: "Workflows", icon: ListTodo },
+  // Pane id stays "workflows" (stored layouts); the units it lists are a team's projects.
+  { id: "workflows", name: "Projects", icon: ListTodo },
   { id: "workspace", name: "Workspace", icon: FolderOpen },
   { id: "skills", name: "Skills library", icon: Library },
   { id: "resources", name: "Resources", icon: Network },
@@ -503,6 +505,10 @@ export default function App() {
             rename={(id, name) =>
               teamAction(() => api("/team-spaces/" + id, "PUT", { name }))
             }
+            assignProject={() => {
+              setMain("workflows");
+              openAssignProject();
+            }}
             remove={(id, options) =>
               teamAction(async () => {
                 const r = await api("/team-spaces/" + id, "DELETE", options);
@@ -510,7 +516,7 @@ export default function App() {
                 const dest =
                   data.teams.find((t) => t.id === r.moveTo)?.name ?? "Main";
                 setNotice(
-                  `Deleted team “${team.name}”. ${r.agents === "delete" ? "Its agents were deleted" : "Its agents were moved"}; its workflows moved to “${dest}”.`,
+                  `Deleted team “${team.name}”. ${r.agents === "delete" ? "Its agents were deleted" : "Its agents were moved"}; its projects moved to “${dest}”.`,
                 );
               })
             }

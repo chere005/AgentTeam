@@ -4,6 +4,7 @@ import { api, persist, saved } from "../api";
 import { teamKey, MAIN_TEAM_ID } from "../team-view";
 import { createGroup, sanitizeGroups } from "../groups";
 import { Modal, applyLayout, nextOffset, type Point } from "./Teams";
+import { requestArrange } from "../arrange-request";
 import "./team-packs.css";
 
 type PackSummary =
@@ -316,6 +317,8 @@ export function TeamPacks({
           close={() => setDialog(null)}
           done={(r) => {
             applyLayout(r.layout);
+            // The pack's team is arranged as an org chart when the canvas shows it.
+            requestArrange(r.teamId, Object.keys(r.layout));
             applyInsertedGroups(r.groups, agentIds, r.teamId);
             setDialog(null);
             setNotice(`Pack installed into its own team “${r.teamName}”.`);

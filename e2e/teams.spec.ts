@@ -115,7 +115,7 @@ test("team switcher: names the active team, filters canvas, conversations and wo
     await expect(canvas).toContainText("Beta");
     await expect(canvas).not.toContainText("Alpha");
     // Workflows: only this team's.
-    await page.getByRole("button", { name: /^Workflows/ }).click();
+    await page.getByRole("button", { name: /^Projects/ }).click();
     await expect(page.locator(".workflow")).toHaveCount(1);
     await expect(page.locator(".workflow")).toContainText("Research workflow");
     // Conversation agent picker: only this team's agents.
@@ -172,7 +172,7 @@ test("team switcher: names the active team, filters canvas, conversations and wo
   });
 });
 
-test("samples create their own team; other teams' running work and inbox items stay visible and switch the team", async () => {
+test("example teams create their own team; other teams' running work and inbox items stay visible and switch the team", async () => {
   await withApp(async ({ start }) => {
     const { page, errors } = await start();
     const alpha = await api(page, "POST", "/agents", {
@@ -191,21 +191,33 @@ test("samples create their own team; other teams' running work and inbox items s
       title: "Main task that fails",
       completionCriteria: "D",
     });
-    await page.getByRole("button", { name: /^Workflows/ }).click();
-    // The Wolfram sample creates its own team and the app switches to it with a notice.
+    // An example team from the library becomes its own (active) team with a notice. It is a team
+    // only: no project until one is assigned.
     await page
-      .getByRole("button", { name: "Sample: Wolfram-validated reasoning" })
+      .getByRole("button", { name: "Saved teams", exact: true })
+      .first()
+      .click();
+    await page
+      .getByRole("list", { name: "Example teams" })
+      .getByRole("button", { name: /Wolfram-validated reasoning team/ })
+      .click();
+    await page.getByRole("button", { name: "Insert…", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: /Insert “/ });
+    await dialog.getByLabel("Insert with unverified models").check();
+    await dialog
+      .getByRole("button", { name: "Insert as new team", exact: true })
       .click();
     await expect(activeName(page)).toHaveText(
-      "Opus plan → Wolfram-validated reasoning",
+      "Wolfram-validated reasoning team",
     );
     await expect(page.getByTestId("team-notice")).toContainText(
       "Wolfram-validated reasoning",
     );
-    await expect(page.locator(".workflow")).toHaveCount(1);
-    await expect(page.locator(".workflow")).toContainText(
-      "Opus plan → Wolfram-validated reasoning",
-    );
+    await page.getByRole("button", { name: /^Projects/ }).click();
+    await expect(page.locator(".workflow")).toHaveCount(0);
+    await expect(
+      page.getByText(/^No projects in Wolfram-validated/),
+    ).toBeVisible();
     await expect(agentList(page).getByRole("button")).toHaveCount(3);
 
     // Work runs in the Main team while the sample team is shown: the switcher says so.

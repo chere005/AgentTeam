@@ -8,9 +8,9 @@ Updated October 18, 2026. This is the remaining work for the desktop application
 
 ## Current baseline
 
-**Continuation checkpoint:** see [docs/CONTINUATION.md](docs/CONTINUATION.md) for the current handoff: what exists, how it was verified, limitations and next steps. The multi-stage plan/implement/review/adjudicate sample (`src/pipeline.ts`, `src/handoffs.ts`) is implemented and fixture-tested only:
+**Continuation checkpoint:** see [docs/CONTINUATION.md](docs/CONTINUATION.md) for the current handoff: what exists, how it was verified, limitations and next steps. Teams and projects are separate (a team is the persistent org of agents, a project is work assigned to it; see `CLAUDE.md` glossary). The plan/implement/review/adjudicate pipeline team and its projects (`src/pipeline.ts`, `src/handoffs.ts`) are implemented and fixture-tested only:
 
-- [ ] Run the pipeline sample once against real installed providers (Opus 5.5, Sonnet 5.5, Fable 5.1, Codex max effort; never run live yet). Confirm the real model ids and Codex's top effort name (the default `max` is blocked at verification if the install does not advertise it), that integration steps really merge worktrees, and that fix-worker worktrees (created after the first integration) contain the integrated result.
+- [ ] Run a pipeline team's project once against real installed providers (Opus 5.5, Sonnet 5.5, Fable 5.1, Codex max effort; never run live yet). Confirm the real model ids and Codex's top effort name (the default `max` is blocked at verification if the install does not advertise it), that integration steps really merge worktrees, and that fix-worker worktrees (created after the first integration) contain the integrated result.
 
 The local application already has a three-pane layout; compact and detailed agent cards; a communication graph; agent configuration; persistent conversations; workflow tasks and dependencies; resource locks with waiting-time aging; skill inventories; a file browser; basic Git operations; and cross-platform packaging configuration.
 
@@ -20,12 +20,12 @@ Automatic harness discovery, model choices, and manual executable overrides need
 
 Current check results are recorded in docs/CONTINUATION.md (fixture and desktop tests on macOS). Live-provider and other-platform ACP validation remain pending. Release workflow configuration exists; publication and downloadable artifacts still need verification.
 
-## Wolfram-validated math/physics sample — next sample workflow
+## Wolfram-validated math/physics team — projects of the Wolfram-validated reasoning team
 
 - [ ] Whenever mathematical reasoning/calculation is needed, invoke one or two Wolfram agents (hard concurrency cap of two) to derive and independently validate the result where appropriate.
 - [ ] Require executable Wolfram Language validation code and actual kernel execution; agent agreement, generated code, or prose alone must never satisfy the gate.
 - [ ] Block every dependent reasoning step until its exact mathematical inputs pass validation. Failure, unresolved symbolic conditions, missing kernel, timeout, disagreement, or changed inputs keep the gate closed and trigger bounded correction/revalidation.
-- [ ] Validation state, blockers, attempts and scrollable Markdown notes are in the workflow UI; still open: links from notes to evidence records, and checking the final-answer step with a real Opus run (sample exists, paused; nothing run live).
+- [ ] Validation state, blockers, attempts and scrollable Markdown notes are in the workflow UI; still open: links from notes to evidence records, and checking the final-answer step with a real Opus run (example team and its projects exist, paused; nothing run live).
 - [ ] Remaining: real-kernel smoke test (`AGENTTEAM_WOLFRAM_SMOKE=1`, never run yet) before claiming end-to-end validation. Fake-kernel tests cover wrong/correct math, stale evidence, cancellation/restart, unavailable runtime and the two-run cap.
 
 ## 1 Complete the current development tools — P0
@@ -99,6 +99,7 @@ References: [ACP protocol](https://agentclientprotocol.com/protocol/overview), [
 
 ## 4 Saved teams and reusable configurations — P1
 
+- [ ] Teams vs projects (example teams in the library, `src/example-teams.ts`, `src/team-profiles.ts`, `src/projects.ts`, "Assign project"): no UI to view or edit a team's project profile (roles, workspace access, settings) after insert, and no way to change a team's worker caps except inserting the team again; a project cannot be moved to another team's agents; assigning a project attaches its workspace to the team's agents permanently (no detach when the project ends); free-form projects take a flat task list only (no per-task instructions or dependencies in the form); a pipeline project with a different workspace attaches that folder to the shared reviewers, which makes an earlier project's "Prepare and verify" stale (re-verify; by design of the fingerprint), and two concurrent pipeline projects on one team share the same worker agents (worker caps 1 per agent serialize them; only paths isolation was exercised for a second project, worktree isolation across projects is untested); none of the three example teams or their projects has run against live providers, and the product feature team's mandatory-review/security rules were checked with the routing preview and backend tests only.
 - [ ] Swift development pack: a skeleton exists (`assets/team-packs/swift-development`, manifest/agents/required review/groups; only bundled skill is `swift-expert`, nothing live-run). Remaining: a validated Swift workflow and live run, and the skills it lists as "not bundled — install separately" (Swift Testing/XCTest, SwiftUI accessibility, Xcode/simulator tooling, signing/release). Other specialist packs beyond Swift are not started.
 - [ ] Team packs: no UI for pack export/authoring, remote pack sources, or a signed/hashed pack feed; updates diff agents/connections/rules (not folders, canvas layout or groups) and never delete agents.
 - [ ] Save agent roles, instructions, models/effort, skills, limits, priorities, internal communication edges, routing rules, and relative layout.
@@ -193,6 +194,7 @@ Implemented and verified on macOS with temp repos/local bare remotes (see `src/g
 
 - [ ] Active-team switcher (`src/team-spaces.ts`, `ui/team-view.ts`, `TeamSwitcher.tsx`): no UI to move an existing agent or workflow to another team (API `POST /team-spaces/:id/members` only); the approval popup, the diagnostic bundle and the Resources "shared resources" choice list stay global; the Run inspector's Transfers/Playground sections use the team's agents but the backend `/inspector/transfers` is not team-filtered; the switcher was checked at one window width only (screenshots at the default test window size).
 
+- [ ] Org-chart arrangement (`ui/org-layout.ts`): canvas positions are one global map, so the Team Assistant (shown in every team) moves with each team's Arrange; subtrees are spaced by full subtree width (no contour packing), so very wide teams fit at far zoom; collapsed groups are laid out as their members; agents added to an arranged team are placed relative to their parent and can overlap manually moved cards until Arrange; checked on macOS at one window size.
 - [ ] Make detailed cards' configuration summary (read-only grid added) visually verified at several widths, and verify the busy/failure/flow animations and `prefers-reduced-motion` behavior in a running app (CSS added in `canvas-cards.css`, only far-zoom card layout was inspected; large-graph "calm" mode above 40 agents is untested).
 - [ ] Attention inbox: awaiting-approval items are covered only by the pure `buildInbox` test (no e2e fixture for a pending approval), and "ready review" is a heuristic (completed task whose agent has an enabled outgoing review edge) because review state is per agent/git diff and not in the snapshot; consider a backend summary endpoint.
 - [ ] Groups now travel with saved teams/packs (template schema v2, `groups`), but live canvas group membership is still renderer localStorage, not a team entity; the saved-team Save dialog group path is backend-tested only (the desktop test covers pack insert).

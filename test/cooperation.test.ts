@@ -347,11 +347,15 @@ test("Git workflow locks key on the common git dir so linked worktrees serialize
       log.push("end " + name);
     });
   await Promise.all([hold("main", root, 40), hold("linked", wt, 5)]);
+  // Resolving the lock key is async, so either may acquire first; they must not interleave.
+  assert.equal(log.length, 4);
+  const first = log[0].slice("start ".length);
+  const second = first === "main" ? "linked" : "main";
   assert.deepEqual(log, [
-    "start main",
-    "end main",
-    "start linked",
-    "end linked",
+    "start " + first,
+    "end " + first,
+    "start " + second,
+    "end " + second,
   ]);
 });
 
