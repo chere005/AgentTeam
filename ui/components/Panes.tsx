@@ -1,4 +1,10 @@
 import { WorktreeManager } from "./Worktrees";
+import {
+  RuleOptionsFields,
+  RuleBadge,
+  RoutingExplain,
+  splitList,
+} from "./RuleOptions";
 import { DevServerPanel } from "./DevServer";
 import { ChangesReview } from "./ChangesReview";
 import {
@@ -10,7 +16,12 @@ import {
 } from "./Validation";
 import { WorkflowLimits } from "./Limits";
 import { WorkflowRecovery } from "./Recovery";
+import { WorkflowSharedState } from "./SharedState";
 import { HarnessSettings } from "./HarnessSettings";
+import { GitWorkflowPanel } from "./GitWorkflow";
+import { FilePreview, OpenWith } from "./FilePreview";
+import { EditorSettings } from "./EditorSettings";
+import { useWorkspaceWatch } from "./useWorkspaceWatch";
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowUp,
@@ -75,7 +86,14 @@ export function Chat(p: PaneProps) {
     agent = p.data.agents.find((a) => a.id === p.selected),
     session = p.data.sessions.find((s) => s.agentId === p.selected);
   const [sending, setSending] = useState(false);
+  // Synchronous guards: state updates are async, so a fast double Enter/click could otherwise
+  // post the same message twice. `composing` tracks IME composition across browsers.
+  const sendLock = useRef(false),
+    composing = useRef(false),
+    currentAgent = useRef(p.selected);
+  currentAgent.current = p.selected;
   useEffect(() => {
+    composing.current = false;
     setMessages([]);
     setDraft(saved("draft." + p.selected, ""));
     setCli(null);
@@ -97,16 +115,27 @@ export function Chat(p: PaneProps) {
     end.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
   async function send() {
-    if (!agent || !draft.trim() || sending) return;
+    if (!agent || !draft.trim() || sendLock.current || composing.current)
+      return;
+    sendLock.current = true;
     setSending(true);
-    await p.act(async () => {
-      const s = await api("/agents/" + agent.id + "/session", "POST");
-      await api("/sessions/" + s.id + "/messages", "POST", { text: draft });
-      setDraft("");
-      persist("draft." + agent.id, "");
-      if (p.data.liveExecution) await api("/sessions/" + s.id + "/run", "POST");
-    });
-    setSending(false);
+    const text = draft;
+    try {
+      await p.act(async () => {
+        const s = await api("/agents/" + agent.id + "/session", "POST");
+        await api("/sessions/" + s.id + "/messages", "POST", { text });
+        // Clear only what was sent: keep anything typed meanwhile or in another agent's draft.
+        if (saved("draft." + agent.id, "") === text)
+          persist("draft." + agent.id, "");
+        if (currentAgent.current === agent.id)
+          setDraft((d) => (d === text ? "" : d));
+        if (p.data.liveExecution)
+          await api("/sessions/" + s.id + "/run", "POST");
+      });
+    } finally {
+      sendLock.current = false;
+      setSending(false);
+    }
   }
   if (!agent)
     return (
@@ -300,10 +329,17 @@ export function Chat(p: PaneProps) {
                   setDraft(e.target.value);
                   persist("draft." + agent.id, e.target.value);
                 }}
+                onCompositionStart={() => (composing.current = true)}
+                onCompositionEnd={() => {
+                  // Safari fires the confirming Enter keydown after compositionend.
+                  setTimeout(() => (composing.current = false), 0);
+                }}
                 onKeyDown={(e) => {
                   if (
                     e.key === "Enter" &&
                     !e.shiftKey &&
+                    !e.repeat &&
+                    !composing.current &&
                     !e.nativeEvent.isComposing &&
                     e.keyCode !== 229
                   ) {
@@ -377,6 +413,9 @@ export function Workflows(p: PaneProps) {
     [rule, setRule] = useState(false),
     [priority, setPriority] = useState(100),
     [scope, setScope] = useState("intake"),
+    [ruleMode, setRuleMode] = useState("advisory"),
+    [specialty, setSpecialty] = useState(""),
+    [files, setFiles] = useState(""),
     [target, setTarget] = useState(""),
     [match, setMatch] = useState("");
   const selected = p.data.agents.find((a) => a.id === p.selected);
@@ -492,6 +531,7 @@ export function Workflows(p: PaneProps) {
           <WorkflowGateSummary tasks={w.tasks} />
           <WorkflowLimits workflowId={w.id} act={p.act} />
           <WorkflowRecovery workflowId={w.id} act={p.act} />
+          <WorkflowSharedState workflowId={w.id} />
           <div className="progress">
             <span
               style={{
@@ -721,9 +761,12 @@ export function Workflows(p: PaneProps) {
                     .split(",")
                     .map((t) => t.trim())
                     .filter(Boolean),
-                  catchAll: !match.trim(),
+                  changedFilesAny: splitList(files),
+                  catchAll: !match.trim() && !files.trim(),
                 },
-                kind: "delegate",
+                mode: ruleMode,
+                ...(specialty.trim() ? { specialty: specialty.trim() } : {}),
+                kind: ruleMode === "mandatory" ? "review" : "delegate",
               });
               setRule(false);
             });
@@ -767,6 +810,14 @@ export function Workflows(p: PaneProps) {
               placeholder="Empty matches all tasks"
             />
           </label>
+          <RuleOptionsFields
+            mode={ruleMode}
+            setMode={setRuleMode}
+            specialty={specialty}
+            setSpecialty={setSpecialty}
+            files={files}
+            setFiles={setFiles}
+          />
           <label>
             Priority (highest wins)
             <input
@@ -790,9 +841,15 @@ export function Workflows(p: PaneProps) {
                   p.data.agents.find((a) => a.id === r.targetId)?.name
                 : "Receive tasks"}{" "}
               ·{" "}
-              {r.match.catchAll ? "All tasks" : r.match.textIncludes.join(", ")}{" "}
+              {r.match.catchAll
+                ? "All tasks"
+                : [
+                    ...r.match.textIncludes,
+                    ...(r.match.changedFilesAny ?? []),
+                  ].join(", ")}{" "}
               · priority {r.priority}
             </small>
+            <RuleBadge rule={r} />
           </div>
           <button
             onClick={() => void p.act(() => api("/rules/" + r.id, "DELETE"))}
@@ -829,6 +886,7 @@ export function Workflows(p: PaneProps) {
               route.reason}
           </p>
         )}
+        <RoutingExplain agents={p.data.agents} from={p.selected || undefined} />
       </details>
     </div>
   );
@@ -969,6 +1027,7 @@ export function Workspace(p: PaneProps) {
     [git, setGit] = useState<any>(null),
     [tab, setTab] = useState("access"),
     [commit, setCommit] = useState(""),
+    [tick, setTick] = useState(0),
     [context, setContext] = useState<{
       path: string;
       x: number;
@@ -1005,6 +1064,12 @@ export function Workspace(p: PaneProps) {
         }),
       );
   }
+  // External edits: debounced backend events refresh the listing and Git status (no polling here).
+  useWorkspaceWatch(agent?.id, root, tab === "files" || tab === "git", () => {
+    setTick((t) => t + 1);
+    if (tab === "files") void load().catch(() => {});
+    if (tab === "git") void loadGit().catch(() => {});
+  });
   async function open(path: string, application?: string) {
     await api("/agents/" + agent!.id + "/files/open", "POST", {
       workspace: root,
@@ -1065,7 +1130,7 @@ export function Workspace(p: PaneProps) {
             disabled={!root}
             onClick={() => {
               setTab("git");
-              void p.act(loadGit);
+              void loadGit().catch(() => {});
             }}
           >
             Git
@@ -1148,13 +1213,10 @@ export function Workspace(p: PaneProps) {
                           setPath(entry.path);
                           setPreview(null);
                         } else
-                          setPreview(
-                            await api(
-                              "/agents/" + agent.id + "/files/preview",
-                              "POST",
-                              { workspace: root, path: entry.path },
-                            ),
-                          );
+                          setPreview({
+                            path: entry.path,
+                            name: entry.name,
+                          });
                       })
                     }
                     onContextMenu={(e) => {
@@ -1183,49 +1245,36 @@ export function Workspace(p: PaneProps) {
                 <button onClick={() => void p.act(() => open(path, "finder"))}>
                   Reveal folder
                 </button>
+                <OpenWith
+                  agentId={agent.id}
+                  workspace={root}
+                  path={path}
+                  project
+                />
               </div>
               {preview && (
-                <section className="file-preview">
-                  <div className="row between">
-                    <b>{preview.name ?? preview.path}</b>
-                    <button
-                      title="Open file in editor"
-                      onClick={() => void p.act(() => open(preview.path))}
-                    >
-                      <ExternalLink size={14} />
-                    </button>
-                  </div>
-                  <div className="access-banner">
-                    <b>
-                      {agent.workspaces.find((w) => w.path === root)?.access ===
-                      "write"
-                        ? "READ & WRITE"
-                        : "READ ONLY"}
-                    </b>
-                    <code>
-                      {root}/{preview.path}
-                    </code>
-                    <small>
-                      Inherited from this attached folder · file preview is
-                      read-only
-                    </small>
-                  </div>
-                  <small>
-                    {preview.size} bytes
-                    {preview.truncated ? " · Preview truncated" : ""}
-                  </small>
-                  {preview.binary ? (
-                    <p>
-                      Binary file. Open in an external application to view it.
-                    </p>
-                  ) : (
-                    <pre>{preview.content}</pre>
-                  )}
-                </section>
+                <FilePreview
+                  key={agent.id + root + preview.path}
+                  agentId={agent.id}
+                  workspace={root}
+                  path={preview.path}
+                  access={
+                    agent.workspaces.find((w) => w.path === root)?.access ??
+                    "read"
+                  }
+                  refreshKey={tick}
+                />
               )}
             </>
           ) : (
             <>
+              <GitWorkflowPanel
+                key={agent.id + root}
+                agentId={agent.id}
+                workspace={root}
+                tick={tick}
+                onChanged={() => void loadGit().catch(() => {})}
+              />
               <div className="row between">
                 <div className="row">
                   <GitBranch size={17} />
@@ -1465,6 +1514,7 @@ export function Preferences(p: PaneProps) {
           command to PATH. System opening uses the platform file manager.
         </p>
       </section>
+      <EditorSettings />
       <section className="settings-card">
         <h3>Layout</h3>
         <p>

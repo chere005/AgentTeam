@@ -409,7 +409,8 @@ export class RecoveryService {
       attempt: this.state(task.id).attempt,
       boundary,
       nextStep,
-      data,
+      // Shared workflow state versions at this boundary: lets recovery restore state (src/shared-state.ts).
+      data: { ...data, state: this.service.shared.snapshot(task.workflowId) },
       createdAt: new Date().toISOString(),
     };
     this.store.put("checkpoint", cp);
@@ -549,6 +550,14 @@ export class RecoveryService {
     }
   }
   // ---- provider run boundaries (used by the scheduler) ------------------------------------
+  /** True when startRun would replay this attempt's recorded provider output instead of running it. */
+  willReplayRun(task: Task) {
+    const s = this.state(task.id);
+    return (
+      this.ledger.find(`provider-run:${task.id}:${s.attempt}`)?.state ===
+      "completed"
+    );
+  }
   startRun(task: Task, mutating: boolean) {
     const s = this.state(task.id);
     const { effect, action } = this.ledger.begin({

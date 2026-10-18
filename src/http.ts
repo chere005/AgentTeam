@@ -24,6 +24,10 @@ import { WorkspaceService } from "./workspaces.ts";
 import { ReviewService } from "./reviews.ts";
 import { recommendations } from "./config.ts";
 import { recoveryRoute } from "./recovery-routes.ts";
+import { WorkspaceExtras } from "./workspace-routes.ts";
+import { createInspector } from "./inspector-routes.ts";
+import { sharedRoute } from "./shared-routes.ts";
+import { orchestrationRoute } from "./orchestration.ts";
 import {
   AppError,
   type Agent,
@@ -49,6 +53,10 @@ async function body(req: IncomingMessage) {
   }
 }
 const id = (value: string) => decodeURIComponent(value);
+/** External launches requested through the API (recorded instead of run when AGENTTEAM_TEST=1). */
+export type LaunchRecord =
+  | { kind: "editor"; executable: string; args: string[]; application: string }
+  | { kind: "url"; url: string };
 export function createApi(
   service: TeamService,
   token: string,
@@ -56,11 +64,53 @@ export function createApi(
   discovery = new RuntimeDiscovery(),
 ) {
   const store = service.store;
+  // Test mode never starts editors, file managers or browsers: launches are recorded instead and
+  // exposed at GET /test/launches (and as server.launches for in-process tests).
+  const testMode = process.env.AGENTTEAM_TEST === "1";
+  const launches: LaunchRecord[] = [];
   const workspaces = new WorkspaceService(store);
   const development = new DevelopmentService(service);
   const devservers = new DevServerService(service);
   const teams = new TeamTemplates(service, () => discovery.runtimes);
   const reviews = new ReviewService(service, workspaces);
+  const extras = new WorkspaceExtras(
+    store,
+    workspaces,
+    testMode
+      ? {
+          git: {
+            openUrl: async (url) => {
+              launches.push({ kind: "url", url });
+            },
+          },
+          editors: {
+            launcher: async (plan) => {
+              launches.push({
+                kind: "editor",
+                executable: plan.executable,
+                args: [...plan.args],
+                application: plan.application,
+              });
+            },
+          },
+        }
+      : {},
+  );
+  const inspector = createInspector(service, {
+    token,
+    context: {
+      liveEnabled: () => runs.enabled,
+      readiness: (environment) =>
+        runs.readiness?.(environment) ?? { state: "ready" },
+    },
+    runtimes: () =>
+      discovery.runtimes.map((r) => ({
+        id: r.id,
+        installed: r.installed,
+        version: (r as { version?: string }).version,
+        path: (r as { path?: string }).path,
+      })),
+  });
   const server = createServer(async (req, res) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Cache-Control", "no-store");
@@ -193,10 +243,20 @@ export function createApi(
         }
         return send({ ...result, execution });
       }
+      const inspected = await inspector.route(method, url, () => body(req));
+      if (inspected) return send(inspected.data, inspected.status);
       const recovered = await recoveryRoute(service, method, url, () =>
         body(req),
       );
       if (recovered) return send(recovered.data, recovered.status);
+      const sharedResult = await sharedRoute(service, method, url, () =>
+        body(req),
+      );
+      if (sharedResult) return send(sharedResult.data, sharedResult.status);
+      const orchestrated = await orchestrationRoute(service, method, url, () =>
+        body(req),
+      );
+      if (orchestrated) return send(orchestrated.data, orchestrated.status);
       if (method === "GET" && path === "/approvals")
         return send(service.approvals.list());
       if (method === "POST" && (match = path.match(/^\/approvals\/([^/]+)$/))) {
@@ -388,6 +448,10 @@ export function createApi(
         });
       if (method === "POST" && path === "/skills/refresh")
         return send(await service.skills.scan());
+      if (testMode && method === "GET" && path === "/test/launches")
+        return send({ launches });
+      const extra = await extras.route(method, url, () => body(req));
+      if (extra) return send(extra.data, extra.status);
       if (method === "GET" && path === "/settings")
         return send(workspaces.settings());
       if (method === "PUT" && path === "/settings")
@@ -606,17 +670,41 @@ export function createApi(
             "task_running",
             "Stop the running task before manually changing its status",
           );
-        const change = (await body(req)) as {
+        const raw = (await body(req)) as {
           status?: string;
           result?: string;
+          humanOverride?: unknown;
         };
-        if (
-          change?.status === "completed" &&
-          typeof change.result === "string"
-        ) {
-          // Declared completion checks must pass for exactly this result text, evaluated against
-          // the same workspace the scheduler uses (the agent's active folder, else the app cwd).
-          const task = store.get<Task>("task", id(match[1]));
+        const { humanOverride: rawOverride, ...change } = raw ?? {};
+        // Explicit, attributed override for completing a required-review task by hand (see
+        // CLAUDE.md, orchestration); without it a hand-completed review never opens a gate.
+        const override =
+          rawOverride === undefined
+            ? undefined
+            : z
+                .object({
+                  reason: z.string().trim().min(10).max(2000),
+                  by: z.string().trim().min(1).max(200).optional(),
+                })
+                .strict()
+                .parse(rawOverride);
+        const taskId = id(match[1]);
+        if (change?.status !== "completed") {
+          if (override)
+            throw new AppError(
+              400,
+              "override_not_applicable",
+              "humanOverride is only accepted when completing a review task",
+            );
+          return send(service.transitionTask(taskId, change));
+        }
+        // Manual completion runs the same gates as the scheduler: declared completion checks for
+        // exactly this result text (evaluated against the agent's active folder, else the app cwd),
+        // then the task's structured output (required shared-state writes), committed atomically
+        // with the transition.
+        const task = store.get<Task>("task", taskId);
+        const result = typeof change.result === "string" ? change.result : "";
+        if (typeof change.result === "string") {
           const agent = store.get<Agent>("agent", task.agentId);
           await service.limits.evaluate(
             task,
@@ -624,7 +712,14 @@ export function createApi(
             agent.workspaces.find((w) => w.active)?.path ?? runs.cwd,
           );
         }
-        return send(service.transitionTask(id(match[1]), change));
+        const output = await service.shared.prepare(task, result);
+        return send(
+          store.transaction(() => {
+            service.orchestration.recordManualCompletion(taskId, override);
+            service.shared.commit(task, output);
+            return service.transitionTask(taskId, change);
+          }),
+        );
       }
       if (method === "GET" && path === "/sessions")
         return send(store.list("session"));
@@ -759,6 +854,7 @@ export function createApi(
   server.on("close", () => {
     void development.close();
     void devservers.close();
+    extras.close();
   });
-  return server;
+  return Object.assign(server, { launches });
 }

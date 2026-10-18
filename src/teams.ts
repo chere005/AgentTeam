@@ -71,6 +71,8 @@ const templateRule = z
     priority: z.number().int().min(0).max(10000),
     enabled: z.boolean().default(true),
     match: ruleSchema.shape.match,
+    mode: ruleSchema.shape.mode,
+    specialty: ruleSchema.shape.specialty,
     kind: kindEnum.default("delegate"),
   })
   .strict();
@@ -333,6 +335,8 @@ export class TeamTemplates {
           priority: r.priority,
           enabled: r.enabled,
           match: r.match,
+          mode: r.mode ?? "advisory",
+          ...(r.specialty ? { specialty: r.specialty } : {}),
           kind: r.kind,
         });
       else if (a || t)

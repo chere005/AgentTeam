@@ -16,6 +16,7 @@ import {
   ChevronDown,
   Command,
   Search,
+  Inbox as InboxIcon,
 } from "lucide-react";
 import {
   api,
@@ -27,6 +28,7 @@ import {
   type Agent,
 } from "./api";
 import { Resources } from "./components/Resources";
+import { Inspector } from "./components/Inspector";
 import { TeamLibrary } from "./components/Teams";
 import { TeamCanvas } from "./components/TeamCanvas";
 import { AgentEditor } from "./components/AgentEditor";
@@ -38,6 +40,12 @@ import {
   Preferences,
   ActivityLog,
 } from "./components/Panes";
+import { InboxPane, useInbox } from "./components/Inbox";
+import { LayoutMenu } from "./components/LayoutMenu";
+import { DialogFocusManager, ShortcutHelp } from "./components/A11y";
+import { focusables } from "./components/A11y";
+import { clampWidth, sanitizeLayout, type PaneLayout } from "./workspace";
+import type { InboxItem } from "./inbox";
 export type Panel =
   | "chat"
   | "team"
@@ -47,7 +55,9 @@ export type Panel =
   | "settings"
   | "activity"
   | "resources"
-  | "teams";
+  | "teams"
+  | "inbox"
+  | "inspector";
 const panels: { id: Panel; name: string; icon: typeof Network }[] = [
   { id: "chat", name: "Conversations", icon: MessageSquare },
   { id: "team", name: "Team canvas", icon: Network },
@@ -56,6 +66,8 @@ const panels: { id: Panel; name: string; icon: typeof Network }[] = [
   { id: "skills", name: "Skills library", icon: Library },
   { id: "resources", name: "Resources", icon: Network },
   { id: "teams", name: "Saved teams", icon: Library },
+  { id: "inbox", name: "Attention inbox", icon: InboxIcon },
+  { id: "inspector", name: "Run inspector", icon: Search },
   { id: "activity", name: "Activity", icon: Activity },
   { id: "settings", name: "Settings", icon: Settings },
 ];
@@ -64,18 +76,38 @@ export default function App() {
     [events, setEvents] = useState<TeamEvent[]>([]),
     [error, setError] = useState(""),
     [ready, setReady] = useState(false);
-  const [main, setMain] = useState<Panel>(() =>
-      saved<number>("layoutVersion", 0) === 2 ? saved("main", "team") : "team",
+  // One sanitised read of stored pane state; invalid or missing values fall back to the defaults
+  // (Canvas in the middle, Conversation on the right).
+  const [initial] = useState(() =>
+    sanitizeLayout(
+      saved<number>("layoutVersion", 0) === 2
+        ? {
+            main: saved("main", "team"),
+            right: saved("right", "chat"),
+            showLeft: saved("showLeft", true),
+            showRight: saved("showRight", true),
+            rightWidth: saved("rightWidth", 440),
+          }
+        : {},
     ),
-    [right, setRight] = useState<Panel>(() =>
-      saved<number>("layoutVersion", 0) === 2 ? saved("right", "chat") : "chat",
-    ),
-    [showRight, setShowRight] = useState(() => saved("showRight", true)),
-    [showLeft, setShowLeft] = useState(() => saved("showLeft", true)),
-    [width, setWidth] = useState(() => saved("rightWidth", 440));
+  );
+  const [main, setMain] = useState<Panel>(initial.main),
+    [right, setRight] = useState<Panel>(initial.right),
+    [showRight, setShowRight] = useState(initial.showRight),
+    [showLeft, setShowLeft] = useState(initial.showLeft),
+    [width, setWidth] = useState(initial.rightWidth),
+    [help, setHelp] = useState(false),
+    // Set when a saved layout deliberately chose a non-Conversation right pane (e.g. Monitoring → Inbox):
+    // selecting an agent then keeps that pane; only an explicit "open conversation" action switches it.
+    [rightPinned, setRightPinned] = useState(
+      () =>
+        saved<boolean>("rightPinned", false) === true &&
+        initial.right !== "chat",
+    );
   const [selected, setSelected] = useState(() => saved("selected", "")),
     [editor, setEditor] = useState<Agent | "new" | null>(null),
     [search, setSearch] = useState("");
+  const inbox = useInbox(data);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
@@ -126,7 +158,106 @@ export default function App() {
     persist("showRight", showRight);
     persist("showLeft", showLeft);
     persist("rightWidth", width);
-  }, [main, right, showRight, showLeft, width, selected]);
+    persist("rightPinned", rightPinned);
+  }, [main, right, showRight, showLeft, width, selected, rightPinned]);
+  useEffect(() => {
+    if (right === "chat") setRightPinned(false);
+  }, [right]);
+  const current: PaneLayout = {
+    main,
+    right,
+    showLeft,
+    showRight,
+    rightWidth: width,
+  };
+  const applyLayout = (l: PaneLayout) => {
+    setMain(l.main);
+    setRight(l.right);
+    setShowLeft(l.showLeft);
+    setShowRight(l.showRight);
+    setWidth(l.rightWidth);
+    setRightPinned(l.right !== "chat");
+  };
+  /** Explicit "open conversation" action: always shows the Conversation pane on the right. */
+  const openConversation = (id: string) => {
+    setSelected(id);
+    if (main === "chat") return; // the conversation is already the main pane
+    setRightPinned(false);
+    setRight("chat");
+    setShowRight(true);
+  };
+  /** Plain selection (agent list): follows the conversation unless a layout pinned the right pane. */
+  const selectAgent = (id: string) => {
+    setSelected(id);
+    if (main !== "chat" && !rightPinned) {
+      setRight("chat");
+      setShowRight(true);
+    }
+  };
+  const openInbox = (item: InboxItem) => {
+    if (item.agentId) setSelected(item.agentId);
+    if (item.target === "chat") {
+      setRightPinned(false);
+      setRight("chat");
+      setShowRight(true);
+    } else if (item.target === "team") setMain("team");
+    else setMain(item.target);
+    if (right === item.target || (item.target === "chat" && right === "chat"))
+      setShowRight(true);
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      const t = e.target as HTMLElement | null;
+      const editing =
+        !!t &&
+        (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      if (e.key === "F6") {
+        e.preventDefault();
+        const regions = [".navigation", ".main-pane", ".right-pane"]
+          .map((q) => document.querySelector<HTMLElement>(q))
+          .filter((x): x is HTMLElement => !!x);
+        const at = regions.findIndex((r) => r.contains(document.activeElement));
+        const next =
+          regions[
+            (at + (e.shiftKey ? -1 : 1) + regions.length) % regions.length
+          ];
+        (focusables(next)[0] ?? next).focus();
+      } else if (
+        mod &&
+        !e.shiftKey &&
+        !e.altKey &&
+        e.key.toLowerCase() === "b"
+      ) {
+        e.preventDefault();
+        setShowLeft((v) => !v);
+      } else if (mod && !e.shiftKey && e.key === "\\") {
+        e.preventDefault();
+        setShowRight((v) => !v);
+      } else if (mod && !e.shiftKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setShowLeft(true);
+        setTimeout(
+          () =>
+            document.querySelector<HTMLInputElement>("#agent-find")?.focus(),
+          0,
+        );
+      } else if (mod && e.shiftKey && e.key.toLowerCase() === "n") {
+        e.preventDefault();
+        setEditor("new");
+      } else if (mod && e.shiftKey && e.key.toLowerCase() === "i") {
+        e.preventDefault();
+        setRight("inbox");
+        setShowRight(true);
+      } else if (e.key === "?" && !editing && !mod) {
+        e.preventDefault();
+        setHelp(true);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
   const agent = data.agents.find((a) => a.id === selected);
   function pane(id: Panel, side: string) {
     const props = {
@@ -136,13 +267,7 @@ export default function App() {
       act,
       events,
       edit: (a: Agent) => setEditor(a),
-      openChat: (id: string) => {
-        setSelected(id);
-        if (main !== "chat") {
-          setRight("chat");
-          setShowRight(true);
-        }
-      },
+      openChat: openConversation,
     };
     switch (id) {
       case "team":
@@ -150,11 +275,8 @@ export default function App() {
           <TeamCanvas
             {...props}
             add={() => setEditor("new")}
-            chat={(id) => {
-              setSelected(id);
-              setRight("chat");
-              setShowRight(true);
-            }}
+            openTeams={() => setMain("teams")}
+            chat={openConversation}
           />
         );
       case "chat":
@@ -180,6 +302,18 @@ export default function App() {
               void refresh();
             }}
           />
+        );
+      case "inbox":
+        return (
+          <InboxPane
+            items={inbox.items}
+            dismiss={inbox.dismiss}
+            open={openInbox}
+          />
+        );
+      case "inspector":
+        return (
+          <Inspector data={data} events={events} openChat={props.openChat} />
         );
       case "activity":
         return <ActivityLog events={events} data={data} />;
@@ -211,6 +345,7 @@ export default function App() {
             <button
               className="icon"
               title="Hide right pane"
+              aria-label="Hide right pane"
               onClick={() => setShowRight(false)}
             >
               <X size={16} />
@@ -222,6 +357,10 @@ export default function App() {
   }
   return (
     <div className="app">
+      <a className="skip-link" href="#main-pane">
+        Skip to main content
+      </a>
+      <DialogFocusManager />
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark">
@@ -237,9 +376,31 @@ export default function App() {
           {data.activity.filter((a) => a.state === "processing").length} active
         </div>
         <div className="row">
+          <LayoutMenu current={current} apply={applyLayout} />
+          <button
+            className="icon topbar-inbox"
+            aria-label={`Attention inbox, ${inbox.items.length} item${inbox.items.length === 1 ? "" : "s"}`}
+            title="Attention inbox (Ctrl/Cmd+Shift+I)"
+            onClick={() => {
+              setRight("inbox");
+              setShowRight(true);
+            }}
+          >
+            <InboxIcon size={17} />
+            {inbox.items.length > 0 && (
+              <span
+                className="nav-badge"
+                data-testid="inbox-badge"
+                aria-hidden="true"
+              >
+                {inbox.items.length}
+              </span>
+            )}
+          </button>
           <button
             className="icon"
             aria-label="Toggle navigation"
+            aria-expanded={showLeft}
             onClick={() => setShowLeft(!showLeft)}
           >
             <PanelLeft size={18} />
@@ -258,6 +419,7 @@ export default function App() {
           <button
             className={"icon " + (showRight ? "active" : "")}
             aria-label="Toggle right pane"
+            aria-expanded={showRight}
             onClick={() => setShowRight(!showRight)}
           >
             <PanelRight size={18} />
@@ -266,21 +428,25 @@ export default function App() {
       </header>
       <div className="body">
         {showLeft && (
-          <aside className="navigation">
+          <aside className="navigation" aria-label="Workspace navigation">
             <div className="nav-section">WORKSPACE</div>
-            <nav>
+            <nav aria-label="Panes">
               {panels
                 .filter((p) => p.id !== "settings")
                 .map((p) => (
                   <button
                     key={p.id}
                     className={main === p.id ? "selected" : ""}
+                    aria-current={main === p.id ? "page" : undefined}
                     onClick={() => setMain(p.id)}
                   >
                     <p.icon size={18} />
                     {p.name}
                     {p.id === "workflows" && (
                       <span className="count">{data.workflows.length}</span>
+                    )}
+                    {p.id === "inbox" && inbox.items.length > 0 && (
+                      <span className="nav-badge">{inbox.items.length}</span>
                     )}
                   </button>
                 ))}
@@ -298,13 +464,14 @@ export default function App() {
             <div className="search">
               <Search size={14} />
               <input
+                id="agent-find"
                 aria-label="Find agent"
                 placeholder="Find agent…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
-            <div className="agent-list">
+            <div className="agent-list" role="group" aria-label="Agents">
               {data.agents
                 .filter((a) =>
                   a.name.toLowerCase().includes(search.toLowerCase()),
@@ -312,14 +479,9 @@ export default function App() {
                 .map((a) => (
                   <button
                     className={selected === a.id ? "selected" : ""}
+                    aria-pressed={selected === a.id}
                     key={a.id}
-                    onClick={() => {
-                      setSelected(a.id);
-                      if (main !== "chat") {
-                        setRight("chat");
-                        setShowRight(true);
-                      }
-                    }}
+                    onClick={() => selectAgent(a.id)}
                     onContextMenu={(e) => {
                       e.preventDefault();
                       setEditor(a);
@@ -361,7 +523,12 @@ export default function App() {
             </div>
           </aside>
         )}
-        <main className="main-pane">
+        <main
+          className="main-pane"
+          id="main-pane"
+          tabIndex={-1}
+          aria-label="Main content"
+        >
           {paneHeader(main, setMain, "main")}
           {ready ? (
             pane(main, "main")
@@ -377,15 +544,28 @@ export default function App() {
           <>
             <div
               className="resize"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize right pane"
+              aria-valuemin={300}
+              aria-valuemax={650}
+              aria-valuenow={width}
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+                  e.preventDefault();
+                  setWidth((w) =>
+                    clampWidth(w + (e.key === "ArrowLeft" ? 20 : -20)),
+                  );
+                }
+              }}
               onPointerDown={(e) => {
                 e.currentTarget.setPointerCapture(e.pointerId);
                 const start = e.clientX,
                   w = width;
                 const el = e.currentTarget;
                 const move = (event: PointerEvent) =>
-                  setWidth(
-                    Math.max(300, Math.min(650, w + start - event.clientX)),
-                  );
+                  setWidth(clampWidth(w + start - event.clientX));
                 const end = () => {
                   el.removeEventListener("pointermove", move);
                   el.removeEventListener("pointerup", end);
@@ -394,7 +574,11 @@ export default function App() {
                 el.addEventListener("pointerup", end);
               }}
             />
-            <aside className="right-pane" style={{ width }}>
+            <aside
+              className="right-pane"
+              style={{ width }}
+              aria-label="Side pane"
+            >
               {paneHeader(right, setRight, "right")}
               {ready && pane(right, "right")}
             </aside>
@@ -415,6 +599,7 @@ export default function App() {
         </span>
       </footer>
       <PendingApprovals agents={data.agents} />
+      {help && <ShortcutHelp close={() => setHelp(false)} />}
       {error && (
         <div className="toast" role="alert">
           <div>

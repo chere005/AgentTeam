@@ -10,7 +10,45 @@ import {
   type Limits,
 } from "./limits-schema.ts";
 import type { TeamService } from "./service.ts";
+import { canonical } from "./shared-common.ts";
 export type { Limits, CompletionCheck } from "./limits-schema.ts";
+
+/** JSON objects a reply offers: the whole reply, each fenced block, and the outermost {...} span. */
+export function jsonObjectCandidates(text: string): Record<string, unknown>[] {
+  const candidates = [text.trim()];
+  for (const m of text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g))
+    candidates.push(m[1].trim());
+  const a = text.indexOf("{"),
+    b = text.lastIndexOf("}");
+  if (a >= 0 && b > a) candidates.push(text.slice(a, b + 1));
+  const out: Record<string, unknown>[] = [];
+  for (const c of candidates) {
+    try {
+      const v = JSON.parse(c);
+      if (v && typeof v === "object" && !Array.isArray(v))
+        out.push(v as Record<string, unknown>);
+    } catch {}
+  }
+  return out;
+}
+const fieldPresent = (v: unknown) =>
+  !(
+    v === undefined ||
+    v === null ||
+    (typeof v === "string" && !v.trim()) ||
+    (Array.isArray(v) && !v.length)
+  );
+/**
+ * The distinct objects in a reply that carry every required field (non-empty). The output-fields
+ * completion check and the required-review verdict both use this, so they always agree: exactly one
+ * qualifying object satisfies a contract; none or several (ambiguous) do not.
+ */
+export function contractObjects(text: string, fields: string[]) {
+  const seen = new Map<string, Record<string, unknown>>();
+  for (const o of jsonObjectCandidates(text))
+    if (fields.every((f) => fieldPresent(o[f]))) seen.set(canonical(o), o);
+  return [...seen.values()];
+}
 
 export type TripKind =
   | "runtime"
@@ -765,35 +803,18 @@ export class LimitsService {
     });
     try {
       if (check.type === "output-fields") {
-        const candidates = [result.trim()];
-        for (const m of result.matchAll(/```(?:json)?\s*([\s\S]*?)```/g))
-          candidates.push(m[1].trim());
-        const first = result.indexOf("{"),
-          last = result.lastIndexOf("}");
-        if (first >= 0 && last > first)
-          candidates.push(result.slice(first, last + 1));
+        const complete = contractObjects(result, check.fields);
+        if (complete.length === 1)
+          return done(true, "Required output fields present");
+        if (complete.length > 1)
+          return done(
+            false,
+            `Output is ambiguous: ${complete.length} different JSON objects carry the required field(s) ${check.fields.join(", ")}; return exactly one`,
+          );
         let best: string[] = check.fields;
-        for (const c of candidates) {
-          let obj: unknown;
-          try {
-            obj = JSON.parse(c);
-          } catch {
-            continue;
-          }
-          if (!obj || typeof obj !== "object" || Array.isArray(obj)) continue;
-          const missing = check.fields.filter((f) => {
-            const v = (obj as Record<string, unknown>)[f];
-            return (
-              v === undefined ||
-              v === null ||
-              (typeof v === "string" && !v.trim()) ||
-              (Array.isArray(v) && !v.length)
-            );
-          });
-          if (!missing.length)
-            return done(true, "Required output fields present");
-          if (missing.length < best.length || best === check.fields)
-            best = missing;
+        for (const obj of jsonObjectCandidates(result)) {
+          const missing = check.fields.filter((f) => !fieldPresent(obj[f]));
+          if (missing.length < best.length) best = missing;
         }
         return done(
           false,

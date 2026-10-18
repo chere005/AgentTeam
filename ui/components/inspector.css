@@ -1,0 +1,173 @@
+.insp-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 8px 0 12px;
+}
+.insp-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+  align-items: end;
+  margin-bottom: 8px;
+}
+.insp-filters label,
+.insp-form label {
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+}
+.insp-form {
+  display: grid;
+  gap: 8px;
+  max-width: 560px;
+}
+.insp-list,
+.insp-plain {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.insp-plain li p {
+  margin: 2px 0 0;
+}
+.insp-entry {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.insp-entry.sev-error {
+  border-color: #8a4343;
+}
+.insp-entry.sev-warn {
+  border-color: #8a7a43;
+}
+.insp-entry.sev-debug {
+  opacity: 0.7;
+}
+.insp-entry-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  background: none;
+  border: 0;
+  padding: 2px 0;
+  text-align: left;
+  color: inherit;
+}
+.insp-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.insp-time {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted, #8a97a8);
+}
+.insp-links {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding-bottom: 2px;
+}
+.insp-links button {
+  font-size: 11px;
+  padding: 1px 6px;
+}
+.insp-entry pre,
+.insp-run pre,
+.insp-transfer pre {
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 4px 0;
+}
+.dot.sev-error {
+  background: #e06c6c;
+}
+.dot.sev-warn {
+  background: #e0b45c;
+}
+.dot.sev-info {
+  background: #6ca6e0;
+}
+.dot.sev-debug {
+  background: #6c7a8c;
+}
+.insp-error {
+  color: #f1a0a0;
+}
+.insp-explain ul {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.insp-explain li {
+  border-left: 3px solid var(--line);
+  padding-left: 8px;
+}
+.insp-explain li.blocking {
+  border-left-color: #e06c6c;
+}
+.insp-explain li p {
+  margin: 2px 0 0;
+  font-size: 12px;
+}
+.insp-transfer,
+.insp-run {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 8px 0;
+  display: grid;
+  gap: 6px;
+}
+.insp-transfer dl {
+  margin: 0;
+  display: grid;
+  gap: 2px;
+}
+.insp-transfer dt {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--muted, #8a97a8);
+}
+.insp-transfer dd {
+  margin: 0 0 6px;
+}
+.insp-transfer-list {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin: 4px 0;
+}
+.insp-json {
+  width: 100%;
+  min-height: 240px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+.insp-sidebyside {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.diff-added {
+  color: #8ce0a8;
+}
+.diff-removed {
+  color: #f1a0a0;
+}
+.insp-chip-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}

@@ -122,14 +122,13 @@ export class Scheduler {
     let effectId: string | null = null;
     try {
       this.runs.assertRuntimeReady(plan);
-      const inputs = task.dependsOn
-        .map((id) => this.service.store.get<Task>("task", id))
-        .map((t) => `${t.title}: ${t.result}`)
-        .join("\n");
-      const workflow = this.service.workflowStatus(task.workflowId);
-      plan.instructions +=
-        "\nWorkflow context (data):\n" + JSON.stringify(workflow);
       const recovery = this.service.recovery;
+      // Selected dependency outputs, readable shared state, artifacts and bounded workflow metadata:
+      // size-limited (the task's maxContextChars), labelled untrusted, withheld for fresh memory.
+      // A run the ledger will replay keeps the original run's state base versions.
+      const inputs = this.service.shared.beginRun(task, {
+        replay: recovery.willReplayRun(task),
+      }).text;
       // Ledger: a provider run that already completed is replayed from its saved output, never repeated.
       const run = recovery.startRun(
         task,
@@ -183,9 +182,18 @@ export class Scheduler {
       );
       if (evidence && !evidence.passed)
         throw new Error(this.service.limits.failedChecksText(evidence));
-      this.service.transitionTask(task.id, {
-        status: "completed",
-        result: result.slice(0, 100000),
+      // Structured output (agentteam-state block): schema/permission failures fail the task with an actionable
+      // message; writes and the completion commit together so a version conflict leaves nothing behind.
+      const output = await this.service.shared.prepare(
+        task,
+        result.slice(0, 100000),
+      );
+      this.service.store.transaction(() => {
+        this.service.shared.commit(task, output);
+        this.service.transitionTask(task.id, {
+          status: "completed",
+          result: result.slice(0, 100000),
+        });
       });
     } catch (error) {
       if (effectId) this.service.recovery.failRun(task, effectId, error);

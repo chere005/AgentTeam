@@ -7,6 +7,10 @@ import { ResourceCoordinator } from "./resources.ts";
 import { ValidationService } from "./validation.ts";
 import { LimitsService } from "./limits.ts";
 import { RecoveryService } from "./checkpoints.ts";
+import { SharedStateService } from "./shared-state.ts";
+import { ArtifactRegistry } from "./artifacts.ts";
+import { Orchestration, matchEvidence } from "./orchestration.ts";
+import { withRoleDefaults } from "./roles.ts";
 import { Store } from "./store.ts";
 import { SkillCatalog } from "./skills.ts";
 import {
@@ -33,6 +37,9 @@ export class TeamService {
   limits: LimitsService;
   approvals: Approvals;
   recovery: RecoveryService;
+  shared: SharedStateService;
+  artifacts: ArtifactRegistry;
+  orchestration: Orchestration;
   constructor(store: Store, skills: SkillCatalog) {
     this.store = store;
     this.approvals = new Approvals(store);
@@ -41,9 +48,12 @@ export class TeamService {
     this.validation = new ValidationService(store, this.resources);
     this.limits = new LimitsService(this);
     this.recovery = new RecoveryService(this);
+    this.shared = new SharedStateService(this);
+    this.artifacts = new ArtifactRegistry(this);
+    this.orchestration = new Orchestration(this);
   }
   async saveAgent(input: unknown, id?: string) {
-    const data = agentSchema.parse(input);
+    const data = agentSchema.parse(withRoleDefaults(input));
     const previous = id ? this.store.get<Agent>("agent", id) : undefined;
     if (id)
       assert(
@@ -202,13 +212,14 @@ export class TeamService {
           !this.permitted(request.fromAgentId, target, request.kind)
         )
           return false;
-        const m = r.match;
+        // Mandatory rules are required reviews (src/orchestration.ts), not routing suggestions.
+        if ((r.mode ?? "advisory") === "mandatory") return false;
         return (
-          m.catchAll ||
-          m.textIncludes.some((t) =>
-            request.text.toLowerCase().includes(t.toLowerCase()),
-          ) ||
-          m.tagsAny.some((t) => request.tags.includes(t))
+          matchEvidence(r.match, {
+            text: request.text,
+            tags: request.tags,
+            changedFiles: request.changedFiles,
+          }).length > 0
         );
       })
       .map((r) => ({
@@ -364,6 +375,7 @@ export class TeamService {
       this.store.emit("task.created", task.id, { agentId: task.agentId });
       if (task.invokedBy) this.flow(task, "request");
       this.limits.recordCreate(task);
+      this.orchestration.onTaskCreated(task);
       return task;
     });
   }
@@ -386,17 +398,19 @@ export class TeamService {
               ? "human-control"
               : blockers.length
                 ? "dependencies"
-                : !this.validation.gate(task).open
-                  ? "validation-required"
-                  : task.invokedBy && !this.capacity(task.invokedBy).available
-                    ? "invocation-limit"
-                    : this.resources.conflicts(
-                          task.agentId,
-                          task.workflowId,
-                          task.id,
-                        ).length
-                      ? "resource-busy"
-                      : null,
+                : this.orchestration.blockingReviews(task).length
+                  ? "review-required"
+                  : !this.validation.gate(task).open
+                    ? "validation-required"
+                    : task.invokedBy && !this.capacity(task.invokedBy).available
+                      ? "invocation-limit"
+                      : this.resources.conflicts(
+                            task.agentId,
+                            task.workflowId,
+                            task.id,
+                          ).length
+                        ? "resource-busy"
+                        : null,
     };
   }
   transitionTask(id: string, input: unknown) {
@@ -465,6 +479,11 @@ export class TeamService {
           "Dependencies must complete first",
         );
         assert(
+          !this.orchestration.blockingReviews(task).length,
+          "review_required",
+          "A required review of a dependency has not been approved",
+        );
+        assert(
           this.validation.gate(task).open,
           "validation_required",
           "Required validation has not passed for the task's current inputs",
@@ -485,6 +504,19 @@ export class TeamService {
         );
         this.resources.acquire(task.id, task.agentId, task.workflowId);
         this.limits.recordTurn(task);
+        // Run inspector: the settings this run actually started with (agent config may change later).
+        this.store.emit("task.settings", task.id, {
+          agentId: agent.id,
+          environment: agent.environment,
+          model: agent.model,
+          effort: agent.effort,
+          priority: this.resources.priority(agent.id),
+          access: agent.workspaces.map((w) => ({
+            path: w.path,
+            access: w.access,
+            active: w.active,
+          })),
+        });
       }
       if (data.status === "completed") {
         assert(
@@ -519,6 +551,7 @@ export class TeamService {
         this.flow(task, task.status === "completed" ? "result" : "failure");
       this.limits.onTransition(task);
       this.recovery.onTransition(task, from);
+      if (task.status === "completed") this.orchestration.onTaskCompleted(task);
       return task;
     });
   }

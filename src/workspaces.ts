@@ -12,6 +12,7 @@ import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { openCommand } from "./native.ts";
+import { applyStaging } from "./git-stage.ts";
 import { randomUUID } from "node:crypto";
 import { ResourceCoordinator } from "./resources.ts";
 import { Store } from "./store.ts";
@@ -564,6 +565,9 @@ export class WorkspaceService {
         workspace: z.string(),
         action: z.enum(["stage", "unstage", "commit"]),
         paths: z.array(z.string()).default([]),
+        renames: z
+          .array(z.object({ from: z.string(), to: z.string() }).strict())
+          .optional(),
         message: z.string().trim().min(1).max(10000).optional(),
       })
       .strict()
@@ -603,44 +607,11 @@ export class WorkspaceService {
           data.message,
         ]);
       } else {
-        assert(
-          data.paths.length > 0,
-          "paths_required",
-          "Choose paths to stage or unstage",
-          400,
-        );
-        const paths = [];
-        for (const p of data.paths) {
-          try {
-            const entry = await this.location(
-              agentId,
-              { workspace: loc.root, path: p },
-              true,
-            );
-            paths.push(entry.relative);
-          } catch (e) {
-            if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; // Deleted files can still be staged, after checking their real parent.
-            const parent = await this.location(
-              agentId,
-              { workspace: loc.root, path: dirname(p) },
-              true,
-            );
-            const leaf = basename(p);
-            assert(
-              leaf !== ".git" && leaf !== "." && leaf !== "..",
-              "invalid_path",
-              "Invalid Git path",
-              400,
-            );
-            paths.push(join(parent.relative, leaf));
-          }
-        }
-        await this.git(
-          repo,
-          data.action === "stage"
-            ? ["add", "--", ...paths]
-            : ["restore", "--staged", "--", ...paths],
-        );
+        await applyStaging((args) => this.git(repo, args), repo, {
+          action: data.action,
+          paths: data.paths,
+          renames: data.renames,
+        });
       }
       this.store.emit("workspace.git", agentId, {
         action: data.action,

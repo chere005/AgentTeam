@@ -321,6 +321,8 @@ export class RunManager {
    * stays queued while resolving and fails with a clear message when the runtime is unavailable.
    */
   readiness?: (environment: string) => Readiness;
+  /** Provider executor for chat runs; replaceable so sandboxes (playground) never reach real CLIs. */
+  execute: typeof executeCommand = executeCommand;
   constructor(service: TeamService, enabled: boolean, cwd: string) {
     this.service = service;
     this.enabled = enabled;
@@ -459,6 +461,8 @@ export class RunManager {
       store.emit("session.started", sessionId, {
         messageId: message.id,
         environment: plan.environment,
+        model: plan.model,
+        effort: plan.effort,
       });
     });
     const controller = new AbortController();
@@ -507,7 +511,7 @@ export class RunManager {
           plan.workspaces.some((w) => w.access === "write"),
         ref: { messageId: message.id },
       }).effect.id;
-      await executeCommand(
+      await this.execute(
         command,
         plan.environment,
         (event) => {

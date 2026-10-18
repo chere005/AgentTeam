@@ -12,7 +12,8 @@ First functional desktop release for macOS, Windows and Linux.
 - Workflow scheduler with dependencies, pause, retry and cancellation.
 - Exclusive shared-folder locks, configurable priorities and waiting-time fairness.
 - Guided parallel workflows with a coordinating agent and resource-specific concurrency settings.
-- Explicit access inventory, text file previews, basic Git operations and Sublime Text defaults.
+- Explicit access inventory, bounded typed file previews (text, JSON, CSV, images, PDF), live refresh after external edits, and Sublime Text defaults with configurable editor paths.
+- Git workflow: branch switch with safety confirmations, fetch, fast-forward pull, push with explicit set-upstream (never force), commit history, pull-request compare links (no hosting API calls) and merge/rebase conflict resolution.
 - 28 bundled skills and separate discovery of installed harness skills.
 - Required validation gate: tasks that require validation wait for an immutable record of a real Wolfram kernel run with passing assertions for their exact inputs (at most two concurrent runs). A paused Wolfram-validated sample workflow is included.
 - Per-workflow limits (runtime, turns, handoffs, retries, spawned agents, reported tokens, children, delegation depth) that pause the workflow and abort running tasks when tripped, plus backend-enforced task completion checks.
@@ -22,6 +23,10 @@ First functional desktop release for macOS, Windows and Linux.
 - Provider timeouts and output limits configurable through `AGENTTEAM_{CHAT,TASK}_*` environment variables.
 - Isolated Git worktrees: create, attach, optional setup command, inventory, archive and remove without losing uncommitted work.
 - Development-server preview: per-folder settings, readiness checks, bounded logs, process-tree stop, and an isolated preview with viewport sizes and console errors.
+- Role presets (coordinator, implementer, reviewer, adjudicator), specialist rules matched on text, tags or changed-file globs with visible ties, and mandatory required reviews that block dependent tasks until the reviewer approves the exact result.
+- Shared workflow state and artifacts: typed, permissioned, versioned fields with conflict detection, state committed atomically with task completion and carried in checkpoints, and a size-limited untrusted context for downstream tasks.
+- Run inspector: correlated timeline with filters, "why is this waiting?" explanations, transfer details, routing/access previews, a fixture-only team playground with run comparison, and a redacted diagnostic export.
+- Saved workspace layouts, an attention inbox, canvas groups and hierarchy navigation, keyboard shortcuts and accessibility improvements.
 - Durable checkpoints and an effect ledger: interrupted tasks resume after a restart without re-running completed work; uncertain external effects wait for your decision; permission requests survive a restart; per-task retry policy with backoff (API only for now).
 
 ## Install and first run
@@ -38,4 +43,4 @@ Attached-folder access rules and resource locks govern AgentTeam operations. The
 
 Restart recovery is fixture- and crash-simulation-tested; resuming a provider session has not been verified against live providers. Worktree and development-server handling is verified on macOS only, and servers that daemonize themselves are not stopped. The validation gate and sample were tested with a fake kernel; the opt-in real-kernel smoke test has not been run, and nothing has run against live providers. Token usage appears only when providers report it, and cost is shown as unavailable. Windows command-shim launching is fixture-tested only. There are no versioned database migrations or backup/restore tools yet.
 
-Provider runtimes, accounts and subscriptions are not included. Git UI covers local status, diffs, staging, commits, branch compare and worktree management; push, pull and merge are not included. See the repository README for all current limits and test instructions.
+Provider runtimes, accounts and subscriptions are not included. Pull is fast-forward only by default and merges/rebases are not started from the UI (their conflicts can be resolved there); pull-request status is recorded manually. Teammate-invocation tools are defined but not yet exposed to provider runs. See the repository README for all current limits and test instructions.

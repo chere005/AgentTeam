@@ -1803,3 +1803,99 @@ label.check {
   gap: 6px;
   align-items: center;
 }
+.badge-required {
+  background: #5a1f1f;
+  color: #ffd9d9;
+}
+.badge-advisory {
+  background: #1f3550;
+  color: #cfe3ff;
+}
+
+/* Git workflow, conflicts, rich previews, editor settings */
+.git-workflow {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.git-workflow details > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.git-feedback pre,
+.conflict-side pre,
+.commit-detail pre {
+  max-height: 180px;
+  overflow: auto;
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+.commit-list,
+.conflict-files {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0;
+  display: grid;
+  gap: 6px;
+}
+button.link {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.conflict-section {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0;
+}
+.conflict-side {
+  border-left: 3px solid #888;
+  padding-left: 8px;
+}
+.conflict-side.ours {
+  border-color: #4f8cc9;
+}
+.conflict-side.theirs {
+  border-color: #c98a4f;
+}
+.pr-url {
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+.preview-image {
+  max-width: 100%;
+  max-height: 55vh;
+  object-fit: contain;
+  background: repeating-conic-gradient(#2a3442 0 25%, #1f2833 0 50%) 50% / 16px
+    16px;
+}
+.table-scroll {
+  max-height: 55vh;
+  overflow: auto;
+}
+.table-scroll table {
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.table-scroll th,
+.table-scroll td {
+  border: 1px solid #394454;
+  padding: 3px 6px;
+  text-align: left;
+  white-space: pre-wrap;
+  max-width: 280px;
+  overflow-wrap: anywhere;
+}
+.open-with {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.editor-path {
+  margin: 10px 0;
+}

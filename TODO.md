@@ -129,16 +129,9 @@ References: [ACP protocol](https://agentclientprotocol.com/protocol/overview), [
 
 ## 6 Real agent-to-agent orchestration — P1
 
-- [ ] Add coordinator, implementer, reviewer, and adjudicator role presets with suitable default tool grants and output contracts; coordinators delegate/synthesize and reviewers/adjudicators default to read-only access.
-- [ ] Trigger specialist reviews from task scope and changed files: UI → accessibility, concurrency → concurrency review, sensitive data → security, migrations → database review. Allow multiple specialists and show the evidence, matched rule, and reason for each invocation.
-- [ ] Expose teammate invocation as actual provider tools, rather than relying only on routing preview and manually configured tasks.
-- [ ] Enforce directed/bidirectional communication permissions on every invocation, result, review, and notification.
-- [ ] Pass structured request context and return results to the invoking agent with traceable parent/child IDs.
-- [ ] Complete agent-level intake rules such as “bring database tasks to me.”
-- [ ] Complete action rules such as “when a database review is needed, invoke this agent.”
-- [ ] Resolve competing rules by priority; show ties and the winning rule in the UI.
-- [ ] Support explicit recipient overrides and sensible fallback routing for unaddressed requests.
-- [ ] Route the future provider-tool teammate invocation path through `TeamService.task` so the max-children cap, depth/loop checks and limits (`src/limits.ts`) apply to it; today only workflow-task invocation exists and is enforced (per-parent `maxChildrenPerTask` plus agent `maxConcurrentInvocations`).
+- [ ] Make specialist/required-review file evidence independent of the invoking agent: today `changedFiles` is declared on the task or reported in the result JSON, not measured from Git; a task that omits it can dodge a files-only rule (text/tag/catch-all rules still match).
+- [ ] Expose the `invoke_teammate`/`teammate_result` tools (definitions, handlers and a per-run-token JSON-RPC handler exist in `src/orchestration.ts`/`src/tool-endpoint.ts`) to actual provider runs: mount the endpoint in the loopback server, issue a token per task run in `Scheduler.execute`, and inject URL+token (never logged, never in argv) into Claude `--mcp-config`, Codex MCP config and ACP `session/new` `mcpServers`; not done or live-verified for any adapter. Native provider subagents are not covered and do not obey AgentTeam limits.
+- [ ] Enforce directed/bidirectional communication permissions on notifications (invocation, result reads and required/specialist reviews are enforced and tested; notifications are not routed through the new action).
 - [ ] Surface cancellation propagation, `delegation.returned` events and partial results in the UI/canvas, and deliver a child's partial result back into the parent's context (backend propagation and persistence are done).
 - [ ] Show pending, running, returning, failed, and blocked communication on the canvas, with actual direction and correlated messages.
 
@@ -147,7 +140,6 @@ References: [ACP protocol](https://agentclientprotocol.com/protocol/overview), [
 Implemented and fixture-tested (see `docs/durable-execution.md`): immutable checkpoints, effect ledger, interrupted/blocked recovery, retry policy, persisted approvals, recovery API and panel. Remaining:
 
 - [ ] Add human-input steps (free-form questions to the user, not only provider permission requests) with the same persisted pending request, answer history and resume-at-same-point behavior as approvals.
-- [ ] Carry shared workflow state and artifacts through recovery once they exist (section 10); dependencies, provider session ids, leases and approvals already recover consistently.
 - [ ] Verify resume with a live provider: the recorded provider session id is passed to Codex/Claude/ACP on resume, but only fixture adapters were exercised. Record ACP `session/load` support before relying on it.
 - [ ] Route AgentTeam-controlled teammate/tool invocations through the effect ledger when they exist (today the ledger covers provider runs, chat runs and ACP mutating tool calls).
 - [ ] Add a retry-policy editor (max attempts, backoff, automatic retry) to the Recovery panel; it is API-only (`PUT /tasks/:id/retry-policy`).
@@ -161,32 +153,24 @@ Implemented and fixture-tested (see `docs/durable-execution.md`): immutable chec
 
 ## 9 Team playground and run inspector — P1
 
-- [ ] Run a team against a sample task in an isolated test workspace with controlled inputs.
-- [ ] Preview routing and access decisions before starting a live run.
-- [ ] Inspect a correlated timeline of messages, tool calls, model/effort settings, task transitions, locks, approvals, and results.
-- [ ] Click any canvas transfer to see its request, response, duration, and originating rule.
-- [ ] Explain “why is this agent waiting?” with dependency, capacity, resource, priority, and ownership details.
-- [ ] Filter by agent, workflow, task, severity, and event type; link events to files and conversations.
-- [ ] Compare test runs after changing prompts, skills, models, or routing rules.
-- [ ] Save example tasks and expected outcomes for repeatable team evaluations.
-- [ ] Export a redacted diagnostic bundle without credentials or unrestricted private file contents.
+Implemented and fixture-tested (`src/inspector.ts`, `src/playground.ts`, `src/diagnostics.ts`, `src/redact.ts`, `src/inspector-routes.ts`, `ui/components/Inspector.tsx`; tests `test/inspector.test.ts`, `e2e/inspector.spec.ts`). Remaining:
+
+- [ ] Optional, explicitly user-enabled live-provider playground run; today playground runs are fixture-only by design.
+- [ ] Playground overrides cover agent model/effort/prompt/tools/skills/priority; routing-rule changes are only compared when the live rules differ between runs (no per-run rule override yet).
+- [ ] Diagnostic export downloads through the renderer's blob download (Electron save dialog); not yet exercised by hand in a packaged build, and no main-process "save as" IPC exists.
+- [ ] Transfer "originating rule" is the delegation edge plus rules inferred from the current rule set; the routing decision itself is not recorded on the task at creation time.
 
 ## 10 Shared workflow state and artifacts — P1
 
-- [ ] Add typed shared state for decisions, requirements, outputs, and task handoffs.
-- [ ] Define which agents may read/write each shared-state field or artifact.
-- [ ] Validate structured outputs and show schema failures as actionable task errors.
-- [ ] Version state changes and attribute them to an agent, task, and run.
-- [ ] Support conflict handling for concurrent state updates instead of silently overwriting them.
-- [ ] Provide an artifact list for generated files, reports, diffs, logs, and Wolfram results, with preview and provenance.
-- [ ] Pass selected dependency outputs to downstream steps with size limits and clear context summaries.
-- [ ] Persist state with checkpoints and support intentional fresh-memory runs.
+Implemented and fixture-tested (`src/shared-state.ts`, `src/artifacts.ts`, `src/shared-routes.ts`, `ui/components/SharedState.tsx`; see `docs/durable-execution.md`). Remaining:
+
+- [ ] Add UI editors for field definitions (kind, schema, readers/writers), per-task state/context settings (`PUT /tasks/:id/state-config`: fresh memory, selected inputs, required writes) and checkpoint-based restore; today these are API-only and the UI is a read-only viewer.
+- [ ] Verify the `agentteam-state` structured-output block with a live provider (fixture-tested only) and add a provider-tool path (ACP/MCP) that writes state through `SharedStateService.write` with the same permission and version checks.
 
 ## 11 Conditional workflows and deterministic steps — P1
 
 **P0 exception — required validation gates, before autonomous sample execution:**
 
-- [ ] Distinguish advisory routing from mandatory validation in the rule editor and scheduler. Required reviews/checks block dependent steps; prompt instructions alone cannot satisfy them, and explicit recipient overrides cannot bypass them.
 - [ ] Bind gate evidence to exact inputs/revisions and require the configured check/review outcome; missing, failed, inconclusive, cancelled, or stale evidence keeps the gate closed. Surface blockers and retain decisions across restart. Use this mechanism for the Wolfram sample's actual kernel-validation requirement.
 - [ ] Test gate bypass attempts and stale evidence with controlled fixtures, then verify provider/kernel execution separately. Preserve mock-based orchestration tests; do not adopt a blanket ban on mocks or treat fixture success as live-provider validation.
 
@@ -230,27 +214,18 @@ Implemented and fixture-tested (see `docs/durable-execution.md`): immutable chec
 
 ## 14 Git and file workspace polish — P1
 
-- [ ] Add branch/base selection, fetch, pull, push, and commit-history browsing with explicit action feedback.
-- [ ] Add PR creation/opening and links between work items, branches, reviews, and PR status.
-- [ ] Provide merge/rebase conflict visibility and a deliberate resolution workflow.
-- [ ] Improve staging/unstaging for deleted files, nested deleted directories, renames, and new repositories.
-- [ ] Preview more useful artifact types while keeping bounded loading and clear binary/large-file behavior.
-- [ ] Support configurable editor executable paths, preserving Sublime Text as the default.
-- [ ] Verify Open file, Open project in Sublime, Reveal in file manager, and Open with across macOS, Windows, and Linux.
-- [ ] Maintain accurate folder listings and Git status after external edits without excessive polling.
+Implemented and verified on macOS with temp repos/local bare remotes (see `src/git-workflow.ts`, `git-remote.ts`, `git-stage.ts`, `editors.ts`, `previews.ts`, `fs-watch.ts`, `workspace-routes.ts`): branch switch/create with safety confirmations, fetch/pull(ff-only)/push, bounded history, compare-URL PR links with manually recorded PR status, conflict visibility/resolution/abort/continue, deleted-tree/rename/unborn staging, typed previews, editor executable paths, debounced `fs.watch` refresh with poll fallback.
+
+- [ ] Fetch live PR status (checks, merged/closed) from hosting APIs; today PR status is only what the user records manually (no tokens or API calls by design).
+- [ ] Add UI for staging a rename pair (API `renames` is implemented and tested; the Git tab does not yet pair a deleted and a new file) and for starting a merge/rebase from a chosen branch.
+- [ ] Repository-local Git configuration that runs commands is only partly neutralized: hooks, fsmonitor, askpass and `core.sshCommand` are blocked, but clean/smudge filter drivers and repo-local credential helpers in an attached repository still run during status/pull/switch/fetch.
+- [ ] Verify Open file, Open project, Reveal and Open with on real Windows and Linux machines, and `fs.watch` recursion there (those paths are fixture-tested only; macOS launch is verified through stub executables, not by opening GUI apps).
 
 ## 15 Layout and interaction quality — P1
 
-- [ ] Preserve hide/show, pane choice, widths, selections, and canvas position reliably across restarts.
-- [ ] Keep canvas in the middle and conversation on the right for new layouts.
-- [ ] Add saved workspace layouts for planning, coding, review, and monitoring.
-- [ ] Support team grouping, selection, collapse/expand, hierarchy navigation, and inserting saved teams on the canvas.
-- [ ] Keep compact cards readable when zoomed out: identity/role, environment/model, status, priority, and capacity.
-- [ ] Make detailed cards expose configuration without turning every card into a full form.
-- [ ] Improve busy/flow animations for concurrent runs, failure states, reduced motion, and large graphs.
-- [ ] Add keyboard shortcuts, accessible labels/focus handling, and usable screen-reader navigation for core forms and lists.
-- [ ] Verify Enter-to-send, Shift+Enter-newline, IME composition, duplicate-send protection, and draft recovery throughout chat surfaces.
-- [ ] Add an attention inbox for agents awaiting approval, failed tasks, blocked workflows, and ready reviews.
+- [ ] Make detailed cards' configuration summary (read-only grid added) visually verified at several widths, and verify the busy/failure/flow animations and `prefers-reduced-motion` behavior in a running app (CSS added in `canvas-cards.css`, only far-zoom card layout was inspected; large-graph "calm" mode above 40 agents is untested).
+- [ ] Attention inbox: awaiting-approval items are covered only by the pure `buildInbox` test (no e2e fixture for a pending approval), and "ready review" is a heuristic (completed task whose agent has an enabled outgoing review edge) because review state is per agent/git diff and not in the snapshot; consider a backend summary endpoint.
+- [ ] Group membership is stored in the renderer (localStorage), not in team entities or saved-team templates; decide whether groups should travel with saved teams.
 
 ## 16 Mobile continuation — P2
 

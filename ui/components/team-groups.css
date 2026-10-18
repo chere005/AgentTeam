@@ -1,0 +1,61 @@
+.group-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 6px 12px;
+  border-bottom: 1px solid #263140;
+  font-size: 11px;
+}
+.group-bar form {
+  display: flex;
+  gap: 6px;
+}
+.group-bar input {
+  width: 130px;
+}
+.group-bar button {
+  font-size: 11px;
+}
+.group-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.group-list li {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+.group-card {
+  width: 220px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 2px dashed #5b7690;
+  background: #1a2531;
+  font-size: 12px;
+}
+.group-card.chosen {
+  border-color: #8cddc2;
+}
+.group-card.busy {
+  border-color: #77d5ba;
+}
+.group-card.failed {
+  border-color: #f18c8c;
+}
+.group-card small {
+  display: block;
+  color: #91a4b8;
+}
+.group-card .card-basics {
+  gap: 10px;
+  justify-content: flex-start;
+}
+.group-card button {
+  margin-top: 10px;
+  font-size: 11px;
+}

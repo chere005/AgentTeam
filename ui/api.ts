@@ -69,5 +69,9 @@ export function saved<T>(key: string, fallback: T): T {
   }
 }
 export function persist(key: string, value: unknown) {
-  localStorage.setItem("agentteam." + key, JSON.stringify(value));
+  try {
+    localStorage.setItem("agentteam." + key, JSON.stringify(value));
+  } catch {
+    /* storage unavailable or full: the UI keeps working with in-memory state */
+  }
 }

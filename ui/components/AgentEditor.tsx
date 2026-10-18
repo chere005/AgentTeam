@@ -4,11 +4,13 @@ import { X, Plus, FolderOpen } from "lucide-react";
 import { api, agentInput, type Agent, type Snapshot } from "../api";
 import { resolveModelState } from "../../src/model-choices";
 import { InvocationPanel } from "./InvocationPanel";
+import { RoleTypeSelect } from "./RoleType";
 import "./runtime-ui.css";
 const defaults = {
   schedulingPriority: 50,
   name: "",
   role: "",
+  roleType: "custom",
   environment: "codex",
   kind: "agent",
   model: "default",
@@ -129,16 +131,12 @@ export function AgentEditor({
           {tab === "profile" && (
             <>
               <div className="form-grid">
-                <label>
-                  Role type
-                  <select
-                    value={form.kind}
-                    onChange={(e) => update("kind", e.target.value)}
-                  >
-                    <option value="agent">Specialist agent</option>
-                    <option value="team-assistant">Team Assistant</option>
-                  </select>
-                </label>
+                <RoleTypeSelect
+                  kind={form.kind}
+                  roleType={form.roleType ?? "custom"}
+                  form={form}
+                  onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+                />
                 <label>
                   Name
                   <input

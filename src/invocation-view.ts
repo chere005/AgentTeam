@@ -25,6 +25,7 @@ export const waitReasonText: Record<string, string> = {
   "human-control": "the agent is under human control",
   "workflow-paused": "its workflow is paused",
   "validation-required": "a required validation has not passed",
+  "review-required": "a required review has not been approved",
 };
 export function invocationSummary(
   agentId: string,

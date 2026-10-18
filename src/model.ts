@@ -8,10 +8,19 @@ export const workspaceSchema = z
     active: z.boolean().default(false),
   })
   .strict();
+export const ROLE_TYPES = [
+  "coordinator",
+  "implementer",
+  "reviewer",
+  "adjudicator",
+  "custom",
+] as const;
 export const agentSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
     role: z.string().max(4000).default(""),
+    /** Role preset (src/roles.ts); "custom" keeps fully manual configuration. */
+    roleType: z.enum(ROLE_TYPES).default("custom"),
     kind: z.enum(["agent", "team-assistant"]).default("agent"),
     environment,
     model: z.string().min(1).default("default"),
@@ -66,10 +75,20 @@ export const ruleSchema = z
     targetId: z.string().optional(),
     priority: z.number().int().min(0).max(10000),
     enabled: z.boolean().default(true),
+    /**
+     * advisory: routing/consultation suggestion only. mandatory: a required review that blocks
+     * dependents until the target's review passes (src/orchestration.ts); never bypassable by
+     * prompt text or an explicit recipient.
+     */
+    mode: z.enum(["advisory", "mandatory"]).default("advisory"),
+    /** Specialist trigger label (e.g. accessibility); every matching specialty is invoked. */
+    specialty: z.string().trim().min(1).max(60).optional(),
     match: z
       .object({
         textIncludes: z.array(z.string().trim().min(1)).default([]),
         tagsAny: z.array(z.string().trim().min(1)).default([]),
+        /** Glob patterns (`*`, `**`, `?`) matched against changed file paths. */
+        changedFilesAny: z.array(z.string().trim().min(1).max(300)).default([]),
         catchAll: z.boolean().default(false),
       })
       .strict(),
@@ -87,17 +106,24 @@ export const ruleSchema = z
     if (
       !r.match.catchAll &&
       !r.match.textIncludes.length &&
-      !r.match.tagsAny.length
+      !r.match.tagsAny.length &&
+      !r.match.changedFilesAny.length
     )
       ctx.addIssue({
         code: "custom",
         message: "Specify a match or explicitly enable catchAll",
+      });
+    if (r.mode === "mandatory" && r.kind !== "review")
+      ctx.addIssue({
+        code: "custom",
+        message: "Mandatory rules are required reviews: use kind review",
       });
   });
 export const routeSchema = z
   .object({
     text: z.string().min(1).max(100_000),
     tags: z.array(z.string()).default([]),
+    changedFiles: z.array(z.string().max(500)).max(1000).default([]),
     fromAgentId: z.string().optional(),
     targetId: z.string().optional(),
     kind: z
@@ -113,17 +139,27 @@ export const workflowSchema = z
     completionCriteria: z.string().min(1),
   })
   .strict();
+export const MAX_TASK_TITLE = 1000;
+export const MAX_TASK_DEPENDENCIES = 200;
 export const taskSchema = z
   .object({
     workflowId: z.string(),
     agentId: z.string(),
-    title: z.string().min(1),
+    // Bounded: titles and dependency lists are repeated into prompts and review requests. Existing
+    // longer records stay readable; prompt builders clip them on read.
+    title: z.string().min(1).max(MAX_TASK_TITLE),
     invokedBy: z.string().optional(),
     instructions: z.string().default(""),
-    dependsOn: z.array(z.string()).default([]),
+    dependsOn: z
+      .array(z.string().max(200))
+      .max(MAX_TASK_DEPENDENCIES)
+      .default([]),
     completionCriteria: z.string().min(1),
     requiresValidation: z.boolean().optional(),
     parentTaskId: z.string().optional(),
+    /** Scope evidence for specialist/mandatory-review rules (src/orchestration.ts). */
+    changedFiles: z.array(z.string().max(500)).max(1000).optional(),
+    tags: z.array(z.string().max(100)).max(100).optional(),
     completionChecks: z.array(completionCheckSchema).max(20).optional(),
   })
   .strict();

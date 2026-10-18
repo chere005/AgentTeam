@@ -1,0 +1,82 @@
+.layout-menu {
+  position: relative;
+}
+.layout-popup {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 90;
+  width: 340px;
+  background: #222d3b;
+  border: 1px solid #3b4f61;
+  border-radius: 8px;
+  padding: 8px;
+  box-shadow: 0 12px 30px #0006;
+}
+.layout-popup ul {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+.layout-popup li {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 2px 0;
+}
+.layout-popup li form {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+}
+.layout-popup li.active .layout-apply {
+  border-color: var(--accent);
+}
+.layout-popup .layout-apply {
+  flex: 1;
+  text-align: left;
+}
+.layout-popup button {
+  font-size: 11px;
+}
+.layout-new {
+  display: flex;
+  gap: 4px;
+}
+.layout-new input,
+.layout-popup li input {
+  flex: 1;
+  min-width: 0;
+}
+.shortcut-list > div {
+  display: flex;
+  gap: 14px;
+  padding: 6px 0;
+  border-bottom: 1px solid #2c3948;
+}
+.shortcut-list dt {
+  width: 190px;
+  flex-shrink: 0;
+}
+.shortcut-list dd {
+  margin: 0;
+}
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 4px;
+  z-index: 200;
+  background: #222d3b;
+  padding: 6px 10px;
+  border-radius: 6px;
+}
+.skip-link:focus {
+  left: 8px;
+}
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

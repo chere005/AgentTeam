@@ -1,0 +1,107 @@
+/* Far-zoom glance layout: identity, role/environment/model, status, priority and capacity in large type. */
+.agent-card .card-glance {
+  display: none;
+}
+.agent-card.far {
+  --inv: 1.8;
+}
+.agent-card.far > :not(.card-glance):not(.react-flow__handle) {
+  display: none;
+}
+.agent-card.far .card-glance {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.agent-card.far .card-glance b {
+  font-size: calc(15px * var(--inv));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.agent-card.far .glance-line {
+  font-size: calc(11px * var(--inv));
+  color: #b6c6d6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.agent-card.far .glance-line .badge {
+  font-size: inherit;
+}
+/* Detailed cards: read-only configuration summary instead of a form. */
+.card-config {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px 8px;
+  margin: 10px 0 0;
+  font-size: 10px;
+}
+.card-config dt {
+  color: #7f94a9;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.card-config dd {
+  margin: 0;
+  color: #d4dee8;
+}
+/* Busy / failure / resume states: shape and colour, not colour alone (a text line also appears). */
+.agent-card.busy {
+  border-color: #5fb89f;
+  animation: card-busy 2.2s ease-in-out infinite;
+}
+.agent-card.has-failure {
+  border-color: #e07a7a;
+  border-style: solid;
+  box-shadow: 0 0 0 2px #e07a7a30;
+}
+.agent-card.has-resume {
+  border-color: #e8b66a;
+  border-style: dashed;
+}
+.agent-card .failure::before {
+  content: "\26A0\FE0E  ";
+}
+.edge-busy {
+  stroke-dasharray: 7 5;
+  animation: edge-flow 0.9s linear infinite;
+}
+@keyframes card-busy {
+  50% {
+    box-shadow: 0 0 0 5px #5fb89f30;
+  }
+}
+@keyframes edge-flow {
+  to {
+    stroke-dashoffset: -12;
+  }
+}
+/* Large graphs: static busy indication only. */
+.canvas-wrap.calm .agent-card.busy,
+.canvas-wrap.calm .edge-busy,
+.canvas-wrap.calm .state-orbit.processing {
+  animation: none;
+}
+.canvas-wrap.calm .flow-particle {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-card.busy,
+  .edge-busy {
+    animation: none !important;
+  }
+  .agent-card.busy {
+    box-shadow: 0 0 0 3px #5fb89f40;
+  }
+  .edge-busy {
+    stroke-dasharray: none;
+  }
+  * {
+    transition-duration: 0.01ms !important;
+  }
+}
+.main-pane:focus {
+  outline: none;
+}

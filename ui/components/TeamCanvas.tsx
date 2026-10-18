@@ -8,11 +8,13 @@ import {
   Position,
   MarkerType,
   applyNodeChanges,
+  useStore,
   BaseEdge,
   getBezierPath,
   type NodeProps,
   type EdgeProps,
   type Node,
+  type ReactFlowInstance,
   EdgeLabelRenderer,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -32,6 +34,25 @@ import {
   Users,
 } from "lucide-react";
 import { SaveTeamDialog } from "./Teams";
+import { EdgeTransfers } from "./Inspector";
+import { GroupBar, GroupNode } from "./TeamGroups";
+import { priorityName } from "./PrioritySelect";
+import {
+  createGroup,
+  groupCentre,
+  groupNodeId,
+  hiddenAgents,
+  relatives,
+  sanitizeGroups,
+  setAllCollapsed,
+  stepSibling,
+  summarizeGroup,
+  toggleGroup,
+  ungroup,
+  visibleEdges,
+  type Group,
+} from "../groups";
+import "./canvas-cards.css";
 import {
   api,
   saved,
@@ -50,13 +71,63 @@ type Props = {
   edit: (a: Agent) => void;
   add: () => void;
   chat: (id: string) => void;
+  /** Open the saved-teams pane to insert a team onto the canvas. */
+  openTeams?: () => void;
 };
+/** Below this React Flow zoom, cards switch to the large-type glance layout. */
+const FAR_ZOOM = 0.6;
+/** Beyond this many agents per-card animation is turned off to keep large graphs responsive. */
+const CALM_AGENTS = 40;
 function Card({ data }: NodeProps) {
   const a = data.agent as Agent,
     activity = data.activity as any;
+  const zoom = useStore((s) => s.transform[2]),
+    far = zoom < FAR_ZOOM,
+    state: string = activity?.state ?? "idle",
+    failed = (activity?.failedTaskIds?.length ?? 0) > 0,
+    resume = (activity?.interruptedTaskIds?.length ?? 0) > 0,
+    limit = a.maxConcurrentInvocations ?? "∞";
   return (
-    <div className={"agent-card " + (data.selected ? "chosen" : "")}>
+    <div
+      className={
+        "agent-card " +
+        (data.selected ? "chosen " : "") +
+        (far ? "far " : "") +
+        (state === "processing" ? "busy " : "") +
+        (failed ? "has-failure " : "") +
+        (resume ? "has-resume " : "")
+      }
+      style={
+        far
+          ? ({
+              "--inv": Math.min(1.8, 1 / Math.max(zoom, 0.01)),
+            } as React.CSSProperties)
+          : undefined
+      }
+      aria-label={`${a.name}, ${state}${failed ? ", has failed tasks" : ""}`}
+    >
       <Handle type="target" position={Position.Top} />
+      {far && (
+        <div className="card-glance" data-testid="card-glance">
+          <b title={a.name}>{a.name}</b>
+          <span className="glance-line">
+            {(a as any).roleType && (a as any).roleType !== "custom"
+              ? (a as any).roleType + " · "
+              : ""}
+            {a.environment} · {a.model}
+          </span>
+          <span className="glance-line">
+            <span
+              className={"badge " + (state === "processing" ? "green" : "")}
+            >
+              {state}
+              {failed ? " · failed" : resume ? " · resume" : ""}
+            </span>{" "}
+            {priorityName(a.schedulingPriority)} ·{" "}
+            {activity?.capacity.running ?? 0}/{limit}
+          </span>
+        </div>
+      )}
       <div className="row">
         <span className={"avatar " + a.environment}>{a.name[0]}</span>
         <div className="grow">
@@ -83,9 +154,9 @@ function Card({ data }: NodeProps) {
           {activity?.state ?? "idle"}
         </span>
         <span>
-          {activity?.capacity.running ?? 0} /{" "}
-          {a.maxConcurrentInvocations ?? "∞"} invoked
+          {activity?.capacity.running ?? 0} / {limit} invoked
         </span>
+        {!!data.simple && <span>{priorityName(a.schedulingPriority)}</span>}
       </div>
       <div
         className="card-access"
@@ -115,11 +186,34 @@ function Card({ data }: NodeProps) {
       {!data.simple && (
         <>
           <p>{a.role || "Add a role and instructions"}</p>
-          <div className="card-meta">
-            <span>{a.skills.length} skills</span>
-            <span>{a.effort ?? "Auto"} effort</span>
-            <span>{a.workspaces.length} folders</span>
-          </div>
+          <dl className="card-config" aria-label={`${a.name} configuration`}>
+            <div>
+              <dt>Priority</dt>
+              <dd>{priorityName(a.schedulingPriority)}</dd>
+            </div>
+            <div>
+              <dt>Effort</dt>
+              <dd>{a.effort ?? "Auto"}</dd>
+            </div>
+            <div>
+              <dt>Invoked</dt>
+              <dd>
+                {activity?.capacity.running ?? 0}/{limit}
+              </dd>
+            </div>
+            <div>
+              <dt>Skills</dt>
+              <dd>{a.skills.length}</dd>
+            </div>
+            <div>
+              <dt>Folders</dt>
+              <dd>{a.workspaces.length}</dd>
+            </div>
+            <div>
+              <dt>Control</dt>
+              <dd>{a.control}</dd>
+            </div>
+          </dl>
           <div className="card-actions nodrag">
             <button
               onClick={() => {
@@ -157,15 +251,17 @@ function Card({ data }: NodeProps) {
 function FlowEdge(props: EdgeProps) {
   const [path, labelX, labelY] = getBezierPath(props);
   const pulse = props.data?.pulse as any;
+  const busy = !!props.data?.busy;
   return (
     <>
       <BaseEdge
         path={path}
         markerEnd={props.markerEnd}
         markerStart={props.markerStart}
+        className={busy ? "edge-busy" : undefined}
         style={{
-          stroke: pulse ? "#77d5ba" : "#465267",
-          strokeWidth: pulse ? 2.5 : 1.5,
+          stroke: pulse ? "#77d5ba" : busy ? "#5fb89f" : "#465267",
+          strokeWidth: pulse ? 2.5 : busy ? 2 : 1.5,
         }}
       />
       <EdgeLabelRenderer>
@@ -183,6 +279,13 @@ function FlowEdge(props: EdgeProps) {
           className="flow-particle"
           r="4"
           fill={pulse.kind === "failure" ? "#f18c8c" : "#8ceacb"}
+          style={{ pointerEvents: "all", cursor: "pointer" }}
+          onClick={() =>
+            // Run inspector: open this connection's request/response/duration/rule details.
+            window.dispatchEvent(
+              new CustomEvent("agentteam:inspect-edge", { detail: props.id }),
+            )
+          }
         >
           <animateMotion
             key={pulse.seq}
@@ -198,7 +301,7 @@ function FlowEdge(props: EdgeProps) {
     </>
   );
 }
-const nodeTypes = { agent: Card },
+const nodeTypes = { agent: Card, group: GroupNode },
   edgeTypes = { flow: FlowEdge };
 export function TeamCanvas(p: Props) {
   const [simple, setSimple] = useState(() => saved("simpleCards", true)),
@@ -213,13 +316,45 @@ export function TeamCanvas(p: Props) {
     } | null>(null),
     [now, setNow] = useState(Date.now()),
     [savingTeam, setSavingTeam] = useState(false),
+    [groups, setGroups] = useState<Group[]>(() =>
+      sanitizeGroups(
+        saved("groups", []),
+        p.data.agents.map((a) => a.id),
+      ),
+    ),
+    [flow, setFlow] = useState<ReactFlowInstance | null>(null),
     [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(
       null,
     );
   useEffect(() => {
+    const open = (e: Event) => {
+      const existing = p.data.edges.find(
+        (x) => x.id === (e as CustomEvent<string>).detail,
+      );
+      if (existing) setConnection({ ...existing });
+    };
+    window.addEventListener("agentteam:inspect-edge", open);
+    return () => window.removeEventListener("agentteam:inspect-edge", open);
+  }, [p.data.edges]);
+  useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
+  // Restored once: a saved viewport wins over fitView so the canvas reopens where it was left.
+  const [viewport] = useState(() => {
+    const v = saved<{ x: number; y: number; zoom: number } | null>(
+      "viewport",
+      null,
+    );
+    return v &&
+      [v.x, v.y, v.zoom].every(
+        (n) => typeof n === "number" && Number.isFinite(n),
+      ) &&
+      v.zoom >= 0.15 &&
+      v.zoom <= 2
+      ? v
+      : null;
+  });
   const positions = saved<Record<string, { x: number; y: number }>>(
     "positions",
     {},
@@ -243,13 +378,33 @@ export function TeamCanvas(p: Props) {
     persist("positions", result);
     setNodes((old) => old.map((n) => ({ ...n, position: result[n.id] })));
   }
+  // Prune groups when agents are deleted, and persist every change.
+  const agentIdKey = p.data.agents.map((a) => a.id).join(",");
   useEffect(() => {
-    setNodes((old) =>
-      p.data.agents.map((a, i) => ({
+    if (!p.data.agents.length) return;
+    setGroups((g) => {
+      const next = sanitizeGroups(
+        g,
+        p.data.agents.map((a) => a.id),
+      );
+      return JSON.stringify(next) === JSON.stringify(g) ? g : next;
+    });
+  }, [agentIdKey]);
+  useEffect(() => {
+    persist("groups", groups);
+  }, [groups]);
+  const hidden = useMemo(() => hiddenAgents(groups), [groups]);
+  useEffect(() => {
+    setNodes((old) => {
+      const pos = (id: string) => old.find((n) => n.id === id)?.position;
+      const agentNodes: Node[] = p.data.agents.map((a, i) => ({
         id: a.id,
         type: "agent",
-        selected: old.find((n) => n.id === a.id)?.selected,
-        position: old.find((n) => n.id === a.id)?.position ??
+        hidden: hidden.has(a.id),
+        selected: hidden.has(a.id)
+          ? false
+          : old.find((n) => n.id === a.id)?.selected,
+        position: pos(a.id) ??
           positions[a.id] ?? { x: (i % 3) * 310, y: Math.floor(i / 3) * 270 },
         data: {
           agent: a,
@@ -259,36 +414,60 @@ export function TeamCanvas(p: Props) {
           edit: p.edit,
           chat: p.chat,
         },
-      })),
-    );
-  }, [p.data, p.selected, simple]);
+      }));
+      const known = Object.fromEntries(
+        agentNodes.map((n) => [n.id, n.position]),
+      );
+      const groupNodes: Node[] = groups
+        .filter((g) => g.collapsed)
+        .map((g) => ({
+          id: groupNodeId(g),
+          type: "group",
+          selected: old.find((n) => n.id === groupNodeId(g))?.selected,
+          position: pos(groupNodeId(g)) ?? groupCentre(g, known),
+          data: {
+            group: g,
+            summary: summarizeGroup(g, p.data.activity),
+            expand: () => setGroups((all) => toggleGroup(all, g.id, false)),
+          },
+        }));
+      return [...agentNodes, ...groupNodes];
+    });
+  }, [p.data, p.selected, simple, groups]);
   const edges = useMemo(
     () =>
-      p.data.edges.map((e) => {
-        const event = [...p.events]
-          .reverse()
-          .find(
-            (x) =>
-              x.type === "flow.transferred" &&
-              x.data.edgeId === e.id &&
-              now - Date.parse(x.createdAt) < 3000,
-          );
+      visibleEdges(p.data.edges, groups).map((e) => {
+        const event = e.grouped
+          ? undefined
+          : [...p.events]
+              .reverse()
+              .find(
+                (x) =>
+                  x.type === "flow.transferred" &&
+                  x.data.edgeId === e.id &&
+                  now - Date.parse(x.createdAt) < 3000,
+              );
+        const sourceBusy =
+          p.data.activity.find((x) => x.agentId === e.from)?.state ===
+          "processing";
         return {
           id: e.id,
-          source: e.from,
-          target: e.to,
+          source: e.source,
+          target: e.target,
           type: "flow",
           label: {
             delegate: "Tasks",
             consult: "Advice",
             review: "Review",
             notify: "Updates",
-          }[e.kind],
+          }[e.kind as Edge["kind"]],
           markerEnd: { type: MarkerType.ArrowClosed, color: "#6c829a" },
-          markerStart: e.bidirectional
-            ? { type: MarkerType.ArrowClosed, color: "#6c829a" }
-            : undefined,
+          markerStart:
+            (e as any).bidirectional && !e.grouped
+              ? { type: MarkerType.ArrowClosed, color: "#6c829a" }
+              : undefined,
           data: {
+            busy: e.enabled && sourceBusy && e.kind === "delegate",
             pulse: event
               ? {
                   ...event.data,
@@ -300,11 +479,65 @@ export function TeamCanvas(p: Props) {
           style: { opacity: e.enabled ? 1 : 0.35 },
         };
       }),
-    [p.data.edges, p.events, now],
+    [p.data.edges, p.data.activity, p.events, now, groups],
   );
+  const selectedAgentIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const n of nodes) {
+      if (!n.selected) continue;
+      if (n.type === "group") {
+        const g = groups.find((x) => groupNodeId(x) === n.id);
+        g?.agentIds.forEach((id) => ids.add(id));
+      } else if (!n.hidden) ids.add(n.id);
+    }
+    return [...ids];
+  }, [nodes, groups]);
+  const rel = relatives(p.data.agents, p.selected);
+  function goto(id: string | null) {
+    if (!id) return;
+    p.setSelected(id);
+    // Reveal the target if a collapsed group is hiding it.
+    setGroups((all) => {
+      const g = all.find((x) => x.collapsed && x.agentIds.includes(id));
+      return g ? toggleGroup(all, g.id, false) : all;
+    });
+    setNodes((ns) => ns.map((n) => ({ ...n, selected: n.id === id })));
+    setTimeout(
+      () =>
+        flow?.fitView({
+          nodes: [{ id }],
+          duration: 250,
+          maxZoom: 1,
+          padding: 0.6,
+        }),
+      60,
+    );
+  }
+  const calm = p.data.agents.length > CALM_AGENTS;
   return (
-    <div className="canvas-wrap">
-      <div className="canvas-toolbar">
+    <div
+      className={"canvas-wrap" + (calm ? " calm" : "")}
+      onKeyDown={(e) => {
+        if (!e.altKey || e.ctrlKey || e.metaKey) return;
+        const t = e.target as HTMLElement;
+        if (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+        const next =
+          e.key === "ArrowUp"
+            ? rel.parent
+            : e.key === "ArrowDown"
+              ? rel.children[0]
+              : e.key === "ArrowRight"
+                ? stepSibling(p.data.agents, p.selected, 1)
+                : e.key === "ArrowLeft"
+                  ? stepSibling(p.data.agents, p.selected, -1)
+                  : undefined;
+        if (next !== undefined) {
+          e.preventDefault();
+          goto(next);
+        }
+      }}
+    >
+      <div className="canvas-toolbar" role="toolbar" aria-label="Canvas">
         <button className="primary" onClick={p.add}>
           <Plus size={15} />
           Agent
@@ -323,18 +556,59 @@ export function TeamCanvas(p: Props) {
         </button>
         <button
           title="Select agents (Ctrl/Cmd-click or Shift-drag), then save them as a reusable team"
-          disabled={!nodes.some((n) => n.selected)}
+          disabled={!selectedAgentIds.length}
           onClick={() => setSavingTeam(true)}
         >
           <Users size={15} />
           Save as team
         </button>
+        {p.openTeams && (
+          <button
+            title="Insert a saved team onto the canvas"
+            onClick={p.openTeams}
+          >
+            <Users size={15} />
+            Insert team
+          </button>
+        )}
         <div className="grow" />
         <span className="connection-hint">
           Connect two agents to choose how they work together
         </span>
       </div>
-      <div className="canvas">
+      <GroupBar
+        groups={groups}
+        selectionCount={selectedAgentIds.length}
+        create={(name) =>
+          setGroups((all) =>
+            createGroup(
+              all,
+              name,
+              selectedAgentIds,
+              "g" + Date.now().toString(36),
+            ),
+          )
+        }
+        toggle={(id) => setGroups((all) => toggleGroup(all, id))}
+        setAll={(c) => setGroups((all) => setAllCollapsed(all, c))}
+        selectMembers={(id) => {
+          const g = groups.find((x) => x.id === id);
+          if (!g) return;
+          if (g.collapsed) setGroups((all) => toggleGroup(all, id, false));
+          setNodes((ns) =>
+            ns.map((n) => ({ ...n, selected: g.agentIds.includes(n.id) })),
+          );
+        }}
+        remove={(id) => setGroups((all) => ungroup(all, id))}
+        nav={{
+          parent: rel.parent ? () => goto(rel.parent) : null,
+          child: rel.children[0] ? () => goto(rel.children[0]) : null,
+          sibling: rel.siblings[0]
+            ? () => goto(stepSibling(p.data.agents, p.selected, 1))
+            : null,
+        }}
+      />
+      <div className="canvas" aria-label="Team canvas">
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -362,12 +636,19 @@ export function TeamCanvas(p: Props) {
             const existing = p.data.edges.find((e) => e.id === edge.id);
             if (existing) setConnection({ ...existing });
           }}
-          onNodeClick={(_, n) => p.setSelected(n.id)}
-          onNodeDoubleClick={(_, n) =>
-            p.edit(p.data.agents.find((a) => a.id === n.id)!)
-          }
+          onNodeClick={(_, n) => {
+            if (n.type === "agent") p.setSelected(n.id);
+          }}
+          onNodeDoubleClick={(_, n) => {
+            if (n.type === "group")
+              setGroups((all) =>
+                toggleGroup(all, n.id.slice("group:".length), false),
+              );
+            else p.edit(p.data.agents.find((a) => a.id === n.id)!);
+          }}
           onNodeContextMenu={(e, n) => {
             e.preventDefault();
+            if (n.type !== "agent") return;
             setMenu({ id: n.id, x: e.clientX, y: e.clientY });
           }}
           onPaneClick={() => setMenu(null)}
@@ -377,7 +658,9 @@ export function TeamCanvas(p: Props) {
             })
           }
           deleteKeyCode={["Backspace", "Delete"]}
-          fitView
+          onInit={setFlow}
+          onMoveEnd={(_, v) => persist("viewport", v)}
+          {...(viewport ? { defaultViewport: viewport } : { fitView: true })}
           minZoom={0.15}
           maxZoom={2}
           colorMode="dark"
@@ -402,29 +685,26 @@ export function TeamCanvas(p: Props) {
       </div>
       {savingTeam && (
         <SaveTeamDialog
-          agentIds={nodes
-            .filter(
-              (n) =>
-                n.selected &&
-                p.data.agents.find((a) => a.id === n.id)?.kind !==
-                  "team-assistant",
-            )
-            .map((n) => n.id)}
-          names={nodes
-            .filter(
-              (n) =>
-                n.selected &&
-                p.data.agents.find((a) => a.id === n.id)?.kind !==
-                  "team-assistant",
-            )
-            .map((n) => p.data.agents.find((a) => a.id === n.id)?.name ?? n.id)}
-          omittedAssistant={nodes.some(
-            (n) =>
-              n.selected &&
-              p.data.agents.find((a) => a.id === n.id)?.kind ===
-                "team-assistant",
+          agentIds={selectedAgentIds.filter(
+            (id) =>
+              p.data.agents.find((a) => a.id === id)?.kind !== "team-assistant",
           )}
-          positions={Object.fromEntries(nodes.map((n) => [n.id, n.position]))}
+          names={selectedAgentIds
+            .filter(
+              (id) =>
+                p.data.agents.find((a) => a.id === id)?.kind !==
+                "team-assistant",
+            )
+            .map((id) => p.data.agents.find((a) => a.id === id)?.name ?? id)}
+          omittedAssistant={selectedAgentIds.some(
+            (id) =>
+              p.data.agents.find((a) => a.id === id)?.kind === "team-assistant",
+          )}
+          positions={Object.fromEntries(
+            nodes
+              .filter((n) => n.type === "agent")
+              .map((n) => [n.id, n.position]),
+          )}
           close={() => setSavingTeam(false)}
         />
       )}
@@ -567,6 +847,15 @@ export function TeamCanvas(p: Props) {
                 <ArrowLeftRight size={14} />
                 Reverse direction
               </button>
+              {connection.id && (
+                <details className="edge-transfers" open>
+                  <summary>Transfers on this connection</summary>
+                  <EdgeTransfers
+                    edgeId={connection.id}
+                    agents={p.data.agents}
+                  />
+                </details>
+              )}
             </div>
             <footer>
               {connection.id ? (
