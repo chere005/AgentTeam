@@ -1,19 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <defs>
     <linearGradient id="bg" x1="0.15" y1="0" x2="0.85" y2="1">
-      <stop offset="0" stop-color="#5b5bf0"/>
-      <stop offset="1" stop-color="#2a3a9e"/>
+      <stop offset="0" stop-color="#24203a"/>
+      <stop offset="1" stop-color="#151226"/>
     </linearGradient>
     <linearGradient id="bright" gradientUnits="userSpaceOnUse" x1="0" y1="250" x2="0" y2="800">
-      <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="1" stop-color="#ffe29a"/>
+      <stop offset="0" stop-color="#fff1e6"/>
+      <stop offset="1" stop-color="#ff8a65"/>
     </linearGradient>
     <linearGradient id="bar" gradientUnits="userSpaceOnUse" x1="0" y1="236" x2="0" y2="364">
-      <stop offset="0" stop-color="#8ff0d8"/>
-      <stop offset="1" stop-color="#3fbfc0"/>
+      <stop offset="0" stop-color="#b7a6ff"/>
+      <stop offset="1" stop-color="#8a74f0"/>
     </linearGradient>
     <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
-      <feDropShadow dx="0" dy="22" stdDeviation="18" flood-color="#0c0f3a" flood-opacity="0.45"/>
+      <feDropShadow dx="0" dy="22" stdDeviation="18" flood-color="#000000" flood-opacity="0.45"/>
     </filter>
     <clipPath id="tile"><rect width="1024" height="1024" rx="228"/></clipPath>
   </defs>
@@ -21,9 +21,9 @@
     <rect width="1024" height="1024" fill="url(#bg)"/>
   </g>
   <g filter="url(#shadow)" stroke-linecap="round" stroke-linejoin="round" fill="none">
-    <!-- T crossbar: bold, cool mint -->
+    <!-- T crossbar: bold lavender -->
     <path d="M575 300H875" stroke="url(#bar)" stroke-width="128"/>
-    <!-- A and the T stem (reads as "I"): warm white, so "AI" stands out -->
+    <!-- A and the T stem (reads as "I"): warm cream-to-coral, so "AI" stands out -->
     <path d="M205 745L330 285L455 745" stroke="url(#bright)" stroke-width="112"/>
     <path d="M270 640H390" stroke="url(#bright)" stroke-width="76"/>
     <path d="M725 330V770" stroke="url(#bright)" stroke-width="124"/>
