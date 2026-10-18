@@ -28,6 +28,7 @@ const exec = promisify(execFile);
 /** Serializes Git metadata changes per repository (shared with Git workflow actions; src/repo-lock.ts). */
 export { withRepoLock } from "./repo-lock.ts";
 import { withRepoLock } from "./repo-lock.ts";
+import { restoreSourceWrite } from "./project-worktrees.ts";
 
 type GitResult = { ok: boolean; out: string; err: string };
 async function run(cwd: string, args: string[]): Promise<GitResult> {
@@ -346,11 +347,26 @@ export class WorktreeService {
   async create(
     agentId: string,
     input: unknown,
-    options: { auto?: boolean } = {},
+    /**
+     * `readSource`: the source checkout may be attached read-only (a pipeline worker's shared
+     * checkout, src/project-worktrees.ts). Only the backend's guided assignment passes it, never
+     * the HTTP route; the new worktree is not attached by the worktree service then.
+     */
+    options: { auto?: boolean; readSource?: boolean } = {},
   ) {
     const data = createSchema.parse(input);
     const agent = this.store.get<Agent>("agent", agentId);
-    const { root, common } = await this.repo(agentId, data.workspace, true);
+    assert(
+      !options.readSource || !data.attach,
+      "invalid_options",
+      "A worktree of a read-only checkout is added by its caller, not attached here",
+      400,
+    );
+    const { root, common } = await this.repo(
+      agentId,
+      data.workspace,
+      !options.readSource,
+    );
     const cfg = this.effective(root);
     const keepSource = data.keepSource ?? cfg.keepSource;
     if (data.attach) assertNotBusy(this.busy(agentId));
@@ -911,6 +927,11 @@ export class WorktreeService {
     const existing = this.records().find(
       (r) => r.repo === common && r.path === target,
     );
+    // A pipeline worker's shared checkout becomes writable again with its last worktree gone.
+    if (existing?.ownerId)
+      restoreSourceWrite(this.store, existing.ownerId, existing.source, {
+        except: existing.id,
+      });
     const status = data.mode === "remove" ? "removed" : "archived";
     if (existing)
       this.store.put("worktree", { ...existing, status, ownerId: null });

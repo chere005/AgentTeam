@@ -36,6 +36,8 @@ import { capabilityRoute } from "./capability-routes.ts";
 import { orchestrationRoute } from "./orchestration.ts";
 import { teamSpaceRoute, teamIdSchema } from "./team-spaces.ts";
 import { projectRoute } from "./projects.ts";
+import { projectLifecycleRoute } from "./project-lifecycle.ts";
+import { teamSettingsRoute } from "./team-settings.ts";
 import { ExampleTeams } from "./example-teams.ts";
 import {
   AppError,
@@ -65,7 +67,15 @@ const id = (value: string) => decodeURIComponent(value);
 /** External launches requested through the API (recorded instead of run when AGENTTEAM_TEST=1). */
 export type LaunchRecord =
   | { kind: "editor"; executable: string; args: string[]; application: string }
-  | { kind: "url"; url: string };
+  | { kind: "url"; url: string }
+  /** Test-mode record of a diagnostic "Save as…" (desktop IPC; src/diagnostic-save.ts). */
+  | {
+      kind: "save-as";
+      filename: string;
+      format: "zip" | "json";
+      bytes: number;
+      sha256: string;
+    };
 export function createApi(
   service: TeamService,
   token: string,
@@ -314,10 +324,18 @@ export function createApi(
         body(req),
       );
       if (orchestrated) return send(orchestrated.data, orchestrated.status);
-      // Projects assigned to a team (src/projects.ts); before the team container routes.
-      const projected = await projectRoute(service, method, url, () =>
-        body(req),
-      );
+      // Projects assigned to a team (src/projects.ts), their lifecycle (src/project-lifecycle.ts)
+      // and team settings (src/team-settings.ts); before the team container routes.
+      const projected =
+        (await projectRoute(service, method, url, () => body(req))) ??
+        (await projectLifecycleRoute(service, method, url, () => body(req))) ??
+        (await teamSettingsRoute(
+          service,
+          () => discovery.runtimes,
+          method,
+          url,
+          () => body(req),
+        ));
       if (projected) return send(projected.data, projected.status);
       const teamed = await teamSpaceRoute(service, method, url, () =>
         body(req),

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { api } from "../api";
 import "./pipeline.css";
+import "./team-settings.css";
 
 /**
  * "Assign project": give the active TEAM a PROJECT (goal + workspace, plus what its project type
@@ -43,8 +44,39 @@ export function useAssignRequest(open: () => void) {
   }, []);
 }
 
+/** One row of the free-form task list; `dependsOn` holds indexes of other rows. */
+type DraftTask = {
+  title: string;
+  agentId: string;
+  instructions: string;
+  dependsOn: number[];
+};
+/**
+ * Body tasks for the free-form project: rows without a title are dropped and the dependency
+ * indexes re-numbered; with "run in order" no explicit dependencies are sent. The backend
+ * (src/projects.ts planTaskOrder) validates range, self-references, duplicates and cycles.
+ */
+export function freeFormTasks(tasks: DraftTask[], sequential: boolean) {
+  const kept = tasks
+    .map((t, i) => ({ t, i }))
+    .filter(({ t }) => t.title.trim() && t.agentId);
+  const index = new Map(kept.map(({ i }, j) => [i, j]));
+  return kept.map(({ t }) => ({
+    title: t.title.trim(),
+    agentId: t.agentId,
+    ...(t.instructions.trim() ? { instructions: t.instructions } : {}),
+    ...(sequential
+      ? {}
+      : {
+          dependsOn: t.dependsOn
+            .filter((d) => index.has(d))
+            .map((d) => index.get(d)!),
+        }),
+  }));
+}
+
 const message = (e: unknown) =>
-  (e instanceof Error ? e.message : String(e)).replace(/^Error: /, "");
+  (e instanceof Error ? e.message : String(e)).replace(/^.*?Error: /, "");
 
 export function AssignProject({
   teamId,
@@ -66,7 +98,7 @@ export function AssignProject({
     [impl, setImpl] = useState(0),
     [fix, setFix] = useState(0),
     [lead, setLead] = useState(""),
-    [tasks, setTasks] = useState<{ title: string; agentId: string }[]>([]),
+    [tasks, setTasks] = useState<DraftTask[]>([]),
     [sequential, setSequential] = useState(true),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
@@ -106,7 +138,7 @@ export function AssignProject({
           : {
               ...common,
               ...(lead ? { ownerId: lead } : {}),
-              tasks: tasks.filter((t) => t.title.trim() && t.agentId),
+              tasks: freeFormTasks(tasks, sequential),
               sequential,
             };
     try {
@@ -262,54 +294,102 @@ export function AssignProject({
           </label>
           <fieldset className="assign-tasks">
             <legend>Tasks (optional; without any, the lead plans first)</legend>
-            {tasks.map((t, i) => (
-              <div className="row" key={i}>
-                <input
-                  aria-label={`Task ${i + 1} title`}
-                  placeholder="Task title"
-                  value={t.title}
-                  onChange={(e) =>
-                    setTasks(
-                      tasks.map((x, j) =>
-                        j === i ? { ...x, title: e.target.value } : x,
-                      ),
-                    )
-                  }
-                />
-                <select
-                  aria-label={`Task ${i + 1} agent`}
-                  value={t.agentId}
-                  onChange={(e) =>
-                    setTasks(
-                      tasks.map((x, j) =>
-                        j === i ? { ...x, agentId: e.target.value } : x,
-                      ),
-                    )
-                  }
+            {tasks.map((t, i) => {
+              const set = (patch: Partial<DraftTask>) =>
+                setTasks(
+                  tasks.map((x, j) => (j === i ? { ...x, ...patch } : x)),
+                );
+              return (
+                <div
+                  className="task-editor"
+                  key={i}
+                  role="group"
+                  aria-label={`Task ${i + 1}`}
                 >
-                  {info.agents.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  className="icon"
-                  aria-label={`Remove task ${i + 1}`}
-                  onClick={() => setTasks(tasks.filter((_, j) => j !== i))}
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            ))}
+                  <div className="row">
+                    <input
+                      aria-label={`Task ${i + 1} title`}
+                      placeholder="Task title"
+                      value={t.title}
+                      onChange={(e) => set({ title: e.target.value })}
+                    />
+                    <select
+                      aria-label={`Task ${i + 1} agent`}
+                      value={t.agentId}
+                      onChange={(e) => set({ agentId: e.target.value })}
+                    >
+                      {info.agents.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="icon"
+                      aria-label={`Remove task ${i + 1}`}
+                      onClick={() =>
+                        setTasks(
+                          tasks
+                            .filter((_, j) => j !== i)
+                            .map((x) => ({
+                              ...x,
+                              dependsOn: x.dependsOn
+                                .filter((d) => d !== i)
+                                .map((d) => (d > i ? d - 1 : d)),
+                            })),
+                        )
+                      }
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                  <textarea
+                    aria-label={`Task ${i + 1} instructions`}
+                    placeholder="Instructions (optional; default: contribute to the goal)"
+                    rows={2}
+                    value={t.instructions}
+                    onChange={(e) => set({ instructions: e.target.value })}
+                  />
+                  {!sequential && tasks.length > 1 && (
+                    <div className="task-deps">
+                      <span className="quiet">Waits for:</span>
+                      {tasks.map((o, j) =>
+                        j === i ? null : (
+                          <label key={j}>
+                            <input
+                              type="checkbox"
+                              aria-label={`Task ${i + 1} waits for task ${j + 1}`}
+                              checked={t.dependsOn.includes(j)}
+                              onChange={(e) =>
+                                set({
+                                  dependsOn: e.target.checked
+                                    ? [...t.dependsOn, j].sort((a, b) => a - b)
+                                    : t.dependsOn.filter((d) => d !== j),
+                                })
+                              }
+                            />
+                            {j + 1}. {o.title.trim() || "(untitled)"}
+                          </label>
+                        ),
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
             <button
               type="button"
               disabled={tasks.length >= 30}
               onClick={() =>
                 setTasks([
                   ...tasks,
-                  { title: "", agentId: info.agents[0]?.id ?? "" },
+                  {
+                    title: "",
+                    agentId: info.agents[0]?.id ?? "",
+                    instructions: "",
+                    dependsOn: [],
+                  },
                 ])
               }
             >
@@ -322,7 +402,7 @@ export function AssignProject({
                 checked={sequential}
                 onChange={(e) => setSequential(e.target.checked)}
               />
-              Run tasks in order
+              Run tasks in order (uncheck to choose what each task waits for)
             </label>
           </fieldset>
         </>

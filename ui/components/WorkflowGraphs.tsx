@@ -3,6 +3,7 @@ import { ReactFlow, Background, type Edge, type Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { api, type Snapshot, type TeamEvent } from "../api";
 import { NODE_TYPE_LABEL, layerGraph, nodeSummary } from "../graph-layout";
+import { useTheme } from "../theme";
 import "./workflow-graphs.css";
 
 type GNode = Record<string, any> & { id: string; type: string };
@@ -93,13 +94,43 @@ const TRIGGERS = [
   "iterate",
   "done",
 ];
-const COLORS: Record<string, string> = {
-  completed: "#2f6f4f",
-  failed: "#8a3a3a",
-  cancelled: "#7a6a2f",
-  skipped: "#3a4252",
-  active: "#2f5f8a",
-  pending: "#222a37",
+/**
+ * Node and edge colours per theme (inline styles get no derived light twin, docs/ui-design.md).
+ * Run states: tinted backgrounds; `idle` = a definition shown without a run.
+ */
+const PALETTE = {
+  dark: {
+    states: {
+      completed: "#2f6f4f",
+      failed: "#8a3a3a",
+      cancelled: "#7a6a2f",
+      skipped: "#3a4252",
+      active: "#2f5f8a",
+      pending: "#222a37",
+    } as Record<string, string>,
+    idle: "#1b2230",
+    text: "#e6edf7",
+    border: "#3a4558",
+    edge: "#5c6a80",
+    edgeTaken: "#8cddc2",
+    label: "#aab6c8",
+  },
+  light: {
+    states: {
+      completed: "#d6efe2",
+      failed: "#f7dcdc",
+      cancelled: "#f3ead0",
+      skipped: "#e7eaef",
+      active: "#d8e7f7",
+      pending: "#ffffff",
+    } as Record<string, string>,
+    idle: "#ffffff",
+    text: "#1d2633",
+    border: "#c3ccd8",
+    edge: "#8794a6",
+    edgeTaken: "#23735f",
+    label: "#556274",
+  },
 };
 const OPS = [
   "eq",
@@ -243,6 +274,8 @@ function FlowView({
   run?: RunView | null;
 }) {
   const layout = useMemo(() => layerGraph(nodes, edges), [nodes, edges]);
+  const { theme } = useTheme();
+  const c = PALETTE[theme];
   const state = new Map(run?.nodes.map((n) => [n.id, n]));
   const taken = new Set(
     run?.path.flatMap((s) => s.fired.map((f) => `${s.nodeId}>${f.to}`)),
@@ -275,9 +308,9 @@ function FlowView({
       style: {
         width: 170,
         fontSize: 11,
-        background: run ? (COLORS[key] ?? COLORS.pending) : "#1b2230",
-        color: "#e6edf7",
-        border: "1px solid #3a4558",
+        background: run ? (c.states[key] ?? c.states.pending) : c.idle,
+        color: c.text,
+        border: `1px solid ${c.border}`,
         borderRadius: 8,
         borderStyle:
           n.type === "fanout" || n.type === "join" || n.type === "loop"
@@ -296,11 +329,11 @@ function FlowView({
       label: (e.back ? "back " : "") + on,
       animated: !!run && hit,
       style: {
-        stroke: hit ? "#8cddc2" : "#5c6a80",
+        stroke: hit ? c.edgeTaken : c.edge,
         strokeDasharray: e.back ? "5 4" : undefined,
         strokeWidth: hit ? 2.2 : 1.2,
       },
-      labelStyle: { fontSize: 10, fill: "#aab6c8" },
+      labelStyle: { fontSize: 10, fill: c.label },
     };
   });
   return (
@@ -314,6 +347,7 @@ function FlowView({
         elementsSelectable={false}
         proOptions={{ hideAttribution: true }}
         minZoom={0.3}
+        colorMode={theme}
       >
         <Background />
       </ReactFlow>

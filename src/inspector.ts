@@ -873,6 +873,16 @@ export type Transfer = {
       scope: string;
       agentId: string;
     }[];
+    /** True when the match list is the decision recorded at task creation, not inferred from today's rules. */
+    recorded?: boolean;
+    /** Recorded decision (task.routing): what the rules alone would have chosen at creation. */
+    decision?: {
+      at: string;
+      status: string;
+      selectedAgentId: string | null;
+      assigneeMatched: boolean;
+      reason: string;
+    };
     note: string;
   };
 };
@@ -908,7 +918,17 @@ export function transfers(
         null)
       : null;
     let matched: Transfer["rule"]["matchedRules"] = [];
-    if (task?.invokedBy) {
+    const recorded = task?.routing;
+    if (recorded)
+      matched = recorded.matches
+        .filter((m) => m.agentId === task!.agentId)
+        .map((m) => ({
+          ruleId: m.ruleId,
+          priority: m.priority,
+          scope: m.scope,
+          agentId: m.agentId,
+        }));
+    else if (task?.invokedBy) {
       try {
         const routed = service.route({
           text: `${task.title}\n${task.instructions}`,
@@ -967,9 +987,25 @@ export function transfers(
             }
           : null,
         matchedRules: matched,
-        note: matched.length
-          ? "Authorised by the delegation edge; the rules listed would also route this text to the same agent (inferred from the current rules, not recorded at the time)."
-          : "Authorised by the delegation edge. The task named its recipient explicitly; no routing rule is recorded for it.",
+        ...(recorded
+          ? {
+              recorded: true,
+              decision: {
+                at: recorded.at,
+                status: recorded.status,
+                selectedAgentId: recorded.selectedAgentId,
+                assigneeMatched: recorded.assigneeMatched,
+                reason: recorded.reason,
+              },
+            }
+          : {}),
+        note: recorded
+          ? matched.length
+            ? `Authorised by the delegation edge. Recorded when the task was created: ${matched.length} routing rule(s) matched and target this agent (${recorded.reason}).`
+            : `Authorised by the delegation edge. Recorded when the task was created: no routing rule targeted this agent (${recorded.reason}); the task named its recipient explicitly.`
+          : matched.length
+            ? "Authorised by the delegation edge; the rules listed would also route this text to the same agent (inferred from the current rules, not recorded at the time)."
+            : "Authorised by the delegation edge. The task named its recipient explicitly; no routing rule is recorded for it.",
       },
     });
   }

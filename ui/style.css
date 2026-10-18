@@ -19,7 +19,8 @@
   --line-strong: #3a4759;
   --text: #dce4ef;
   --muted: #8c9aad;
-  --faint: #6c7b8f;
+  /* Lowest-emphasis text; still WCAG AA (4.5:1) on the raised surfaces (e2e contrast test). */
+  --faint: #7f8ea3;
   --accent: #8cddc2;
   --accent-bg: #203d38;
   color-scheme: dark;
@@ -1575,8 +1576,11 @@ summary:focus-visible {
 }
 label.check {
   display: flex;
+  /* A checkbox before its sentence (the base label style stacks label and field). */
+  flex-direction: row;
   gap: 6px;
   align-items: center;
+  margin: 4px 0 10px;
 }
 .badge-required {
   background: #5a1f1f;
@@ -2086,4 +2090,12 @@ button.link {
 .rule > div:first-child {
   flex: 1;
   min-width: 0;
+}
+
+/* React Flow's attribution link: readable in both themes (library default is #999 on a light veil). */
+.react-flow__attribution {
+  background: transparent;
+}
+.react-flow__attribution a {
+  color: var(--muted);
 }

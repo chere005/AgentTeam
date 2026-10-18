@@ -371,6 +371,7 @@ export class RunManager {
       agent = store.get<Agent>("agent", session.agentId);
     // A CLI or native app already drives this agent: never drive the session twice.
     this.service.ownership.assertEmbeddedMayRun(agent.id);
+    this.service.assertNotRetired(agent);
     if (!scheduled) {
       const waiting = store
         .list<Message>("message")

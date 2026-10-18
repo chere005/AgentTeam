@@ -53,7 +53,9 @@ const api = (page: Page, method: string, path: string, body?: unknown) =>
     [method, path, body] as const,
   );
 const tab = (page: Page, name: string) =>
-  page.getByRole("tablist", { name: "Open views" }).getByRole("tab", { name });
+  page
+    .getByRole("tablist", { name: "Open views" })
+    .getByRole("tab", { name, exact: true });
 
 test("first run shows only the canvas and the chat: no long navigation, getting-started card, slim top bar", async () => {
   await withApp(async ({ start }) => {
@@ -265,6 +267,19 @@ test("agent panel: add a folder with edit access and a library skill on demand, 
     await expect(panel.getByLabel("Max concurrent invoked agents")).toHaveValue(
       "",
     );
+    // Instruction length: guidance first, a soft warning only above the threshold, never a block.
+    const hint = panel.getByTestId("instruction-length");
+    await expect(hint).toHaveAttribute("data-level", /none|ok/);
+    const instructions = panel.getByLabel("Always-loaded instructions");
+    await instructions.fill("Review the diff. Output a JSON verdict.");
+    await expect(hint).toHaveAttribute("data-level", "ok");
+    await instructions.fill("x".repeat(1600));
+    await expect(hint).toHaveAttribute("data-level", "long");
+    await expect(hint).toContainText("on-demand skill");
+    await expect(panel.getByRole("button", { name: "Save" })).toBeEnabled();
+    await instructions.fill("Short again.");
+    await expect(hint).toHaveAttribute("data-level", "ok");
+    await panel.getByRole("button", { name: "Discard" }).click();
     await page.screenshot({ path: test.info().outputPath("agent-panel.png") });
     expect(errors).toEqual([]);
   });

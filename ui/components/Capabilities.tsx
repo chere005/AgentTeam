@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type Agent, type Snapshot } from "../api";
+import { ContextCost } from "./ContextCost";
 import "./capabilities.css";
 
 /** Encodes every character the desktop IPC path filter rejects (".", "_") as well as reserved ones. */
@@ -750,6 +751,7 @@ function EffectiveTab({ agent }: { agent?: Agent }) {
         <button type="submit">Preview</button>
       </form>
       {error && <p className="hint bad-text">{error}</p>}
+      <ContextCost agentId={agent.id} />
       {view && (
         <>
           <p>

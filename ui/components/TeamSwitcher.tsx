@@ -5,6 +5,7 @@ import {
   ChevronDown,
   Plus,
   Pencil,
+  Settings2,
   Trash2,
   Users,
 } from "lucide-react";
@@ -32,6 +33,7 @@ export function TeamSwitcher({
   rename,
   remove,
   assignProject,
+  openSettings,
 }: {
   teams: TeamSummary[];
   active: TeamSummary;
@@ -40,6 +42,8 @@ export function TeamSwitcher({
   rename: (id: string, name: string) => Promise<void>;
   /** Open the Projects pane's "Assign project" form for the active team. */
   assignProject?: () => void;
+  /** Open the active team's Team settings tab. */
+  openSettings?: () => void;
   remove: (
     id: string,
     options: { agents: "move" | "delete"; moveTo: string },
@@ -217,6 +221,18 @@ export function TeamSwitcher({
                   >
                     <Briefcase size={14} />
                     Assign project
+                  </button>
+                )}
+                {openSettings && (
+                  <button
+                    aria-label={`Team settings of ${active.name}`}
+                    onClick={() => {
+                      close();
+                      openSettings();
+                    }}
+                  >
+                    <Settings2 size={14} />
+                    Team settings
                   </button>
                 )}
                 <button

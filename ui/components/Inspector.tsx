@@ -60,6 +60,8 @@ export type TransferView = {
       enabled: boolean;
     } | null;
     matchedRules: { ruleId: string; priority: number; scope: string }[];
+    /** The decision recorded at task creation (absent for older tasks: then inferred). */
+    recorded?: boolean;
     note: string;
   };
 };
@@ -638,7 +640,12 @@ function Preview(p: Props) {
           {error}
         </p>
       )}
-      {result && (
+      {result?.canceled && (
+        <p role="status" data-testid="export-canceled">
+          Save canceled; nothing was written.
+        </p>
+      )}
+      {result && !result.canceled && (
         <div data-testid="preview-result">
           <h3>Routing</h3>
           <p data-testid="preview-routing">
@@ -832,7 +839,8 @@ function Playground(p: Props) {
       </ul>
       <label>
         Optional overrides for the next run (JSON, e.g. change a model or prompt
-        without touching the live agent)
+        without touching the live agent; "rules" can disable, re-prioritise or
+        add routing rules for this run only)
         <textarea
           aria-label="Run overrides"
           placeholder='{"agents":{"Planner":{"model":"other-model"}}}'
@@ -1043,12 +1051,40 @@ function DiffView({ diff }: { diff: any }) {
       {[...diff.config.edges.added, ...diff.config.rules.added].length > 0 && (
         <p>Connections/rules added.</p>
       )}
+      {diff.config.ruleOverrides?.changed && (
+        <div data-testid="rule-overrides">
+          <b>Routing-rule overrides</b>
+          <div className="insp-sidebyside">
+            <ul className="insp-plain">
+              {diff.config.ruleOverrides.a.map((x: string) => (
+                <li key={x}>{x}</li>
+              ))}
+              {!diff.config.ruleOverrides.a.length && <li>none</li>}
+            </ul>
+            <ul className="insp-plain">
+              {diff.config.ruleOverrides.b.map((x: string) => (
+                <li key={x}>{x}</li>
+              ))}
+              {!diff.config.ruleOverrides.b.length && <li>none</li>}
+            </ul>
+          </div>
+        </div>
+      )}
       <h4>Outcomes</h4>
       <ul className="insp-plain">
         {diff.outcomes.tasks.map((o: any) => (
           <li key={o.key}>
             <b>{o.key}</b>: {o.a?.status} → {o.b?.status}
             {o.resultChanged && <span className="badge">result changed</span>}
+            {o.routingChanged && (
+              <span className="badge" data-testid="routing-changed">
+                routing changed: {o.routing.a?.status ?? "none"} →{" "}
+                {o.routing.b?.status ?? "none"}
+                {o.routing.b?.selectedAgent
+                  ? ` (rules pick ${o.routing.b.selectedAgent})`
+                  : ""}
+              </span>
+            )}
             {o.resultChanged && (
               <div className="insp-sidebyside">
                 <pre>{o.a?.result}</pre>
@@ -1082,6 +1118,14 @@ function Export() {
     setBusy(true);
     setError("");
     try {
+      // Desktop app: the main process fetches the bundle and asks where to save it (Save as…);
+      // the renderer never sees a path. Without it (plain browser) fall back to a blob download.
+      if (window.agentteam.saveDiagnostics) {
+        const saved = await window.agentteam.saveDiagnostics(format);
+        if (saved.saved) setResult(saved);
+        else setResult({ canceled: true });
+        return;
+      }
       const bundle = await api("/inspector/bundle", "POST", { format });
       setResult(bundle);
       const bytes =
@@ -1138,6 +1182,7 @@ function Export() {
           <p>
             <b data-testid="export-name">{result.filename}</b> · {result.bytes}{" "}
             bytes
+            {result.testMode ? " (test mode: recorded, not written)" : ""}
           </p>
           <p className="quiet">
             Contents: {result.files.join(", ")}. Redacted:{" "}

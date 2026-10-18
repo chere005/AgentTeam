@@ -205,7 +205,16 @@ export class ParallelWork {
   async assign(
     workflowId: string,
     input: unknown,
-    deps: { worktrees?: WorktreeService } = {},
+    deps: {
+      worktrees?: WorktreeService;
+      /**
+       * Add the new worktree to the agent as an extra (not active) write folder instead of the
+       * worktree service's attach, which switches the agent's active folder and may drop the
+       * source checkout. Used by pipeline projects whose workers are shared by several projects
+       * (src/project-worktrees.ts); the task's declared worktree path selects its working folder.
+       */
+      addWorktree?: (agentId: string, worktreeId: string) => void;
+    } = {},
   ) {
     const data = assignSchema.parse(input);
     const coordination = this.coordination(workflowId);
@@ -327,11 +336,13 @@ export class ParallelWork {
         `${agent.name} has no writable attached folder to branch a worktree from`,
         409,
       );
-      const made = (await deps.worktrees.create(agent.id, {
-        workspace: source,
-        attach: true,
-        taskId: a.taskId,
-      })) as { path: string; worktree: { id: string } };
+      const made = (await deps.worktrees.create(
+        agent.id,
+        { workspace: source, attach: !deps.addWorktree, taskId: a.taskId },
+        // The worker's shared checkout may already be read-only (an earlier project's worktree).
+        { readSource: !!deps.addWorktree },
+      )) as { path: string; worktree: { id: string } };
+      deps.addWorktree?.(agent.id, made.worktree.id);
       resolved[i].paths = [made.path];
       resolved[i].worktreePath = made.path;
       resolved[i].worktreeId = made.worktree.id;

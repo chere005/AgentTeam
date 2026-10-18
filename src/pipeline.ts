@@ -48,6 +48,7 @@ import type { DetectedRuntime } from "./discovery.ts";
 import { canonical, sha256 } from "./shared-common.ts";
 import type { TeamService } from "./service.ts";
 import type { WorktreeService } from "./worktrees.ts";
+import { addWorktreeFolder, restoreSourceWrite } from "./project-worktrees.ts";
 import { randomUUID } from "node:crypto";
 
 const exec = promisify(execFile);
@@ -178,10 +179,20 @@ export type PipelineRecord = {
   };
 };
 export type PreflightCheck = { name: string; ok: boolean; detail: string };
+export type PreflightParts = {
+  agents: Record<
+    string,
+    { model: string; folders: string; tools: string; instructions: string }
+  >;
+  tasks: Record<string, string>;
+  config: string;
+};
 export type Preflight = {
   verified: boolean;
   checkedAt: string;
   fingerprint: string;
+  /** Per-part digests (absent on verifications recorded before they existed). */
+  parts?: PreflightParts;
   checks: PreflightCheck[];
   issues: string[];
   warnings: string[];
@@ -630,7 +641,7 @@ function buildPipelineProjectInTx(
   const writers = new Set(
     [integrator, ...implementAgents, ...fixAgents].map((a) => a.id),
   );
-  attachProjectWorkspaceInTx(
+  const attachments = attachProjectWorkspaceInTx(
     store,
     Object.fromEntries(
       used.map((a) => [a.id, writers.has(a.id) ? "write" : "read"]),
@@ -675,6 +686,7 @@ function buildPipelineProjectInTx(
     preflight: null,
     handoffNotes: true,
     workspace,
+    attachments,
   };
   store.put("workflow", { ...workflow, paused: true, setup });
   store.emit("workflow.paused", workflow.id);
@@ -695,11 +707,15 @@ function buildPipelineProjectInTx(
     store.emit("resource.configured", resource.id);
   }
 
+  // Read-only stages declare the project workspace, so they lease only this project's folder and
+  // never another project's workspace attached to the same (shared) agent. Workers get their
+  // declared paths or worktree from the guided assignment at "Prepare and verify".
   const task = (data: Partial<Task> & { title: string; agentId: string }) =>
     service.task({
       workflowId: workflow.id,
       instructions: "",
       completionCriteria: "Done",
+      ...(writers.has(data.agentId) ? {} : { resourcePaths: [workspace] }),
       ...data,
     });
   const slicePaths = (i: number) =>
@@ -1049,20 +1065,43 @@ export class PipelineService {
     ];
   }
   /**
-   * Stable digest of the configuration the preflight verified: every agent's runtime, model,
-   * effort, tools, skills and instructions, read-only agents' folders and rules, writers' folders
-   * other than the pipeline workspace and their own managed worktrees, and every stage task's
-   * agent, instructions, criteria, checks, validation requirement and dependencies. What the
-   * guided assignments themselves change (worktree attach, the appended scope text, declared
-   * paths, the integration steps) is excluded; assertStart checks the assignments separately.
+   * Folder attachments that OTHER projects added to an agent (recorded as their
+   * `setup.attachments`, still attached) and that do not overlap this project's workspace, keyed
+   * `agentId\0path`. A second project of the same team attaches its own workspace to the shared
+   * agents; that is not a change of this project's configuration, so the fingerprint leaves these
+   * attachments out (scoped verification). Only the recorded agent/folder pairs are excluded: the
+   * same folder attached by hand (or to an agent the other project never touched) still counts,
+   * and overlapping folders always stay in.
    */
-  fingerprint(workflowId: string) {
+  private foreignFolders(rec: PipelineRecord) {
+    const out = new Set<string>();
+    for (const w of this.store.list<Workflow & { setup?: WorkflowSetup }>(
+      "workflow",
+    )) {
+      if (w.id === rec.workflowId || !w.setup) continue;
+      for (const a of w.setup.attachments ?? [])
+        if (!a.detachedAt && !overlaps(a.path, rec.config.workspace))
+          out.add(`${a.agentId}\0${a.path}`);
+    }
+    return out;
+  }
+  /**
+   * The configuration the preflight verifies, by part: every agent's runtime, model, effort,
+   * tools, skills and instructions, read-only agents' folders and rules, writers' folders other
+   * than the pipeline workspace and their own managed worktrees, and every stage task's agent,
+   * instructions, criteria, checks, validation requirement and dependencies. What the guided
+   * assignments themselves change (worktree attach, the appended scope text, declared paths, the
+   * integration steps) is excluded; assertStart checks the assignments separately. Folders of
+   * other projects (foreignFolders) are excluded too.
+   */
+  private fingerprintParts(workflowId: string) {
     const rec = this.record(workflowId);
     const writers = new Set([
       rec.agents.integrator,
       ...rec.agents.implement,
       ...rec.agents.fix,
     ]);
+    const foreign = this.foreignFolders(rec);
     const worktrees = this.store.list<{
       path: string;
       ownerId: string | null;
@@ -1072,6 +1111,7 @@ export class PipelineService {
       const own = new Set(
         worktrees.filter((w) => w.ownerId === id).map((w) => w.path),
       );
+      const mine = a.workspaces.filter((w) => !foreign.has(`${id}\0${w.path}`));
       return {
         id,
         environment: a.environment,
@@ -1080,14 +1120,14 @@ export class PipelineService {
         workspaces: writers.has(id)
           ? {
               writes: hasWrite(a),
-              other: a.workspaces
+              other: mine
                 .filter(
                   (w) => w.path !== rec.config.workspace && !own.has(w.path),
                 )
                 .map((w) => [w.path, w.access, w.rules ?? null])
                 .sort(),
             }
-          : a.workspaces.map((w) => [w.path, w.access, w.rules ?? null]),
+          : mine.map((w) => [w.path, w.access, w.rules ?? null]),
         tools: [...a.tools].sort(),
         skills: a.skills.map((s) => [s.id, s.mode, s.allowUnverified]).sort(),
         instructions: a.instructions,
@@ -1114,14 +1154,97 @@ export class PipelineService {
           dependsOn: t.dependsOn.filter((d) => !integrations.has(d)).sort(),
         };
       });
-    return sha256(
-      canonical({
-        agents,
-        tasks,
-        config: rec.config,
-        resource: rec.resourceId,
-      }),
+    return { agents, tasks, config: rec.config, resource: rec.resourceId };
+  }
+  /** Stable digest of `fingerprintParts` (the verification is bound to it). */
+  fingerprint(workflowId: string) {
+    return sha256(canonical(this.fingerprintParts(workflowId)));
+  }
+  /** Per-part digests stored with the preflight, so a stale verification can say what changed. */
+  private partDigests(workflowId: string): PreflightParts {
+    const p = this.fingerprintParts(workflowId);
+    const h = (v: unknown) => sha256(canonical(v)).slice(0, 16);
+    return {
+      agents: Object.fromEntries(
+        p.agents.map(({ id, ...a }) => [
+          id,
+          {
+            model: h([a.environment, a.model, a.effort]),
+            folders: h(a.workspaces),
+            tools: h([a.tools, a.skills, a.maxConcurrentInvocations]),
+            instructions: h(a.instructions),
+          },
+        ]),
+      ),
+      tasks: Object.fromEntries(p.tasks.map(({ id, ...t }) => [id, h(t)])),
+      config: h([p.config, p.resource]),
+    };
+  }
+  /**
+   * Whether the project's "Prepare and verify" still holds, and if not, why (for the UI's
+   * "needs re-verify" note and the resume refusal).
+   */
+  verification(workflowId: string): {
+    state: "unverified" | "failed" | "verified" | "stale";
+    reasons: string[];
+  } {
+    const wf = this.store.get<Workflow & { setup?: WorkflowSetup }>(
+      "workflow",
+      workflowId,
     );
+    const p = wf.setup?.preflight as Preflight | null | undefined;
+    if (!p) return { state: "unverified", reasons: ["Not verified yet"] };
+    if (!p.verified) return { state: "failed", reasons: p.issues };
+    if (p.fingerprint === this.fingerprint(workflowId))
+      return { state: "verified", reasons: [] };
+    if (!p.parts)
+      return {
+        state: "stale",
+        reasons: ["The pipeline changed after it was verified"],
+      };
+    const now = this.partDigests(workflowId);
+    const reasons: string[] = [];
+    const rec = this.record(workflowId);
+    for (const [id, parts] of Object.entries(now.agents)) {
+      const before = p.parts.agents[id];
+      const name = (() => {
+        try {
+          return this.agent(id).name;
+        } catch {
+          return id;
+        }
+      })();
+      if (!before) {
+        reasons.push(`${name} joined the project`);
+        continue;
+      }
+      const changed = (Object.keys(parts) as (keyof typeof parts)[]).filter(
+        (k) => parts[k] !== before[k],
+      );
+      if (changed.length)
+        reasons.push(
+          `${name}: ${changed
+            .map((k) =>
+              k === "model"
+                ? "model, runtime or effort"
+                : k === "tools"
+                  ? "tools, skills or concurrency"
+                  : k,
+            )
+            .join(", ")} changed`,
+        );
+    }
+    for (const [id, digest] of Object.entries(now.tasks))
+      if (p.parts.tasks[id] !== digest)
+        reasons.push(`“${rec.stages[id]?.label ?? id}” was edited`);
+    if (now.config !== p.parts.config)
+      reasons.push("The project configuration changed");
+    return {
+      state: "stale",
+      reasons: reasons.length
+        ? reasons
+        : ["The pipeline changed after it was verified"],
+    };
   }
 
   /** Structural invariants that must hold at resume and at every task start. */
@@ -1248,7 +1371,7 @@ export class PipelineService {
       );
     if (p!.fingerprint !== this.fingerprint(wf.id))
       bad(
-        "The pipeline changed after it was verified; prepare and verify it again",
+        `The pipeline changed after it was verified (${this.verification(wf.id).reasons.join("; ")}); prepare and verify it again`,
       );
     const issues = this.structureIssues(this.record(wf.id));
     if (issues.length) bad(issues.join("; "));
@@ -1351,6 +1474,78 @@ export class PipelineService {
       integration: { agentId: rec.agents.integrator, title },
     };
   }
+  /** How guided assignments create worktrees for this team's shared workers. */
+  private assignDeps() {
+    return {
+      worktrees: this.worktrees,
+      addWorktree: (agentId: string, worktreeId: string) =>
+        addWorktreeFolder(this.store, agentId, worktreeId),
+    };
+  }
+  /**
+   * Before a guided assignment: the stage's workers need the project workspace (a worktree
+   * branches from it; paths are declared inside it). An agent shared with another project may
+   * have lost it (older worktree attach dropped the source); re-attach it as recorded by the
+   * project. Then every queued non-worker task of this project that declares nothing (the
+   * integration steps, stage tasks of projects created earlier) declares the project workspace,
+   * so it never leases another project's folder attached to the same agent.
+   */
+  private ensureWorkspace(rec: PipelineRecord, workers: string[]) {
+    this.store.transaction(() => {
+      // Path isolation writes the shared checkout itself: undo a read-only downgrade an earlier
+      // worktree project of the same worker made (src/project-worktrees.ts).
+      if (rec.config.isolation !== "worktree")
+        for (const id of workers)
+          restoreSourceWrite(this.store, id, rec.config.workspace, {
+            force: true,
+          });
+      const missing = Object.fromEntries(
+        workers
+          .filter(
+            (id) =>
+              !this.agent(id).workspaces.some(
+                (w) => w.path === rec.config.workspace,
+              ),
+          )
+          .map((id) => [id, "write" as const]),
+      );
+      if (!Object.keys(missing).length) return;
+      const added = attachProjectWorkspaceInTx(
+        this.store,
+        missing,
+        rec.config.workspace,
+      );
+      const wf = this.store.get<Workflow & { setup: WorkflowSetup }>(
+        "workflow",
+        rec.workflowId,
+      );
+      this.store.put("workflow", {
+        ...wf,
+        setup: {
+          ...wf.setup,
+          attachments: [...(wf.setup.attachments ?? []), ...added],
+        },
+      });
+    });
+  }
+  private declareWorkspace(rec: PipelineRecord) {
+    const workers = new Set([...rec.tasks.implement, ...rec.tasks.fix]);
+    this.store.transaction(() => {
+      for (const t of this.store.list<Task>("task")) {
+        if (
+          t.workflowId !== rec.workflowId ||
+          t.status !== "queued" ||
+          workers.has(t.id) ||
+          t.resourcePaths?.length
+        )
+          continue;
+        const a = this.agent(t.agentId);
+        if (!a.workspaces.some((w) => w.path === rec.config.workspace))
+          continue;
+        this.store.put("task", { ...t, resourcePaths: [rec.config.workspace] });
+      }
+    });
+  }
   private addDependency(taskIds: string[], dependency: string) {
     this.store.transaction(() => {
       for (const id of taskIds) {
@@ -1443,6 +1638,10 @@ export class PipelineService {
           (id) => !plan?.assignments.some((a) => a.taskId === id),
         );
         if (todo.length) {
+          this.ensureWorkspace(
+            rec,
+            todo.map((id) => this.task(id).agentId),
+          );
           const input = this.assignmentInput(
             rec,
             rec.tasks.implement,
@@ -1451,10 +1650,13 @@ export class PipelineService {
           input.assignments = input.assignments.filter((a) =>
             todo.includes(a.taskId),
           );
-          await this.service.parallel.assign(workflowId, input, {
-            worktrees: this.worktrees,
-          });
+          await this.service.parallel.assign(
+            workflowId,
+            input,
+            this.assignDeps(),
+          );
         }
+        this.declareWorkspace(this.record(workflowId));
         const after = this.service.parallel.plan(workflowId);
         const int1 = after?.integrationTaskId ?? undefined;
         if (!int1) par.push("No integration task was created");
@@ -1502,6 +1704,7 @@ export class PipelineService {
       verified: issues.length === 0,
       checkedAt: new Date().toISOString(),
       fingerprint: this.fingerprint(workflowId),
+      parts: this.partDigests(workflowId),
       checks,
       issues,
       warnings,
@@ -1534,11 +1737,13 @@ export class PipelineService {
     );
     this.inflight.add(workflowId);
     try {
+      this.ensureWorkspace(rec, rec.agents.fix);
       await this.service.parallel.assign(
         workflowId,
         this.assignmentInput(rec, rec.tasks.fix, "Integrate fix workers"),
-        { worktrees: this.worktrees },
+        this.assignDeps(),
       );
+      this.declareWorkspace(this.record(workflowId));
       const int2 = this.service.parallel.plan(workflowId)!.integrationTaskId!;
       assert(
         int2 !== int1,
@@ -1582,6 +1787,11 @@ export class PipelineService {
   sweep() {
     for (const rec of this.store.list<PipelineRecord>("pipeline")) {
       if (rec.stage2.state !== "pending" || this.inflight.has(rec.id)) continue;
+      // Archived projects never prepare further work (they are paused until reopened).
+      const wf = this.store
+        .list<Workflow & { lifecycle?: { state: string } }>("workflow")
+        .find((w) => w.id === rec.id);
+      if (wf?.lifecycle?.state === "archived") continue;
       const int1 = this.service.parallel.plan(rec.id)?.integrationTaskId;
       if (!int1) continue;
       try {

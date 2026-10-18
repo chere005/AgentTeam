@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { test, expect, _electron as electron } from "@playwright/test";
-import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, writeFile, rename } from "node:fs/promises";
 import { devNull, tmpdir } from "node:os";
 import { join } from "node:path";
 import { openFeature } from "./helpers";
@@ -225,6 +225,180 @@ test("git workflow: fetch/pull/push feedback, branch safety, conflicts, PR link,
     await expect(page.getByLabel("File preview")).toContainText(
       "open in an external application",
     );
+  } finally {
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// Fixtures only (temp repository, no remote). Covers the rename-pair staging UI and starting a
+// merge or rebase from a chosen branch, including the conflict workflow it feeds.
+test("git workflow: stage a rename pair, start a merge or rebase with confirmation, conflicts and abort", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentteam-gitint-"));
+  const env = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: devNull,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: "Test",
+    GIT_COMMITTER_NAME: "Test",
+    GIT_AUTHOR_EMAIL: "t@example.invalid",
+    GIT_COMMITTER_EMAIL: "t@example.invalid",
+  };
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", env });
+  const project = join(directory, "project");
+  await mkdir(project);
+  git(project, "init", "-q", "-b", "main");
+  await writeFile(
+    join(project, "old.txt"),
+    "rename me\nwith enough content\nto keep similarity high\n",
+  );
+  await writeFile(join(project, "c.txt"), "base\n");
+  git(project, "add", ".");
+  git(project, "commit", "-qm", "base");
+  git(project, "switch", "-q", "-c", "feature");
+  await writeFile(join(project, "feature.txt"), "feature work\n");
+  git(project, "add", ".");
+  git(project, "commit", "-qm", "feature work");
+  git(project, "switch", "-q", "-c", "clash", "main");
+  await writeFile(join(project, "c.txt"), "base\nclash side\n");
+  git(project, "commit", "-qam", "clash edit");
+  git(project, "switch", "-q", "main");
+  await writeFile(join(project, "c.txt"), "base\nmain side\n");
+  git(project, "commit", "-qam", "main edit");
+
+  const app = await electron.launch({
+    args: [".", ...(process.platform === "linux" ? ["--no-sandbox"] : [])],
+    env: {
+      ...env,
+      AGENTTEAM_DATA_DIR: join(directory, "data"),
+      AGENTTEAM_TEST: "1",
+    } as Record<string, string>,
+  });
+  try {
+    const page = await app.firstWindow();
+    await expect(
+      page.getByText("Workspace connected", { exact: true }),
+    ).toBeVisible();
+    await page.evaluate(async (folder) => {
+      const snapshot = await window.agentteam.request("GET", "/snapshot");
+      const { id, createdAt, control, ...config } = snapshot.agents[0];
+      await window.agentteam.request("PUT", "/agents/" + id, {
+        ...config,
+        workspaces: [{ path: folder, access: "write", active: true }],
+      });
+    }, project);
+    await openFeature(page, "Git");
+    const panel = page.getByRole("region", { name: "Git workflow" });
+    await expect(panel).toContainText("main");
+
+    // ---- rename pair: appears only with an unstaged deletion and a new file -----------------
+    await expect(page.getByText("Stage a rename")).toHaveCount(0);
+    await rename(join(project, "old.txt"), join(project, "new.txt"));
+    await page.getByRole("button", { name: "Refresh Git" }).click();
+    await page.getByText("Stage a rename", { exact: true }).click();
+    const pair = page.locator(".rename-pair");
+    const stage = pair.getByRole("button", { name: "Stage rename" });
+    await expect(stage).toBeDisabled();
+    await pair.getByLabel("Deleted file (old name)").selectOption("old.txt");
+    await expect(stage).toBeDisabled();
+    await pair.getByLabel("New file (new name)").selectOption("new.txt");
+    await stage.click();
+    await expect
+      .poll(() => git(project, "status", "--porcelain").trim())
+      .toBe("R  old.txt -> new.txt");
+    await expect(page.getByText("Stage a rename")).toHaveCount(0);
+    git(project, "commit", "-qm", "rename");
+
+    // ---- merge: explicit confirmation, then a real merge commit --------------------------------
+    await panel.getByText("Merge or rebase", { exact: true }).click();
+    const mode = panel.getByLabel("Integration mode");
+    const source = panel.getByLabel("Branch to integrate");
+    await source.selectOption("feature");
+    const go = panel.getByRole("button", { name: "Merge feature" });
+    await expect(go).toBeDisabled();
+    await panel
+      .getByLabel(/I understand this can create a merge commit/)
+      .check();
+    await expect(go).toBeEnabled();
+    await go.click();
+    await expect(panel.getByRole("status").first()).toContainText(
+      "Merged feature into main",
+    );
+    expect(
+      git(project, "rev-list", "--parents", "-1", "HEAD").trim().split(" "),
+    ).toHaveLength(3);
+
+    // ---- a conflicting merge feeds the conflict workflow; abort restores -------------------------
+    const head = git(project, "rev-parse", "HEAD");
+    await source.selectOption("clash");
+    await panel
+      .getByLabel(/I understand this can create a merge commit/)
+      .check();
+    await panel.getByRole("button", { name: "Merge clash" }).click();
+    await expect(panel.getByRole("alert").first()).toContainText(
+      "Merge failed",
+    );
+    const conflicts = panel.getByRole("region", { name: "Conflicts" });
+    await expect(conflicts).toContainText("A merge is in progress");
+    await expect(
+      conflicts.getByRole("button", { name: /c\.txt/ }),
+    ).toBeVisible();
+    // A second integration cannot start while one is in progress.
+    await expect(
+      panel.getByText(/Finish or abort the merge first/),
+    ).toBeVisible();
+    await conflicts.getByRole("button", { name: /Abort merge/ }).click();
+    await conflicts
+      .getByRole("button", { name: "Confirm abort merge" })
+      .click();
+    await expect(panel.getByRole("status").first()).toContainText(
+      "Aborted the merge",
+    );
+    expect(git(project, "rev-parse", "HEAD")).toBe(head);
+
+    // ---- rebase onto a branch -------------------------------------------------------------------
+    git(project, "switch", "-q", "-c", "topic");
+    await writeFile(join(project, "topic.txt"), "topic\n");
+    git(project, "add", ".");
+    git(project, "commit", "-qm", "topic work");
+    git(project, "switch", "-q", "feature");
+    await writeFile(join(project, "feature2.txt"), "more\n");
+    git(project, "add", ".");
+    git(project, "commit", "-qm", "feature more");
+    git(project, "switch", "-q", "topic");
+    await page.getByRole("button", { name: "Refresh Git" }).click();
+    await expect(
+      panel.getByRole("button", { name: "Merge clash" }),
+    ).toBeVisible();
+    await mode.selectOption("rebase");
+    await source.selectOption("feature");
+    const rebase = panel.getByRole("button", { name: "Rebase feature" });
+    await expect(rebase).toBeDisabled();
+    await panel
+      .getByLabel(/I understand this replays my local commits/)
+      .check();
+    await rebase.click();
+    await expect(panel.getByRole("status").first()).toContainText(
+      "Rebased topic onto feature",
+    );
+    // feature is now an ancestor of the rebased branch (throws otherwise).
+    git(project, "merge-base", "--is-ancestor", "feature", "HEAD");
+    expect(git(project, "log", "--format=%s", "-1").trim()).toBe("topic work");
+
+    // An uncommitted change blocks starting either operation (nothing to confirm around).
+    await writeFile(join(project, "c.txt"), "dirty\n");
+    await page.getByRole("button", { name: "Refresh Git" }).click();
+    await expect(
+      panel.getByText(/Commit or discard your 1 uncommitted/),
+    ).toBeVisible();
+    await source.selectOption("main");
+    await panel
+      .getByLabel(/I understand this replays my local commits/)
+      .check();
+    await expect(
+      panel.getByRole("button", { name: "Rebase main" }),
+    ).toBeDisabled();
   } finally {
     await app.close();
     await rm(directory, { recursive: true, force: true });

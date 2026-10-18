@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { completionCheckSchema } from "./limits-schema.ts";
+import type { RoutingDecision } from "./routing-decision.ts";
 export const environment = z.enum(["codex", "claude", "wolfram"]);
 export const workspaceSchema = z
   .object({
@@ -216,6 +217,8 @@ export type Task = z.infer<typeof taskSchema> & {
     | "blocked";
   result?: string;
   queuedAt?: string;
+  /** Routing rules that matched a delegated task at creation (src/routing-decision.ts). */
+  routing?: RoutingDecision;
 };
 export type Session = {
   id: string;

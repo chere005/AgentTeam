@@ -1,4 +1,12 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, Menu } from "electron";
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  dialog,
+  shell,
+  Menu,
+  nativeTheme,
+} from "electron";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -12,6 +20,7 @@ import { RunManager } from "../src/runtime.ts";
 import { Scheduler } from "../src/scheduler.ts";
 import { createApi } from "../src/http.ts";
 import { roots, setProjectRoot } from "../src/config.ts";
+import { saveDiagnosticBundle } from "../src/diagnostic-save.ts";
 import {
   liveDevServerCount,
   previewNavigationAllowed,
@@ -111,6 +120,50 @@ async function start() {
     });
     return result.canceled ? null : result.filePaths[0];
   });
+  // Diagnostic bundle "Save as…": the renderer names only the format; this process fetches the
+  // redacted bundle, shows the dialog and writes the one chosen file (test mode records instead).
+  ipcMain.handle("save-diagnostics", async (event, format) => {
+    trusted(event);
+    return saveDiagnosticBundle(
+      { format },
+      {
+        testMode: process.env.AGENTTEAM_TEST === "1",
+        record: (r) => void server.launches.push(r),
+        defaultDirectory: app.getPath("downloads"),
+        showSaveDialog: (options) => dialog.showSaveDialog(win, options),
+        fetchBundle: async (f) => {
+          const response = await fetch(base + "/inspector/bundle", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ format: f }),
+          });
+          const result = await response.json();
+          if (!response.ok)
+            throw new Error(result.message ?? result.error ?? "Export failed");
+          return result;
+        },
+      },
+    );
+  });
+  // Appearance (Settings -> Appearance; the renderer keeps it in localStorage and mirrors it
+  // here): the window background, native dialogs/menus and prefers-color-scheme follow it, and the
+  // preload marks <html> with it before the page paints, so light mode never flashes dark.
+  ipcMain.handle("set-theme", async (event, setting) => {
+    trusted(event);
+    if (setting !== "system" && setting !== "light" && setting !== "dark")
+      throw new Error("Invalid theme");
+    if (setting !== storedTheme())
+      store.put("settings", { id: "appearance", theme: setting });
+    nativeTheme.themeSource = setting;
+    win?.setBackgroundColor(windowBackground());
+    return true;
+  });
+  nativeTheme.on("updated", () => {
+    if (win && !win.isDestroyed()) win.setBackgroundColor(windowBackground());
+  });
   ipcMain.handle("open-agent", async (event, id, mode) => {
     trusted(event);
     const agent = store.get<Agent>("agent", id),
@@ -149,15 +202,30 @@ async function start() {
         "Finish active work and Take control before resuming this session externally.",
     };
   });
+  function storedTheme(): "system" | "light" | "dark" {
+    try {
+      const v = store.get<{ theme?: string }>("settings", "appearance").theme;
+      return v === "light" || v === "dark" ? v : "system";
+    } catch {
+      return "system";
+    }
+  }
+  /** Page background of the resolved theme (ui/theme-light.css --bg, dark #10141c). */
+  function windowBackground() {
+    return nativeTheme.shouldUseDarkColors ? "#10141c" : "#f4f6f9";
+  }
   function createWindow() {
+    const theme = storedTheme();
+    nativeTheme.themeSource = theme;
     win = new BrowserWindow({
       width: 1500,
       height: 960,
       minWidth: 900,
       minHeight: 600,
       title: "AgentTeam",
-      backgroundColor: "#10141c",
+      backgroundColor: windowBackground(),
       webPreferences: {
+        additionalArguments: [`--agentteam-theme=${theme}`],
         preload: join(here, "preload.cjs"),
         contextIsolation: true,
         nodeIntegration: false,
@@ -172,6 +240,22 @@ async function start() {
       return { action: "deny" };
     });
     win.webContents.on("will-navigate", (event) => event.preventDefault());
+    // The renderer vetoes unload only while an agent has unsaved edits (ui/components/
+    // UnsavedGuard.tsx). Ask instead of silently keeping the window open; Esc/Cancel keeps
+    // editing. Test mode never shows a dialog and always lets the window close.
+    win.webContents.on("will-prevent-unload", (event) => {
+      if (process.env.AGENTTEAM_TEST === "1") return event.preventDefault();
+      const choice = dialog.showMessageBoxSync(win, {
+        type: "question",
+        buttons: ["Discard changes", "Keep editing"],
+        defaultId: 1,
+        cancelId: 1,
+        message: "Discard unsaved agent edits?",
+        detail:
+          "An agent has changes that are not saved yet. Keep editing to save them, or discard them and close.",
+      });
+      if (choice === 0) event.preventDefault();
+    });
     // The preview iframe may only navigate within the configured local origin.
     const restrictFrames = (
       event: Electron.Event & { url: string; isMainFrame: boolean },

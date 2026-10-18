@@ -231,3 +231,23 @@
 .agent-modal .modal-content {
   padding-top: 0;
 }
+/* Save / Discard / Cancel before leaving an agent with unsaved edits (UnsavedGuard.tsx). */
+.modal.unsaved-dialog {
+  width: min(440px, calc(100vw - 32px));
+}
+.unsaved-dialog .modal-content {
+  min-height: 0;
+  padding: 22px 24px 8px;
+}
+.unsaved-dialog h2 {
+  font-size: 16px;
+}
+.unsaved-dialog p {
+  color: var(--muted);
+  margin: 10px 0 0;
+  line-height: 1.5;
+}
+.unsaved-dialog > footer {
+  border-top: 0;
+  padding: 16px 24px 20px;
+}

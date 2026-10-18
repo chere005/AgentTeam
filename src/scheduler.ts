@@ -94,7 +94,7 @@ export class Scheduler {
         if (this.service.taskState(task.id).waitReason) continue;
         let plan;
         try {
-          plan = await this.service.launchPlan(task.agentId);
+          plan = await this.service.launchPlan(task.agentId, task.id);
           if (this.stopped || !this.runs.enabled) break;
           // Leave the task queued until its runtime is resolved; an unavailable runtime fails the task in execute().
           if (this.runs.readiness && plan.connection?.transport !== "acp")

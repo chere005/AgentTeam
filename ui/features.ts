@@ -12,6 +12,7 @@ export const FEATURE_IDS = [
   "git",
   "preview",
   "library",
+  "team-settings",
   "capabilities",
   "access",
   "inbox",
@@ -95,6 +96,14 @@ export const FEATURES: readonly Feature[] = [
     group: "Team setup",
     description: "Example teams, saved teams and team packs to insert.",
     keywords: "saved teams templates examples packs insert",
+  },
+  {
+    id: "team-settings",
+    name: "Team settings",
+    group: "Team setup",
+    description:
+      "This team's roles, worker counts, model check, name and description.",
+    keywords: "team profile workers count roles lead model check rename",
   },
   {
     id: "capabilities",

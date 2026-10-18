@@ -24,6 +24,7 @@ import {
 } from "./inspector.ts";
 import { Redactor } from "./redact.ts";
 import { boundedRegexTest } from "./limits.ts";
+import { applyRuleOverrides, ruleOverridesSchema } from "./playground-rules.ts";
 import { AppError, agentSchema, assert } from "./model.ts";
 import type { Agent, Edge, Rule, Task } from "./model.ts";
 
@@ -137,6 +138,8 @@ const overridesSchema = z
       )
       .default({}),
     fixture: exampleSchema.shape.fixture.optional(),
+    /** Routing-rule changes for this run only (disable, re-prioritise or add rules in the copy). */
+    rules: ruleOverridesSchema.optional(),
   })
   .strict();
 export const runRequestSchema = z
@@ -156,6 +159,8 @@ export type ConfigSnapshot = {
   agents: Record<string, Record<string, unknown>>;
   edges: string[];
   rules: Record<string, unknown>[];
+  /** Readable list of this run's routing-rule overrides (absent on older runs). */
+  ruleOverrides?: string[];
   fixture: unknown;
 };
 export type RunOutcome = {
@@ -166,6 +171,13 @@ export type RunOutcome = {
   result: string;
   resultHash: string;
   waiting: string | null;
+  /** Routing decision recorded at creation of a delegated task (absent otherwise/older runs). */
+  routing?: {
+    status: string;
+    selectedAgent: string | null;
+    assigneeMatched: boolean;
+    matchedRules: string[];
+  } | null;
 };
 export type RunTimelineEntry = {
   i: number;
@@ -398,7 +410,12 @@ export class Playground {
       const ids = new Set([...byName.values()].map((a) => a.id));
       for (const e of live.store.list<Edge>("edge"))
         if (ids.has(e.from) && ids.has(e.to)) store.put("edge", e);
-      for (const r of live.store.list<Rule>("rule"))
+      const overridden = applyRuleOverrides(
+        live.store.list<Rule>("rule"),
+        req.overrides.rules ?? { disable: [], priority: {}, add: [] },
+        byName,
+      );
+      for (const r of overridden.rules)
         if (ids.has(r.agentId) && (!r.targetId || ids.has(r.targetId)))
           store.put("rule", r);
       // ---- workflow and tasks ---------------------------------------------------------------
@@ -546,6 +563,7 @@ export class Playground {
           result,
           resultHash: sha(t.result ?? ""),
           waiting,
+          routing: routingOutcome(t, sandbox),
         };
       });
       const firstSeq = store.history(0, 1)[0]?.seq ?? 0;
@@ -556,7 +574,10 @@ export class Playground {
       const workflowStatus = sandbox.workflowStatus(wf.id).status;
       const turns = sandbox.limits.status(wf.id).counters.agentTurns;
       const files = await listFiles(workspace);
-      const snapshot = configSnapshot(sandbox, redactor, fixture);
+      const snapshot = {
+        ...configSnapshot(sandbox, redactor, fixture),
+        ruleOverrides: overridden.summary.map((x) => redactor.string(x)),
+      };
       const run: PlaygroundRun = {
         id: randomUUID(),
         exampleId: "id" in example && example.id ? example.id : null,
@@ -596,6 +617,23 @@ export class Playground {
   }
 }
 
+function routingOutcome(
+  task: Task,
+  sandbox: TeamService,
+): RunOutcome["routing"] {
+  const r = task.routing;
+  if (!r) return null;
+  const name = (id: string) =>
+    sandbox.store.list<Agent>("agent").find((a) => a.id === id)?.name ?? id;
+  return {
+    status: r.status,
+    selectedAgent: r.selectedAgentId ? name(r.selectedAgentId) : null,
+    assigneeMatched: r.assigneeMatched,
+    matchedRules: r.matches.map(
+      (m) => `${m.scope}:${name(m.agentId)}@${m.priority}`,
+    ),
+  };
+}
 function pick(
   script: FixtureScript | FixtureScript[] | undefined,
   calls: Map<string, number>,
@@ -832,6 +870,12 @@ export function compareRuns(a: PlaygroundRun, b: PlaygroundRun) {
       (r) => !b.config.rules.some((x) => ruleKey(x) === ruleKey(r)),
     ),
   };
+  const overridesOf = (r: PlaygroundRun) => r.config.ruleOverrides ?? [];
+  const ruleOverrides = {
+    a: overridesOf(a),
+    b: overridesOf(b),
+    changed: JSON.stringify(overridesOf(a)) !== JSON.stringify(overridesOf(b)),
+  };
   const fixtureChanged =
     JSON.stringify(a.config.fixture) !== JSON.stringify(b.config.fixture);
   const keys = [
@@ -849,6 +893,10 @@ export function compareRuns(a: PlaygroundRun, b: PlaygroundRun) {
       b: y ? { status: y.status, result: y.result.slice(0, 600) } : null,
       statusChanged: x?.status !== y?.status,
       resultChanged: x?.resultHash !== y?.resultHash,
+      routing: { a: x?.routing ?? null, b: y?.routing ?? null },
+      routingChanged:
+        JSON.stringify(x?.routing ?? null) !==
+        JSON.stringify(y?.routing ?? null),
     };
   });
   const sigs = (r: PlaygroundRun) =>
@@ -866,11 +914,13 @@ export function compareRuns(a: PlaygroundRun, b: PlaygroundRun) {
     edges.removed.length ||
     rules.added.length ||
     rules.removed.length ||
+    ruleOverrides.changed ||
     fixtureChanged
   );
   const outcomesChanged = outcomes.filter(
     (o) => o.statusChanged || o.resultChanged,
   ).length;
+  const routingChanged = outcomes.filter((o) => o.routingChanged).length;
   return {
     a: {
       id: a.id,
@@ -884,14 +934,22 @@ export function compareRuns(a: PlaygroundRun, b: PlaygroundRun) {
       label: b.label,
       startedAt: b.startedAt,
     },
-    config: { changed: configChanged, agents, edges, rules, fixtureChanged },
+    config: {
+      changed: configChanged,
+      agents,
+      edges,
+      rules,
+      ruleOverrides,
+      fixtureChanged,
+    },
     outcomes: {
       changed: outcomesChanged,
+      routingChanged,
       workflow: { a: a.workflowStatus, b: b.workflowStatus },
       tasks: outcomes,
     },
     expectations: { a: a.expectations.passed, b: b.expectations.passed },
     timeline,
-    summary: `${configChanged ? "Configuration changed" : "Configuration identical"}; ${outcomesChanged} of ${outcomes.length} task outcome(s) differ; timeline has ${timeline.added.length} added and ${timeline.removed.length} removed step(s); expectations ${a.expectations.passed ? "passed" : "failed"} -> ${b.expectations.passed ? "passed" : "failed"}.`,
+    summary: `${configChanged ? "Configuration changed" : "Configuration identical"}; ${outcomesChanged} of ${outcomes.length} task outcome(s) differ${routingChanged ? `; routing decisions differ for ${routingChanged} task(s)` : ""}; timeline has ${timeline.added.length} added and ${timeline.removed.length} removed step(s); expectations ${a.expectations.passed ? "passed" : "failed"} -> ${b.expectations.passed ? "passed" : "failed"}.`,
   };
 }

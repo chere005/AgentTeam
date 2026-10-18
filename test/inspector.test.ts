@@ -549,7 +549,9 @@ test("transfers: request, response, duration and originating edge/rule; access a
     assert.equal(tr.rule.edge?.kind, "delegate");
     assert.equal(tr.rule.matchedRules.length, 1);
     assert.equal(tr.rule.matchedRules[0].agentId, worker.id);
-    assert.match(tr.rule.note, /inferred/);
+    // The decision is recorded at task creation now, so the note says so instead of "inferred".
+    assert.equal(tr.rule.recorded, true);
+    assert.match(tr.rule.note, /Recorded when the task was created/);
     assert.equal(transfers(t.service, { edgeId: "other" }).length, 0);
 
     // access preview

@@ -3,6 +3,7 @@ import {
   ReactFlow,
   Background,
   Controls,
+  ControlButton,
   MiniMap,
   Handle,
   Position,
@@ -11,6 +12,7 @@ import {
   useStore,
   BaseEdge,
   getBezierPath,
+  getSmoothStepPath,
   type NodeProps,
   type EdgeProps,
   type Node,
@@ -33,6 +35,7 @@ import {
   X,
   Trash2,
   Users,
+  Maximize,
 } from "lucide-react";
 import { SaveTeamDialog } from "./Teams";
 import { EdgeTransfers } from "./Inspector";
@@ -55,7 +58,25 @@ import {
 } from "../groups";
 import "./canvas-cards.css";
 import { teamKey, MAIN_TEAM_ID } from "../team-view";
-import { CARD_HEIGHT, CARD_WIDTH, orgLayout, type Size } from "../org-layout";
+import {
+  CARD_HEIGHT,
+  CARD_WIDTH,
+  fitOrgLayout,
+  orgLayout,
+  resolveParents,
+  type Size,
+} from "../org-layout";
+import {
+  FIT_PADDING,
+  MIN_FIT_ZOOM,
+  fitStep,
+  fitViewport,
+  sameViewport,
+  type FitState,
+  type FitTrigger,
+  type Viewport,
+} from "../canvas-fit";
+import { useTheme } from "../theme";
 import { clearArrange, peekArrange } from "../arrange-request";
 import { accessLabel, accessTitle } from "../access-view";
 import {
@@ -114,7 +135,8 @@ function Card({ data }: NodeProps) {
       style={
         far
           ? ({
-              "--inv": Math.min(1.8, 1 / Math.max(zoom, 0.01)),
+              // Constant on-screen text size down to the lowest fit zoom (ui/canvas-fit.ts).
+              "--inv": Math.min(1 / MIN_FIT_ZOOM, 1 / Math.max(zoom, 0.01)),
             } as React.CSSProperties)
           : undefined
       }
@@ -124,19 +146,22 @@ function Card({ data }: NodeProps) {
       {far && (
         <div className="card-glance" data-testid="card-glance">
           <b title={a.name}>{a.name}</b>
-          <span className="glance-line">
-            {(a as any).roleType && (a as any).roleType !== "custom"
-              ? (a as any).roleType + " · "
-              : ""}
-            {a.environment} · {a.model}
-          </span>
-          <span className="glance-line">
-            <span
-              className={"badge " + (state === "processing" ? "green" : "")}
-            >
-              {state}
-              {failed ? " · failed" : resume ? " · resume" : ""}
-            </span>
+          <span className="glance-line" title={a.environment + " · " + a.model}>
+            {a.kind === "team-assistant"
+              ? "Coordinator"
+              : roleLabel(a) || a.model}{" "}
+            · {a.environment}
+            {(state !== "idle" || failed || resume) && (
+              <>
+                {" "}
+                <span
+                  className={"badge " + (state === "processing" ? "green" : "")}
+                >
+                  {state}
+                  {failed ? " · failed" : resume ? " · resume" : ""}
+                </span>
+              </>
+            )}
           </span>
         </div>
       )}
@@ -260,27 +285,63 @@ function Card({ data }: NodeProps) {
     </div>
   );
 }
+/**
+ * Org-chart tree edges (parent → child) are orthogonal step connectors; other communication
+ * links are lighter and dashed. The kind label ("Tasks", "Review", ...) shows only while the edge
+ * is hovered or selected (it is always in the edge's accessible name and the connection dialog).
+ */
 function FlowEdge(props: EdgeProps) {
-  const [path, labelX, labelY] = getBezierPath(props);
+  const tree = !!props.data?.tree;
+  const [path, labelX, labelY] = tree
+    ? getSmoothStepPath({
+        ...props,
+        borderRadius: 6,
+        // One bus just under the parent, also for the lower lines of a compact (wrapped) row,
+        // so the branches drop through the gaps between cards instead of crossing them.
+        ...(props.targetY - props.sourceY > 160
+          ? { centerY: props.sourceY + 45 }
+          : {}),
+      })
+    : getBezierPath(props);
   const pulse = props.data?.pulse as any;
   const busy = !!props.data?.busy;
+  const shown = !!props.selected || !!props.data?.hovered;
+  // Captions keep a readable on-screen size when zoomed out (like the far-zoom card text).
+  const zoom = useStore((st) => st.transform[2]),
+    inv = Math.min(1 / MIN_FIT_ZOOM, Math.max(1, 1 / Math.max(zoom, 0.01)));
   return (
     <>
       <BaseEdge
         path={path}
         markerEnd={props.markerEnd}
         markerStart={props.markerStart}
-        className={busy ? "edge-busy" : undefined}
+        className={
+          (tree ? "edge-tree" : "edge-link") +
+          (busy ? " edge-busy" : "") +
+          (shown ? " edge-shown" : "")
+        }
         style={{
-          stroke: pulse ? "#77d5ba" : busy ? "#5fb89f" : "#465267",
-          strokeWidth: pulse ? 2.5 : busy ? 2 : 1.5,
+          ...props.style,
+          stroke: pulse
+            ? "var(--edge-pulse)"
+            : busy
+              ? "var(--edge-busy)"
+              : shown
+                ? "var(--edge-hover)"
+                : tree
+                  ? "var(--edge-tree)"
+                  : "var(--edge-link)",
+          strokeWidth: pulse ? 2.5 : busy ? 2 : tree ? 1.5 : 1.25,
+          strokeDasharray: tree || pulse || busy ? undefined : "5 4",
         }}
       />
       <EdgeLabelRenderer>
         <div
-          className="edge-caption nodrag nopan"
+          className={"edge-caption nodrag nopan" + (shown ? " shown" : "")}
+          data-testid="edge-caption"
+          aria-hidden={!shown}
           style={{
-            transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+            transform: `translate(${labelX}px,${labelY}px) translate(-50%, -50%) scale(${inv})`,
           }}
         >
           {props.label}
@@ -290,7 +351,11 @@ function FlowEdge(props: EdgeProps) {
         <circle
           className="flow-particle"
           r="4"
-          fill={pulse.kind === "failure" ? "#f18c8c" : "#8ceacb"}
+          fill={
+            pulse.kind === "failure"
+              ? "var(--edge-pulse-failure)"
+              : "var(--edge-pulse)"
+          }
           style={{ pointerEvents: "all", cursor: "pointer" }}
           onClick={() =>
             // Run inspector: open this connection's request/response/duration/rule details.
@@ -328,7 +393,8 @@ export function TeamCanvas(p: Props) {
       (p.data.teamView?.teams ?? []).map((t) => [t.id, t.name]),
     );
   const groupsKey = teamKey("groups", teamId),
-    viewportKey = teamKey("viewport", teamId);
+    viewportKey = teamKey("viewport", teamId),
+    arrangedKey = teamKey("arranged", teamId);
   const allAgents = p.data.teamView?.allAgents ?? p.data.agents;
   const agentName = (id: string) =>
     allAgents.find((a) => a.id === id)?.name ?? "Unknown agent";
@@ -375,21 +441,61 @@ export function TeamCanvas(p: Props) {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
-  // Restored once: a saved viewport wins over fitView so the canvas reopens where it was left.
+  // Restored once: a viewport the user panned/zoomed to by hand wins over fitting, so the canvas
+  // reopens where it was left. Otherwise (and for viewports stored before `manual` existed) the
+  // canvas fits the team (ui/canvas-fit.ts).
   const [viewport] = useState(() => {
-    const v = saved<{ x: number; y: number; zoom: number } | null>(
+    const v = saved<(Viewport & { manual?: boolean }) | null>(
       viewportKey,
       null,
     );
     return v &&
+      v.manual === true &&
       [v.x, v.y, v.zoom].every(
         (n) => typeof n === "number" && Number.isFinite(n),
       ) &&
       v.zoom >= 0.15 &&
       v.zoom <= 2
-      ? v
+      ? { x: v.x, y: v.y, zoom: v.zoom }
       : null;
   });
+  const { theme } = useTheme();
+  const canvasRef = useRef<HTMLDivElement>(null),
+    fitState = useRef<FitState>({ manual: !!viewport, hint: false }),
+    lastFit = useRef<Viewport | null>(null),
+    gesture = useRef(false),
+    [fitHint, setFitHint] = useState(false),
+    [hoverEdge, setHoverEdge] = useState<string | null>(null);
+  /** Fit the visible cards into the canvas (padding, readable minimum zoom). */
+  function applyFit(duration = 200) {
+    const el = canvasRef.current;
+    if (!flow || !el || !el.clientWidth || !el.clientHeight) return;
+    const visible = flow.getNodes().filter((n) => !n.hidden);
+    if (!visible.length) return;
+    const v = fitViewport(flow.getNodesBounds(visible), {
+      width: el.clientWidth,
+      height: el.clientHeight,
+    });
+    lastFit.current = v;
+    void flow.setViewport(v, { duration });
+  }
+  function fitTrigger(t: FitTrigger, duration?: number) {
+    const r = fitStep(fitState.current, t);
+    fitState.current = r.state;
+    setFitHint(r.state.hint);
+    // An explicit fit forgets the hand-placed viewport (the next launch fits again).
+    if (t === "explicit")
+      try {
+        localStorage.removeItem("agentteam." + viewportKey);
+      } catch {
+        /* storage unavailable */
+      }
+    if (r.fit && t === "resize" && reflowRef.current()) return;
+    if (r.fit) applyFit(duration);
+  }
+  const fitRef = useRef(fitTrigger);
+  fitRef.current = fitTrigger;
+  const reflowRef = useRef<() => boolean>(() => false);
   const positions = saved<Record<string, { x: number; y: number }>>(
     "positions",
     {},
@@ -423,6 +529,48 @@ export function TeamCanvas(p: Props) {
           { width: n.measured!.width!, height: n.measured!.height! },
         ]),
     );
+  /** The whole team's org layout for the current canvas width (compact when too wide). */
+  const bestLayout = () => {
+    const el = canvasRef.current;
+    const maxWidth = el?.clientWidth
+      ? (el.clientWidth - 2 * FIT_PADDING) / MIN_FIT_ZOOM
+      : 0;
+    return fitOrgLayout(
+      orgInput(p.data.agents),
+      orgEdges(),
+      {
+        sizes: measuredSizes(nodes),
+        defaultSize: cardSize(),
+        origin: { x: 0, y: 0 },
+        aside: assistantIds,
+      },
+      maxWidth,
+    ).positions;
+  };
+  /**
+   * After a canvas resize: an arrangement made automatically (Arrange, insert) whose cards were
+   * not moved since is re-flowed for the new width (compact or regular). Returns whether it did.
+   */
+  const reflowArranged = () => {
+    const last = saved<Record<string, { x: number; y: number }> | null>(
+      arrangedKey,
+      null,
+    );
+    if (!last) return false;
+    const agentNodes = nodes.filter((n) => n.type === "agent");
+    const same = (a: { x: number; y: number }, b?: { x: number; y: number }) =>
+      !!b && Math.abs(a.x - b.x) < 1 && Math.abs(a.y - b.y) < 1;
+    if (
+      agentNodes.length !== Object.keys(last).length ||
+      !agentNodes.every((n) => same(n.position, last[n.id]))
+    )
+      return false;
+    const next = bestLayout();
+    if (agentNodes.every((n) => same(n.position, next[n.id]))) return false;
+    arrange();
+    return true;
+  };
+  reflowRef.current = reflowArranged;
   const orgInput = (agents: Agent[]) =>
     agents.map((a) => ({ id: a.id, parentId: a.parentId }));
   const orgEdges = () =>
@@ -455,21 +603,29 @@ export function TeamCanvas(p: Props) {
           y: Math.min(...others.map((n) => n.position.y)),
         };
     }
-    const result = orgLayout(orgInput(agents), orgEdges(), {
-      sizes: measuredSizes(nodes),
-      defaultSize: cardSize(),
-      origin,
-      aside: only ? [] : assistantIds,
-    }).positions;
+    // A whole-team arrangement reflows wide leaf rows into lines (compact layout) when the
+    // regular org chart would not fit the canvas at the lowest readable zoom.
+    const result = only
+      ? fitOrgLayout(
+          orgInput(agents),
+          orgEdges(),
+          {
+            sizes: measuredSizes(nodes),
+            defaultSize: cardSize(),
+            origin,
+            aside: [],
+          },
+          0,
+        ).positions
+      : bestLayout();
     persist("positions", { ...saved("positions", {}), ...result });
+    // Remembered so a later canvas resize may re-flow this automatic arrangement (never a
+    // hand-placed one).
+    if (!only) persist(arrangedKey, result);
     setNodes((old) =>
       old.map((n) => (result[n.id] ? { ...n, position: result[n.id] } : n)),
     );
-    if (fit)
-      setTimeout(
-        () => flow?.fitView({ padding: 0.15, duration: 200, maxZoom: 1 }),
-        80,
-      );
+    if (fit) setTimeout(() => fitRef.current("explicit"), 80);
   }
   // Automatic arrangement, once the cards have been measured: a pending request from an insert
   // (team, template, pack, example team) for this team, or a team none of whose agents has a
@@ -497,6 +653,40 @@ export function TeamCanvas(p: Props) {
     if (memberIds.length && !memberIds.some((id) => stored[id]))
       arrange(undefined, !saved(viewportKey, null));
   }, [flow, nodes]);
+  // Fit once the visible cards are measured, and again when the set of visible cards (or the card
+  // style) changes, unless the user has moved the view by hand (then the "Fit" hint shows).
+  const fitKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (!flow) return;
+    const shown = nodes.filter((n) => !n.hidden);
+    if (!shown.length || !shown.every((n) => n.measured?.width)) return;
+    const key = shown.map((n) => n.id).join(",") + (simple ? "" : ":detailed");
+    if (fitKey.current === key) return;
+    const first = fitKey.current === null;
+    fitKey.current = key;
+    if (first && fitState.current.manual) return; // restored viewport: leave it
+    fitRef.current("nodes", first ? 0 : 200);
+  }, [flow, nodes, simple]);
+  // Canvas size changes (side panel opened/closed or resized, window resized): debounced re-fit.
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!flow || !el) return;
+    let size = { w: el.clientWidth, h: el.clientHeight },
+      timer: ReturnType<typeof setTimeout> | undefined;
+    const observer = new ResizeObserver(() => {
+      const w = el.clientWidth,
+        h = el.clientHeight;
+      if (Math.abs(w - size.w) < 2 && Math.abs(h - size.h) < 2) return;
+      size = { w, h };
+      clearTimeout(timer);
+      timer = setTimeout(() => fitRef.current("resize"), 150);
+    });
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      clearTimeout(timer);
+    };
+  }, [flow]);
   useEffect(() => {
     // An insert finishing while this canvas is open re-runs the check above.
     const again = () => setNodes((ns) => [...ns]);
@@ -581,9 +771,25 @@ export function TeamCanvas(p: Props) {
       return [...agentNodes, ...groupNodes];
     });
   }, [p.data, p.selected, simple, groups]);
+  // Org-chart parents (as Arrange lays them out): an edge parent → child is a tree edge.
+  const parents = useMemo(
+    () => resolveParents(orgInput(p.data.agents), orgEdges()),
+    [p.data.agents, p.data.edges],
+  );
+  const arrowColor = theme === "light" ? "#8a97a8" : "#5d6d82";
   const edges = useMemo(
     () =>
       visibleEdges(p.data.edges, groups).map((e) => {
+        const tree =
+          !e.grouped && e.source === e.from && e.target === e.to
+            ? parents[e.to] === e.from
+            : false;
+        const kindLabel = {
+          delegate: "Tasks",
+          consult: "Advice",
+          review: "Review",
+          notify: "Updates",
+        }[e.kind as Edge["kind"]];
         const event = e.grouped
           ? undefined
           : [...p.events]
@@ -602,18 +808,26 @@ export function TeamCanvas(p: Props) {
           source: e.source,
           target: e.target,
           type: "flow",
-          label: {
-            delegate: "Tasks",
-            consult: "Advice",
-            review: "Review",
-            notify: "Updates",
-          }[e.kind as Edge["kind"]],
-          markerEnd: { type: MarkerType.ArrowClosed, color: "#6c829a" },
+          label: kindLabel,
+          ariaLabel: `${agentName(e.from)} to ${agentName(e.to)}: ${kindLabel ?? e.kind}`,
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: arrowColor,
+            width: 14,
+            height: 14,
+          },
           markerStart:
             (e as any).bidirectional && !e.grouped
-              ? { type: MarkerType.ArrowClosed, color: "#6c829a" }
+              ? {
+                  type: MarkerType.ArrowClosed,
+                  color: arrowColor,
+                  width: 14,
+                  height: 14,
+                }
               : undefined,
           data: {
+            tree,
+            hovered: hoverEdge === e.id,
             busy: e.enabled && sourceBusy && e.kind === "delegate",
             pulse: event
               ? {
@@ -626,7 +840,16 @@ export function TeamCanvas(p: Props) {
           style: { opacity: e.enabled ? 1 : 0.35 },
         };
       }),
-    [p.data.edges, p.data.activity, p.events, now, groups],
+    [
+      p.data.edges,
+      p.data.activity,
+      p.events,
+      now,
+      groups,
+      parents,
+      hoverEdge,
+      arrowColor,
+    ],
   );
   const selectedAgentIds = useMemo(() => {
     const ids = new Set<string>();
@@ -649,6 +872,8 @@ export function TeamCanvas(p: Props) {
       return g ? toggleGroup(all, g.id, false) : all;
     });
     setNodes((ns) => ns.map((n) => ({ ...n, selected: n.id === id })));
+    // Walking the hierarchy moves the view on purpose: no automatic re-fit afterwards.
+    fitTrigger("user-move");
     setTimeout(
       () =>
         flow?.fitView({
@@ -781,7 +1006,13 @@ export function TeamCanvas(p: Props) {
           ))}
         </div>
       )}
-      <div className="canvas" aria-label={`Team canvas: ${teamName}`}>
+      <div
+        className="canvas"
+        ref={canvasRef}
+        aria-label={`Team canvas: ${teamName}`}
+        data-testid="team-canvas"
+        data-fit={fitHint ? "hint" : "auto"}
+      >
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -804,6 +1035,10 @@ export function TeamCanvas(p: Props) {
               bidirectional: false,
               enabled: true,
             })
+          }
+          onEdgeMouseEnter={(_, edge) => setHoverEdge(edge.id)}
+          onEdgeMouseLeave={(_, edge) =>
+            setHoverEdge((h) => (h === edge.id ? null : h))
           }
           onEdgeClick={(_, edge) => {
             const existing = p.data.edges.find((e) => e.id === edge.id);
@@ -832,20 +1067,69 @@ export function TeamCanvas(p: Props) {
           }
           deleteKeyCode={["Backspace", "Delete"]}
           onInit={setFlow}
-          onMoveEnd={(_, v) => persist(viewportKey, v)}
-          {...(viewport
-            ? { defaultViewport: viewport }
-            : { fitView: true, fitViewOptions: { maxZoom: 1, padding: 0.2 } })}
+          onMoveStart={(e) => {
+            gesture.current = !!e;
+          }}
+          // A wheel/drag that interrupts a running fit animation continues that gesture (no new
+          // start event), so user input is also recognised here.
+          onMove={(e) => {
+            if (!e) return;
+            gesture.current = true;
+            // Manual at once: a debounced re-fit must not undo a pan/zoom still in progress.
+            if (!fitState.current.manual) fitTrigger("user-move");
+          }}
+          onMoveEnd={(e, v) => {
+            // A pan/zoom by hand (not a click on the pane, not our own fit) stops auto-fitting.
+            if ((e || gesture.current) && !sameViewport(lastFit.current, v))
+              fitTrigger("user-move");
+            gesture.current = false;
+            if (fitState.current.manual)
+              persist(viewportKey, { ...v, manual: true });
+          }}
+          {...(viewport ? { defaultViewport: viewport } : {})}
           minZoom={0.15}
           maxZoom={2}
-          colorMode="dark"
+          colorMode={theme}
         >
-          <Background gap={24} size={1} color="#262e3b" />
-          <Controls showInteractive={false} />
+          <Background
+            gap={24}
+            size={1}
+            bgColor={theme === "light" ? "#eef1f5" : "#121821"}
+            color={theme === "light" ? "#d5dbe3" : "#262e3b"}
+          />
+          <Controls
+            showInteractive={false}
+            showFitView={false}
+            onZoomIn={() => fitTrigger("user-move")}
+            onZoomOut={() => fitTrigger("user-move")}
+          >
+            <ControlButton
+              onClick={() => fitTrigger("explicit")}
+              title="Fit the team to the view"
+              aria-label="Fit view"
+            >
+              <Maximize size={12} />
+            </ControlButton>
+          </Controls>
           {members.length > 12 && (
-            <MiniMap nodeColor="#344c51" maskColor="#10141cbb" pannable />
+            <MiniMap
+              nodeColor={theme === "light" ? "#c9d6dc" : "#344c51"}
+              maskColor={theme === "light" ? "#eef1f566" : "#10141cbb"}
+              pannable
+            />
           )}
         </ReactFlow>
+        {fitHint && (
+          <button
+            className="fit-hint"
+            data-testid="fit-hint"
+            title="The canvas changed size; fit the team to the view again"
+            onClick={() => fitTrigger("explicit")}
+          >
+            <Maximize size={13} />
+            Fit
+          </button>
+        )}
         {!members.length && (
           <div className="canvas-empty" data-testid="canvas-empty">
             <h2>No agents in {teamName} yet</h2>

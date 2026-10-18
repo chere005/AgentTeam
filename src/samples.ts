@@ -17,6 +17,7 @@ import {
   attachProjectWorkspaceInTx,
   resolveProjectWorkspace,
   teamProfile,
+  type ProjectAttachment,
   type TeamProfile,
 } from "./team-profiles.ts";
 
@@ -60,6 +61,10 @@ export type WorkflowSetup = {
   handoffNotes?: boolean;
   /** Project workspace attached to the team's agents when the project was assigned. */
   workspace?: string;
+  /** Folder attachments this project added (src/project-lifecycle.ts detaches only these). */
+  attachments?: ProjectAttachment[];
+  /** The user declined the offer to detach this project's folders (never asked again). */
+  detachDismissedAt?: string;
 };
 
 const teamOptionsSchema = z
@@ -188,18 +193,19 @@ export function buildWolframProjectInTx(
     "team_incomplete",
     "A Wolfram-validated team needs one or two Wolfram validators",
   );
-  if (input.workspace)
-    attachProjectWorkspaceInTx(
-      store,
-      Object.fromEntries([
-        [lead.id, profile.workspace?.access[lead.id] ?? "read"],
-        ...wolfram.map((w) => [
-          w.id,
-          profile.workspace?.access[w.id] ?? "write",
+  const attachments = input.workspace
+    ? attachProjectWorkspaceInTx(
+        store,
+        Object.fromEntries([
+          [lead.id, profile.workspace?.access[lead.id] ?? "read"],
+          ...wolfram.map((w) => [
+            w.id,
+            profile.workspace?.access[w.id] ?? "write",
+          ]),
         ]),
-      ]),
-      input.workspace,
-    );
+        input.workspace,
+      )
+    : [];
   const problem = input.problem;
   const workflow = service.workflow({
     name: input.name,
@@ -220,7 +226,7 @@ export function buildWolframProjectInTx(
       warnings: [],
       resolved: [],
     },
-    ...(input.workspace ? { workspace: input.workspace } : {}),
+    ...(input.workspace ? { workspace: input.workspace, attachments } : {}),
   };
   store.put("workflow", { ...workflow, paused: true, setup });
   store.emit("workflow.paused", workflow.id);

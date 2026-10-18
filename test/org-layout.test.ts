@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   CARD_HEIGHT,
+  fitOrgLayout,
   orgLayout,
   overlap,
   resolveParents,
@@ -213,4 +214,57 @@ test("stable ordering: identical input gives identical output; sibling order fol
   assert.deepEqual(one, two);
   assert.ok(one.positions.z.x < one.positions.a.x);
   assert.deepEqual(orgLayout([]).positions, {});
+});
+
+test("compact layout (wrap): wide leaf rows become staggered lines; invariants deliberately relaxed only for those rows", () => {
+  // lead -> integrator -> 10 leaf workers, lead -> reviewer (leaf): like the pipeline team.
+  const nodes: OrgNode[] = [
+    { id: "lead" },
+    { id: "int", parentId: "lead" },
+    { id: "rev", parentId: "lead" },
+    ...Array.from({ length: 10 }, (_, i) => ({ id: "w" + i, parentId: "int" })),
+  ];
+  const plain = orgLayout(nodes);
+  const l = orgLayout(nodes, [], { wrap: 3 });
+  const box = (id: string) => ({
+    ...l.positions[id],
+    width: W,
+    height: CARD_HEIGHT.compact,
+  });
+  const ids = Object.keys(l.positions);
+  for (let i = 0; i < ids.length; i++)
+    for (let j = i + 1; j < ids.length; j++)
+      assert.ok(!overlap(box(ids[i]), box(ids[j])), `${ids[i]} / ${ids[j]}`);
+  for (const [id, p] of Object.entries(l.parent))
+    if (p) assert.ok(box(p).y + box(p).height <= box(id).y, `${p} above ${id}`);
+  // Lines of at most 3, four lines, each lower line below the previous.
+  const ys = [
+    ...new Set(ids.filter((x) => x[0] === "w").map((x) => l.positions[x].y)),
+  ].sort((a, b) => a - b);
+  assert.equal(ys.length, 4);
+  for (const y of ys)
+    assert.ok(
+      ids.filter((x) => x[0] === "w" && l.positions[x].y === y).length <= 3,
+    );
+  // Non-wrapped siblings (int, rev) still share one row; the integrator is centered over its first line.
+  assert.equal(l.positions.int.y, l.positions.rev.y);
+  const cx = (id: string) => box(id).x + W / 2;
+  assert.ok(Math.abs(cx("int") - (cx("w0") + cx("w2")) / 2) <= 1);
+  // Second-line connectors run through the gaps of the first line (no first-line card under them).
+  for (const k of ["w3", "w4", "w5"])
+    for (const f of ["w0", "w1", "w2"])
+      assert.ok(
+        cx(k) <= box(f).x || cx(k) >= box(f).x + W,
+        `${k} line crosses ${f}`,
+      );
+  assert.ok(l.bounds.width < plain.bounds.width / 2);
+  // fitOrgLayout: plain when it fits, else the widest wrap that fits.
+  assert.equal(fitOrgLayout(nodes, [], {}, plain.bounds.width).wrap, null);
+  const fitted = fitOrgLayout(nodes, [], {}, 1500);
+  assert.ok(fitted.wrap! >= 2 && fitted.bounds.width <= 1500);
+  assert.ok(
+    orgLayout(nodes, [], { wrap: fitted.wrap! + 1 }).bounds.width > 1500,
+  );
+  // Deterministic.
+  assert.deepEqual(orgLayout(nodes, [], { wrap: 3 }).positions, l.positions);
 });

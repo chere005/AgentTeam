@@ -1459,6 +1459,138 @@ export class GitWorkflow {
     return this.opCommand(agentId, input, "continue");
   }
 
+  /**
+   * Start a merge or rebase of the current branch with a chosen branch. Never forced: a clean
+   * tracked tree, an explicit `confirmMode`, no operation in progress and (for a rebase that would
+   * rewrite commits already on the upstream) `confirmRewrite` are required. Conflicts leave the
+   * repository in the in-progress state that the conflict workflow (resolve/continue/abort) handles.
+   */
+  async integrate(agentId: string, input: unknown): Promise<ActionResult> {
+    const data = z
+      .object({
+        ...common,
+        mode: z.enum(["merge", "rebase"]),
+        /** Short branch name: a local branch, or `remote/name` for a remote-tracking branch. */
+        source: branchName,
+        confirmMode: z.boolean().optional(),
+        confirmRewrite: z.boolean().optional(),
+        confirmActiveRun: z.boolean().optional(),
+      })
+      .strict()
+      .parse(input);
+    assert(
+      flag(data.confirmMode),
+      "mode_confirmation_required",
+      data.mode === "merge"
+        ? `Merging ${data.source} can create a merge commit and stop with conflicts. Confirm to continue.`
+        : `Rebasing onto ${data.source} replays your local commits on top of it and rewrites them. Confirm to continue.`,
+      409,
+    );
+    const { loc, repo } = await this.context(agentId, data.workspace, true);
+    return this.mutate(agentId, repo, async () => {
+      const st = await this.repoState(agentId, loc, repo);
+      assert(
+        st.operation === "none",
+        "operation_in_progress",
+        `A ${st.operation} is in progress. Finish or abort it first.`,
+        409,
+      );
+      assert(
+        !st.detached && !st.unborn && st.branch,
+        "not_on_branch",
+        "Switch to a branch with commits first",
+        409,
+      );
+      assert(
+        !st.tracked,
+        "dirty_tree",
+        `${st.tracked} tracked file(s) have uncommitted changes. Commit or discard them before a ${data.mode}.`,
+        409,
+      );
+      let ref = "";
+      for (const prefix of ["refs/heads/", "refs/remotes/"]) {
+        if (
+          (
+            await git(repo, [
+              "show-ref",
+              "--verify",
+              "--quiet",
+              prefix + data.source,
+            ])
+          ).ok
+        ) {
+          ref = prefix + data.source;
+          break;
+        }
+      }
+      assert(
+        ref && !/\/HEAD$/.test(ref),
+        "branch_not_found",
+        `No branch named "${data.source}"`,
+        404,
+      );
+      assert(
+        ref !== `refs/heads/${st.branch}`,
+        "same_branch",
+        "Choose a different branch than the current one",
+        400,
+      );
+      this.requireIdle(agentId, loc.root, flag(data.confirmActiveRun));
+      if (data.mode === "rebase") {
+        const count = async (...args: string[]) =>
+          Number(
+            (await git(repo, ["rev-list", "--count", ...args])).out.trim() || 0,
+          );
+        const replayed = await count(`${ref}..HEAD`);
+        const unpushed = st.upstream
+          ? await count(`${ref}..HEAD`, "^@{u}")
+          : replayed;
+        assert(
+          replayed - unpushed === 0 || flag(data.confirmRewrite),
+          "rewrite_confirmation_required",
+          `${replayed - unpushed} commit(s) to replay are already on ${st.upstream}; rebasing rewrites them and a later push would need force, which AgentTeam does not offer. Confirm the rewrite to continue.`,
+          409,
+        );
+      }
+      const before = st.head;
+      const r = await git(
+        repo,
+        data.mode === "merge"
+          ? ["merge", "--no-edit", "--no-verify", ref]
+          : ["rebase", ref],
+      );
+      const state = await this.conflicts(agentId, {
+        workspace: data.workspace,
+      });
+      const after = await this.repoState(agentId, loc, repo);
+      if (!r.ok)
+        // Merge/rebase report conflicts on stdout; stderr only holds the exit message.
+        return this.fail(
+          data.mode,
+          { ...r, err: `${r.out}\n${r.err}` },
+          {
+            source: data.source,
+            conflicts: state,
+            state: after,
+          },
+        );
+      this.emit(agentId, data.mode, loc.root, { source: data.source });
+      return {
+        action: data.mode,
+        ok: true,
+        source: data.source,
+        summary:
+          before === after.head
+            ? `Already up to date with ${data.source}`
+            : data.mode === "merge"
+              ? `Merged ${data.source} into ${st.branch}`
+              : `Rebased ${st.branch} onto ${data.source}`,
+        conflicts: state,
+        state: after,
+      };
+    });
+  }
+
   // ---- new repositories -----------------------------------------------------
   async init(agentId: string, input: unknown): Promise<ActionResult> {
     const data = z

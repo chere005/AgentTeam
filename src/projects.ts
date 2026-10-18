@@ -13,7 +13,13 @@
 //   GET  /team-spaces/:id/projects   {teamId, projectType, profile, agents, projects, defaults}
 //   POST /team-spaces/:id/projects   assign a project (body depends on the team's project type)
 import { z } from "zod";
-import { assert, type Agent, type Task, type Workflow } from "./model.ts";
+import {
+  AppError,
+  assert,
+  type Agent,
+  type Task,
+  type Workflow,
+} from "./model.ts";
 import { MAX_WORKERS, createPipelineProject } from "./pipeline.ts";
 import {
   createWolframProject,
@@ -31,6 +37,7 @@ import {
   type ProjectType,
 } from "./team-profiles.ts";
 import { teamIdSchema } from "./team-spaces.ts";
+import { projectState, type ProjectWorkflow } from "./project-lifecycle.ts";
 
 export const FREE_FORM_PROJECT = "free-form-project";
 
@@ -49,15 +56,83 @@ const freeFormSchema = z
             title: z.string().trim().min(1).max(200),
             agentId: z.string().min(1).max(200),
             instructions: z.string().max(20_000).default(""),
+            /** Indexes (0-based) of other tasks in this list that must finish first. */
+            dependsOn: z
+              .array(z.number().int().min(0).max(29))
+              .max(29)
+              .optional(),
           })
           .strict(),
       )
       .max(30)
       .default([]),
-    /** Each task waits for the previous one (default) or all start together. */
+    /**
+     * Each task waits for the previous one (default) or all start together. Explicit per-task
+     * `dependsOn` lists need `sequential: false` (the two would contradict each other).
+     */
     sequential: z.boolean().default(true),
   })
   .strict();
+
+type FreeFormTask = z.infer<typeof freeFormSchema>["tasks"][number];
+/**
+ * Dependencies of a free-form task list as index lists (validated: in range, not the task itself,
+ * no duplicates, no cycle) and an order in which every task comes after its dependencies (stable:
+ * list order among ready tasks). Shared by the API and its tests; the form reports these errors.
+ */
+export function planTaskOrder(tasks: FreeFormTask[], sequential: boolean) {
+  const explicit = tasks.some((t) => t.dependsOn !== undefined);
+  assert(
+    !(sequential && explicit),
+    "invalid_dependencies",
+    'Choose either "run tasks in order" or explicit dependencies per task, not both',
+    400,
+  );
+  const deps = tasks.map((t, i) => {
+    const d = sequential ? (i > 0 ? [i - 1] : []) : (t.dependsOn ?? []);
+    for (const j of d) {
+      assert(
+        j < tasks.length,
+        "invalid_dependencies",
+        `Task ${i + 1} ("${t.title}") depends on task ${j + 1}, which does not exist`,
+        400,
+      );
+      assert(
+        j !== i,
+        "invalid_dependencies",
+        `Task ${i + 1} ("${t.title}") cannot depend on itself`,
+        400,
+      );
+    }
+    assert(
+      new Set(d).size === d.length,
+      "invalid_dependencies",
+      `Task ${i + 1} ("${t.title}") lists the same dependency twice`,
+      400,
+    );
+    return d;
+  });
+  const order: number[] = [];
+  const done = new Set<number>();
+  while (order.length < tasks.length) {
+    const next = tasks.findIndex(
+      (_, i) => !done.has(i) && deps[i].every((j) => done.has(j)),
+    );
+    if (next < 0) {
+      const stuck = tasks
+        .map((t, i) => (done.has(i) ? null : `${i + 1} ("${t.title}")`))
+        .filter(Boolean);
+      throw new AppError(
+        400,
+        "dependency_cycle",
+        `Task dependencies form a cycle among tasks ${stuck.join(", ")}`,
+      );
+    }
+    done.add(next);
+    order.push(next);
+  }
+  return { deps, order };
+}
 
 /** Agents of the team (never the global Team Assistant). */
 function teamAgents(service: TeamService, teamId: string) {
@@ -94,6 +169,7 @@ export async function createFreeFormProject(
   input: unknown,
 ) {
   const o = freeFormSchema.parse(input);
+  const { deps, order } = planTaskOrder(o.tasks, o.sequential);
   const workspace = await resolveProjectWorkspace(o.workspace);
   const store = service.store;
   const id = store.transaction(() => {
@@ -128,7 +204,7 @@ export async function createFreeFormProject(
       access[ownerId] = defaultProjectAccess(
         agents.find((a) => a.id === ownerId)!,
       );
-    attachProjectWorkspaceInTx(store, access, workspace);
+    const attachments = attachProjectWorkspaceInTx(store, access, workspace);
     const owner = store.get<Agent>("agent", ownerId);
     const workflow = service.workflow({
       name: o.name ?? projectName("Project", o.goal),
@@ -160,6 +236,7 @@ export async function createFreeFormProject(
       },
       expectations,
       workspace,
+      attachments,
     };
     store.put("workflow", { ...workflow, paused: true, setup });
     store.emit("workflow.paused", workflow.id);
@@ -172,8 +249,10 @@ export async function createFreeFormProject(
             instructions: `GOAL:\n${o.goal}\n\nRestate the goal as acceptance criteria, then plan and delegate the work to the team through AgentTeam. Report what was done, what was checked and what remains unverified.`,
           },
         ];
-    let previous: Task | null = null;
-    for (const t of tasks) {
+    // Created in dependency order so every dependency exists when its dependent is created.
+    const ids: string[] = [];
+    for (const i of o.tasks.length ? order : [0]) {
+      const t = tasks[i];
       const created: Task = service.task({
         workflowId: workflow.id,
         agentId: t.agentId,
@@ -181,14 +260,16 @@ export async function createFreeFormProject(
         instructions:
           t.instructions || `Contribute to the project goal:\n${o.goal}`,
         completionCriteria: "Done as described, with evidence",
-        ...(o.sequential && previous ? { dependsOn: [previous.id] } : {}),
+        ...(o.tasks.length && deps[i].length
+          ? { dependsOn: deps[i].map((j) => ids[j]) }
+          : {}),
         // Recorded as delegated by the lead only where the graph allows that delegation.
         ...(t.agentId !== ownerId &&
         service.permitted(ownerId, t.agentId, "delegate")
           ? { invokedBy: ownerId }
           : {}),
       });
-      previous = created;
+      ids[i] = created.id;
     }
     return workflow.id;
   });
@@ -222,11 +303,12 @@ export function projectInfo(service: TeamService, teamId: string) {
   }));
   const projects = service.teamSpaces
     .members(teamId)
-    .workflows.map((w: Workflow & { setup?: WorkflowSetup }) => ({
+    .workflows.map((w: ProjectWorkflow) => ({
       id: w.id,
       name: w.name,
       paused: w.paused,
       kind: w.setup?.sample ?? null,
+      lifecycle: projectState(w),
     }));
   return {
     teamId,

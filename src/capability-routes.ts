@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { join } from "node:path";
 import { projectRoot } from "./config.ts";
+import { contextCost } from "./context-cost.ts";
 import { effectiveInstructions } from "./effective-instructions.ts";
 import { AppError, type Agent } from "./model.ts";
 import { capabilitiesFor } from "./run-context.ts";
@@ -18,6 +19,7 @@ import type { TeamService } from "./service.ts";
  *   GET  /capabilities/skills/changes          assigned/pinned skills vs. their accepted revision
  *   POST /capabilities/skills/accept           {ids} user accepts the current text of changed skills
  *   GET  /agents/:id/effective-instructions?prompt=
+ *   GET  /agents/:id/context-cost?limit=      approximate instruction-context cost of recent runs (run.context events)
  *   GET/POST /tools/servers, PUT/DELETE /tools/servers/:id, POST /tools/servers/:id/test
  *   GET /agents/:id/tool-grants, PUT /agents/:id/tool-grants, DELETE /agents/:id/tool-grants/:serverId
  *   GET /knowledge/sources                     every source (management view)
@@ -33,7 +35,7 @@ export async function capabilityRoute(
 ): Promise<{ data: unknown; status?: number } | undefined> {
   const path = url.pathname;
   if (
-    !/^\/(capabilities\/|tools\/|knowledge\/|agents\/[^/]+\/(effective-instructions|tool-grants|knowledge))/.test(
+    !/^\/(capabilities\/|tools\/|knowledge\/|agents\/[^/]+\/(effective-instructions|context-cost|tool-grants|knowledge))/.test(
       path,
     )
   )
@@ -96,6 +98,20 @@ export async function capabilityRoute(
       data: await effectiveInstructions(service, agentOf(m[1]).id, {
         prompt: url.searchParams.get("prompt") ?? undefined,
       }),
+    };
+
+  if (method === "GET" && (m = path.match(/^\/agents\/([^/]+)\/context-cost$/)))
+    return {
+      data: contextCost(
+        service,
+        agentOf(m[1]).id,
+        z.coerce
+          .number()
+          .int()
+          .min(1)
+          .max(200)
+          .parse(url.searchParams.get("limit") ?? "30"),
+      ),
     };
 
   // ---- tool registry ------------------------------------------------------------------------

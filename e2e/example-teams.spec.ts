@@ -33,7 +33,10 @@ async function boxes(page: Page, ids: string[]) {
   return out;
 }
 
-/** Org-chart invariants: parents above children, siblings on one row, centered, no overlaps. */
+/**
+ * Org-chart invariants: parents above children, siblings on one row (or, for leaf reports of a
+ * team too wide for the canvas, lines of the compact layout), centered, no overlaps.
+ */
 function assertOrgChart(
   agents: { id: string; name: string; parentId: string | null }[],
   b: Record<string, Box>,
@@ -62,9 +65,15 @@ function assertOrgChart(
         b[parent.id].y + b[parent.id].height,
         `${parent.name} above ${k.name}`,
       ).toBeLessThanOrEqual(b[k.id].y + tol);
+    // Siblings share one row, or (compact layout for a wide team of leaf reports, deliberately:
+    // ui/org-layout.ts `wrap`) several lines; the parent is centered over the first line.
     const ys = kids.map((k) => b[k.id].y);
-    expect(Math.max(...ys) - Math.min(...ys), `${parent.name}'s row`).toBe(0);
-    const centers = kids.map((k) => cx(k.id));
+    const top = Math.min(...ys);
+    const leaves = kids.every((k) => !agents.some((a) => a.parentId === k.id));
+    if (!leaves || new Set(ys).size === 1)
+      expect(Math.max(...ys) - top, `${parent.name}'s row`).toBe(0);
+    const first = kids.filter((k) => b[k.id].y === top);
+    const centers = first.map((k) => cx(k.id));
     const mid = (Math.min(...centers) + Math.max(...centers)) / 2;
     expect(
       Math.abs(cx(parent.id) - mid),

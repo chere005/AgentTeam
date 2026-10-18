@@ -19,6 +19,7 @@ import { ParallelWork } from "./parallel.ts";
 import { HandoffNotes } from "./handoffs.ts";
 import { PipelineService } from "./pipeline.ts";
 import { TeamSpaces } from "./team-spaces.ts";
+import { taskWorkingFolder } from "./project-worktrees.ts";
 import { withRoleDefaults } from "./roles.ts";
 import { Store } from "./store.ts";
 import { SkillCatalog } from "./skills.ts";
@@ -46,6 +47,7 @@ import {
   type Session,
   type Message,
 } from "./model.ts";
+import { decideRouting } from "./routing-decision.ts";
 export class TeamService {
   store: Store;
   skills: SkillCatalog;
@@ -475,6 +477,14 @@ export class TeamService {
           };
         }
       >("workflow", id);
+      // An archived project stays paused until it is reopened (src/project-lifecycle.ts).
+      assert(
+        paused ||
+          (wf as { lifecycle?: { state: string } }).lifecycle?.state !==
+            "archived",
+        "project_archived",
+        "This project is archived; reopen it before resuming",
+      );
       // Samples stay paused until their model mapping was verified and still covers every
       // participating agent (owner and task agents) with an unchanged environment and model.
       if (!paused && wf.setup?.requiresModelVerification) {
@@ -523,6 +533,7 @@ export class TeamService {
     )
       data.dependsOn.push(workflow.coordination.planTaskId);
     const assignee = this.store.get<Agent>("agent", data.agentId);
+    this.assertNotRetired(assignee);
     const declared = canonicalDeclaredPaths(assignee, data.resourcePaths);
     if (declared) data.resourcePaths = declared;
     else delete data.resourcePaths;
@@ -553,6 +564,14 @@ export class TeamService {
         id: randomUUID(),
         status: "queued",
         queuedAt: new Date().toISOString(),
+        ...(data.invokedBy
+          ? {
+              routing: decideRouting(this, {
+                ...data,
+                invokedBy: data.invokedBy,
+              }),
+            }
+          : {}),
       };
       this.store.put("task", task);
       this.store.emit("task.created", task.id, { agentId: task.agentId });
@@ -612,6 +631,14 @@ export class TeamService {
       })
       .strict()
       .parse(input);
+    // A retired worker (Team settings) takes no new work: no start, no retry.
+    if (data.status === "running" || data.status === "queued")
+      this.assertNotRetired(
+        this.store.get<Agent>(
+          "agent",
+          this.store.get<Task>("task", id).agentId,
+        ),
+      );
     // Limit checks record their trip in their own transaction, so run them before ours.
     if (data.status === "running")
       this.limits.enforceStart(this.store.get<Task>("task", id));
@@ -926,7 +953,24 @@ export class TeamService {
       return { transport: "direct", executable: "", args: [] };
     }
   }
-  async launchPlan(agentId: string) {
+  /**
+   * Refuses work for an agent retired from its role in Team settings (src/team-settings.ts): it
+   * stays for the history that refers to it, but is never assigned, delegated to, started or
+   * chatted with until the role grows again and reinstates it.
+   */
+  assertNotRetired(agent: Agent) {
+    const retired = this.store
+      .list<{ retired?: { agentId: string }[] }>("team-profile")
+      .some((p) => p.retired?.some((r) => r.agentId === agent.id));
+    assert(
+      !retired,
+      "agent_retired",
+      `${agent.name} was retired from its role in Team settings and takes no new work; add a worker to that role to reinstate it`,
+      409,
+    );
+  }
+  /** `taskId`: the task about to run; its declared paths select the working folder. */
+  async launchPlan(agentId: string, taskId?: string) {
     const agent = this.store.get<Agent>("agent", agentId);
     await this.skills.scan();
     const loaded = agent.skills.map((assignment) => {
@@ -955,7 +999,10 @@ export class TeamService {
     });
     const decisions = decideSkills(entries, undefined);
     const sections = composeSections(agent, entries, decisions, adapter);
-    const cwd = agent.workspaces.find((w) => w.active)?.path ?? null;
+    const cwd =
+      taskWorkingFolder(this.store, agent, taskId) ??
+      agent.workspaces.find((w) => w.active)?.path ??
+      null;
     if (cwd) {
       const canonical = await realpath(cwd);
       assert(

@@ -46,7 +46,14 @@ export type TeamProfile = {
   source: { template: string; example?: string };
   /** Model verification done when the team was inserted (informational; projects re-verify). */
   modelCheck?: ModelCheck;
+  /**
+   * Workers removed from a role in Team settings that could not be deleted because finished
+   * project history refers to them (src/team-settings.ts); new projects no longer use them and
+   * adding a worker to that role again reinstates them first.
+   */
+  retired?: { agentId: string; role: string; at: string }[];
   createdAt: string;
+  updatedAt?: string;
 };
 
 const mapIds = <T>(rec: Record<string, T>, ids: Map<string, string>) =>
@@ -195,12 +202,16 @@ export async function resolveProjectWorkspace(raw: string) {
  * An agent that already has the folder keeps its existing attachment (access and rules are never
  * widened or narrowed here); the folder becomes active only for agents without an active one.
  * Refused while any of these agents has a running conversation (same rule as the agent editor).
+ * Returns the attachments it actually added (recorded on the project as `setup.attachments`, so
+ * detaching later never touches a folder that was attached before the project).
  */
 export function attachProjectWorkspaceInTx(
   store: Store,
   access: Record<string, "read" | "write">,
   path: string,
-) {
+): ProjectAttachment[] {
+  const added: ProjectAttachment[] = [];
+  const at = new Date().toISOString();
   const running = new Set(
     store
       .list<Session>("session")
@@ -228,5 +239,16 @@ export function attachProjectWorkspaceInTx(
     };
     store.put("agent", next);
     store.emit("agent.updated", agentId, { workspaceAttached: path });
+    added.push({ agentId, path, access: mode, at });
   }
+  return added;
 }
+
+/** A folder attachment a project added to one agent (absent `detachedAt` = still attached). */
+export type ProjectAttachment = {
+  agentId: string;
+  path: string;
+  access: "read" | "write";
+  at: string;
+  detachedAt?: string;
+};

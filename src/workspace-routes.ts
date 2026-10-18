@@ -14,7 +14,7 @@ import type { WorkspaceService } from "./workspaces.ts";
  *   POST /agents/:id/files/{open,open-plan}         Open file / project / reveal / open with
  *   POST /agents/:id/editors/{open,plan}            same, explicit names
  *   POST /agents/:id/git/{state,branches,switch,fetch,pull,push,log,commit-info,
- *        pr,pr/open,pr/record,conflicts,conflict-file,resolve,abort,continue,init}
+ *        pr,pr/open,pr/record,conflicts,conflict-file,resolve,integrate,abort,continue,init}
  *   POST /agents/:id/watch/{start,stop}             debounced change events (`workspace.changed`)
  * Returns undefined when the path is not one of these routes.
  */
@@ -54,7 +54,7 @@ export class WorkspaceExtras {
       return undefined;
     }
     const m = path.match(
-      /^\/agents\/([^/]+)\/(files\/(?:inspect|open|open-plan)|editors\/(?:open|plan)|git\/(?:state|branches|switch|fetch|pull|push|log|commit-info|pr|pr\/open|pr\/record|conflicts|conflict-file|resolve|abort|continue|init)|watch\/(?:start|stop))$/,
+      /^\/agents\/([^/]+)\/(files\/(?:inspect|open|open-plan)|editors\/(?:open|plan)|git\/(?:state|branches|switch|fetch|pull|push|log|commit-info|pr|pr\/open|pr\/record|conflicts|conflict-file|resolve|integrate|abort|continue|init)|watch\/(?:start|stop))$/,
     );
     if (!m || method !== "POST") return undefined;
     const agentId = decodeURIComponent(m[1]),
@@ -98,6 +98,8 @@ export class WorkspaceExtras {
         return { data: await g.conflictFile(agentId, body) };
       case "git/resolve":
         return { data: await g.resolveConflicts(agentId, body) };
+      case "git/integrate":
+        return { data: await g.integrate(agentId, body) };
       case "git/abort":
         return { data: await g.abort(agentId, body) };
       case "git/continue":

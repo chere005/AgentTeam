@@ -1,5 +1,6 @@
 import { test, expect, _electron as electron } from "@playwright/test";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openFeature } from "./helpers";
@@ -176,6 +177,50 @@ test("skills, tools and knowledge: validation, adapters, change acceptance, MCP 
     await expect(page.getByTestId("effective-tools")).toContainText(
       "MCP grant: Fixture MCP",
     );
+    // ---- context cost per run (run.context events) ---------------------------------------------
+    await expect(page.getByTestId("context-cost-empty")).toContainText(
+      "No runs recorded yet",
+    );
+    // No provider runs in tests: seed the events a run would have recorded.
+    const agentId = await page.evaluate(async () => {
+      const snapshot = await window.agentteam.request("GET", "/snapshot");
+      return snapshot.agents.find((a: any) => a.name === "Capable")
+        .id as string;
+    });
+    const db = new DatabaseSync(join(directory, "data", "agentteam.sqlite"));
+    db.exec("PRAGMA busy_timeout=5000");
+    for (const total of [300, 450, 400])
+      db.prepare(
+        "INSERT INTO events(type,entity_id,data,created_at) VALUES('run.context',?,?,?)",
+      ).run(
+        "session-" + total,
+        JSON.stringify({
+          agentId,
+          skills: [{ state: "loaded" }, { state: "listed" }],
+          approxTokens: {
+            role: 20,
+            instructions: 30,
+            skills: 100,
+            knowledge: 0,
+            total,
+          },
+        }),
+        new Date().toISOString(),
+      );
+    db.close();
+    await page.getByRole("tab", { name: "Skills", exact: true }).click();
+    await page
+      .getByRole("tab", { name: "Effective instructions", exact: true })
+      .click();
+    const cost = page.getByTestId("context-cost");
+    await expect(cost.getByTestId("context-cost-summary")).toContainText(
+      "latest ~400 · average ~383 · max ~450 tokens over 3 run(s)",
+    );
+    await expect(
+      cost.getByTestId("context-cost-runs").getByRole("listitem"),
+    ).toHaveCount(3);
+    await expect(cost.getByRole("img")).toBeVisible();
+    await expect(cost).toContainText("1 loaded, 1 listed");
     expect(errors).toEqual([]);
   } finally {
     await app.close();

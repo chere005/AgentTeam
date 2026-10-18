@@ -42,8 +42,11 @@ import {
 } from "./components/Panes";
 import { InboxPane, useInbox } from "./components/Inbox";
 import { LayoutSettings } from "./components/LayoutMenu";
+import { ThemeSettings } from "./components/ThemeSettings";
+import { useUnsavedGuard } from "./components/UnsavedGuard";
 import { TeamSwitcher, TeamNotice } from "./components/TeamSwitcher";
 import { openAssignProject } from "./components/Projects";
+import { TeamSettings } from "./components/TeamSettings";
 import { filterSnapshot, itemTeam, teamIndex, teamKey } from "./team-view";
 import { DialogFocusManager, ShortcutHelp } from "./components/A11y";
 import { focusables } from "./components/A11y";
@@ -88,6 +91,8 @@ export default function App() {
     [palette, setPalette] = useState(false),
     [creating, setCreating] = useState(false);
   const [selected, setSelected] = useState(() => saved("selected", ""));
+  // Actions that close the agent panel or replace its agent ask first when it has unsaved edits.
+  const { guard, dialog: unsavedDialog } = useUnsavedGuard();
   // One team at a time: every view gets the active team's slice of the (unfiltered) snapshot.
   const view = useMemo(() => filterSnapshot(data, data.activeTeamId), [data]);
   const teamId = view.activeTeamId,
@@ -228,16 +233,21 @@ export default function App() {
     setWidth(l.rightWidth);
   };
   /** Explicit "open conversation" action: shows the conversation in the side panel. */
-  const openConversation = (id: string) => {
-    setSelected(id);
-    setShowRight(true);
-    if (placement === "replace") setPanelOpen(false);
-  };
+  const openConversation = (id: string) =>
+    guard(() => {
+      setSelected(id);
+      setShowRight(true);
+      if (placement === "replace") setPanelOpen(false);
+    });
   /** Selecting an agent (canvas, palette, "Set up"): opens its setup panel. */
   const openAgentPanel = (id: string) => {
-    setSelected(id);
-    setPanelOpen(true);
-    if (placement === "replace") setShowRight(true);
+    const open = () => {
+      setSelected(id);
+      setPanelOpen(true);
+      if (placement === "replace") setShowRight(true);
+    };
+    if (id === selected) open();
+    else guard(open);
   };
   /** Team management from the switcher: errors go to the toast and keep the form open. */
   const teamAction = async (fn: () => Promise<unknown>) => {
@@ -252,6 +262,9 @@ export default function App() {
   /** Make `id` the active team (persisted by the backend); never pauses or cancels any work. */
   const switchTeam = (id: string, why?: string) => {
     if (id === teamId) return;
+    guard(() => doSwitchTeam(id, why));
+  };
+  const doSwitchTeam = (id: string, why?: string) => {
     const name = data.teams.find((t) => t.id === id)?.name ?? "team";
     switching.current = id;
     shownTeam.current = id;
@@ -326,7 +339,7 @@ export default function App() {
         (focusables(next)[0] ?? next).focus();
       } else if (mod && !e.shiftKey && e.key === "\\") {
         e.preventDefault();
-        setShowRight((v) => !v);
+        guard(() => setShowRight((v) => !v));
       } else if (
         mod &&
         !e.shiftKey &&
@@ -353,8 +366,10 @@ export default function App() {
           !document.querySelector(".team-popup, .context-menu")
         ) {
           e.preventDefault();
-          setPanelOpen(false);
-          document.querySelector<HTMLElement>(".main-pane")?.focus();
+          guard(() => {
+            setPanelOpen(false);
+            document.querySelector<HTMLElement>(".main-pane")?.focus();
+          });
         }
       } else if (e.key === "?" && !editing && !mod) {
         e.preventDefault();
@@ -369,7 +384,8 @@ export default function App() {
   const props = {
     data: view,
     selected,
-    setSelected,
+    setSelected: (id: string) =>
+      id === selected ? undefined : guard(() => setSelected(id)),
     act,
     events,
     edit: (a: Agent) => openAgentPanel(a.id),
@@ -396,6 +412,8 @@ export default function App() {
         );
       case "projects":
         return <Workflows {...props} />;
+      case "team-settings":
+        return <TeamSettings key={teamId} {...props} />;
       case "files":
       case "git":
       case "review":
@@ -407,6 +425,7 @@ export default function App() {
             {...props}
             workspace={
               <>
+                <ThemeSettings />
                 <section className="settings-card">
                   <h3>Agent panel</h3>
                   <p>
@@ -521,17 +540,18 @@ export default function App() {
       name: "Show chat",
       description: "Open the conversation with the selected agent.",
       keywords: "conversation message talk",
-      run: () => {
-        setShowRight(true);
-        if (placement === "replace") setPanelOpen(false);
-      },
+      run: () =>
+        guard(() => {
+          setShowRight(true);
+          if (placement === "replace") setPanelOpen(false);
+        }),
     },
     {
       id: "toggle-side",
       name: showRight ? "Hide side panel" : "Show side panel",
       description: "Chat and agent setup on the right (Ctrl/Cmd+\\).",
       keywords: "panel right",
-      run: () => setShowRight((v) => !v),
+      run: () => guard(() => setShowRight((v) => !v)),
     },
     {
       id: "switch-team",
@@ -571,11 +591,13 @@ export default function App() {
       events={events}
       act={act}
       placement={placement}
-      setPlacement={(p) => {
-        setPlacement(p);
-        setShowRight(true);
-      }}
-      close={() => setPanelOpen(false)}
+      setPlacement={(p) =>
+        guard(() => {
+          setPlacement(p);
+          setShowRight(true);
+        })
+      }
+      close={() => guard(() => setPanelOpen(false))}
       openChat={openConversation}
       openFeature={(id) => openFeature(id)}
       openConnection={openConnection}
@@ -615,6 +637,7 @@ export default function App() {
               teamAction(() => api("/team-spaces/" + id, "PUT", { name }))
             }
             assignProject={assignProject}
+            openSettings={() => openFeature("team-settings")}
             remove={(id, options) =>
               teamAction(async () => {
                 const r = await api("/team-spaces/" + id, "DELETE", options);
@@ -813,7 +836,8 @@ export default function App() {
                     role="tab"
                     aria-selected={side === "chat"}
                     onClick={() => {
-                      if (placement === "replace") setPanelOpen(false);
+                      if (placement === "replace")
+                        guard(() => setPanelOpen(false));
                     }}
                   >
                     <MessageSquare size={14} />
@@ -833,7 +857,7 @@ export default function App() {
                   className="icon"
                   aria-label="Hide side panel"
                   title="Hide (Ctrl/Cmd+\)"
-                  onClick={() => setShowRight(false)}
+                  onClick={() => guard(() => setShowRight(false))}
                 >
                   <PanelRightClose size={16} />
                 </button>
@@ -865,6 +889,7 @@ export default function App() {
         />
       )}
       {help && <ShortcutHelp close={() => setHelp(false)} />}
+      {unsavedDialog}
       {error && (
         <div className="toast" role="alert">
           <div>

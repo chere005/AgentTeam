@@ -1,0 +1,67 @@
+/*
+ * Light theme: hand-tuned exceptions to the twins derived from the dark styles
+ * (ui/theme-light.ts; this file is skipped by that plugin and loaded last).
+ * Mirrored lightness makes raised dark surfaces slightly darker than the page; cards, menus and
+ * dialogs read better as white sheets on a light grey ground, and backdrops as a soft dim.
+ */
+:root[data-theme="light"] {
+  --bg: #f4f6f9;
+  --panel: #ffffff;
+  --surface-1: #ffffff;
+  --surface-2: #ffffff;
+  --text: #1d2633;
+  --muted: #556274;
+  --faint: #636f80;
+  background: #f4f6f9;
+  color: #1d2633;
+}
+:where(:root[data-theme="light"]) .react-flow {
+  background: #eef1f5 !important;
+}
+:where(:root[data-theme="light"]) .agent-card {
+  background: #ffffff;
+  box-shadow: 0 1px 3px #1a24331a;
+}
+:where(:root[data-theme="light"]) .agent-card.chosen {
+  box-shadow:
+    0 0 0 3px #2f8c7333,
+    0 1px 3px #1a24331a;
+}
+:where(:root[data-theme="light"]) .modal-backdrop {
+  background: #1a243359;
+}
+:where(:root[data-theme="light"]) .context-menu {
+  background: #ffffff;
+  box-shadow: 0 10px 30px #1a243326;
+}
+:where(:root[data-theme="light"]) .react-flow__handle {
+  border-color: #ffffff !important;
+}
+/* Primary actions: a medium teal with white text reads calmer than the mirrored dark green. */
+:where(:root[data-theme="light"]) button.primary,
+:where(:root[data-theme="light"]) .send {
+  background: #23735f;
+  border-color: #23735f;
+  color: #ffffff;
+}
+:where(:root[data-theme="light"]) button.primary:hover:not(:disabled),
+:where(:root[data-theme="light"]) .send:hover:not(:disabled) {
+  background: #1b5e4d;
+}
+:where(:root[data-theme="light"]) .react-flow__attribution {
+  background: transparent;
+}
+:where(:root[data-theme="light"]) .react-flow__attribution a {
+  color: #556274;
+}
+/* Selected tabs sit on white panels: give them a visible tint. */
+:where(:root[data-theme="light"]) .side-tabs button[aria-selected="true"] {
+  background: #e6eeeb;
+}
+:where(:root[data-theme="light"]) .view-tab.active {
+  background: #ffffff;
+}
+:where(:root[data-theme="light"]) .modal {
+  background: #ffffff;
+  box-shadow: 0 24px 70px #1a243333;
+}

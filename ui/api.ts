@@ -62,6 +62,10 @@ declare global {
       chooseFolder: () => Promise<string | null>;
       chooseExecutable: () => Promise<string | null>;
       openAgent: (id: string, mode: string) => Promise<any>;
+      /** Main-process Save as… for the redacted diagnostic bundle (absent outside the desktop app). */
+      saveDiagnostics?: (format: "zip" | "json") => Promise<any>;
+      /** Mirrors Settings -> Appearance to the main process (window background, first paint). */
+      setTheme?: (setting: "system" | "light" | "dark") => Promise<unknown>;
       onEvent: (callback: (event: TeamEvent) => void) => () => void;
       platform: string;
     };

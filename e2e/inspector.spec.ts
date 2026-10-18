@@ -123,6 +123,10 @@ test("run inspector: timeline, wait explainer, transfers, previews, playground c
     await expect(transfer.getByTestId("transfer-rule")).toContainText(
       "Delegation edge",
     );
+    // The routing decision was recorded when the task was created, not inferred.
+    await expect(transfer.getByTestId("transfer-rule")).toContainText(
+      "Recorded when the task was created",
+    );
 
     // ---- routing + access preview -------------------------------------------------------------
     await page.getByRole("tab", { name: "Preview" }).click();
@@ -207,7 +211,7 @@ test("run inspector: timeline, wait explainer, transfers, previews, playground c
 
     // ---- redacted export ------------------------------------------------------------------------
     await page.evaluate(() => {
-      // Capture instead of opening a native save dialog.
+      // The desktop app saves through the main process; a blob download must not happen.
       (window as any).__downloads = [];
       HTMLAnchorElement.prototype.click = function () {
         (window as any).__downloads.push(this.download);
@@ -220,9 +224,32 @@ test("run inspector: timeline, wait explainer, transfers, previews, playground c
       "timeline.json",
     );
     await expect(page.getByTestId("export-result")).toContainText("Redacted:");
-    expect(await page.evaluate(() => (window as any).__downloads.length)).toBe(
-      1,
+    // Test mode: the main-process Save as… recorded the save instead of opening a dialog.
+    await expect(page.getByTestId("export-result")).toContainText(
+      "test mode: recorded, not written",
     );
+    expect(await page.evaluate(() => (window as any).__downloads.length)).toBe(
+      0,
+    );
+    const saves = await page.evaluate(async () => {
+      const r = await window.agentteam.request("GET", "/test/launches");
+      return r.launches.filter((l: { kind: string }) => l.kind === "save-as");
+    });
+    expect(saves).toHaveLength(1);
+    expect(saves[0].filename).toMatch(/^agentteam-diagnostics-.*\.zip$/);
+    expect(saves[0].bytes).toBeGreaterThan(100);
+    // The renderer may only name a format; it cannot pass content or a path.
+    await expect(
+      page.evaluate(() =>
+        window.agentteam.saveDiagnostics!({
+          format: "zip",
+          path: "/tmp/x",
+        } as never),
+      ),
+    ).rejects.toThrow();
+    await expect(
+      page.evaluate(() => window.agentteam.saveDiagnostics!("exe" as never)),
+    ).rejects.toThrow();
 
     // ---- canvas: open a connection to see its transfers -------------------------------------------
     await openFeature(page, "Canvas");
@@ -245,6 +272,93 @@ test("run inspector: timeline, wait explainer, transfers, previews, playground c
       "Parser written",
     );
     expect(errors).toEqual([]);
+  } finally {
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("playground: per-run routing-rule overrides show up in the run comparison", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentteam-e2e-rules-"));
+  const app = await electron.launch({
+    args: [".", ...(process.platform === "linux" ? ["--no-sandbox"] : [])],
+    env: { ...process.env, AGENTTEAM_DATA_DIR: directory, AGENTTEAM_TEST: "1" },
+  });
+  try {
+    const page = await app.firstWindow();
+    await expect(
+      page.getByText("Workspace connected", { exact: true }),
+    ).toBeVisible();
+    const ruleId = await page.evaluate(async () => {
+      const r = window.agentteam.request;
+      const lead = await r("POST", "/agents", {
+        name: "Lead",
+        environment: "codex",
+      });
+      const builder = await r("POST", "/agents", {
+        name: "Builder",
+        environment: "codex",
+      });
+      await r("POST", "/edges", {
+        from: lead.id,
+        to: builder.id,
+        kind: "delegate",
+      });
+      const rule = await r("POST", "/rules", {
+        agentId: lead.id,
+        scope: "action",
+        targetId: builder.id,
+        priority: 50,
+        kind: "delegate",
+        match: { textIncludes: ["compile"] },
+      });
+      await r("POST", "/inspector/examples", {
+        name: "Delegate build",
+        tasks: [
+          { key: "plan", title: "Plan", agent: "Lead" },
+          {
+            key: "build",
+            title: "compile the project",
+            agent: "Builder",
+            invokedBy: "Lead",
+          },
+        ],
+        fixture: {},
+        expected: { workflowStatus: "completed" },
+      });
+      return rule.id as string;
+    });
+    await openFeature(page, "Timeline & inspector");
+    await page.getByRole("tab", { name: "Playground" }).click();
+    const example = page
+      .getByTestId("example")
+      .filter({ hasText: "Delegate build" });
+    await example.getByRole("button", { name: "Run (fixture)" }).click();
+    await expect(page.getByTestId("run-row")).toHaveCount(1);
+    await page
+      .getByLabel("Run overrides")
+      .fill(JSON.stringify({ rules: { disable: [ruleId] } }));
+    await example.getByRole("button", { name: "Run (fixture)" }).click();
+    await expect(page.getByTestId("run-row")).toHaveCount(2);
+    for (const row of await page.getByTestId("run-row").all())
+      await row.getByRole("checkbox").check();
+    await page.getByRole("button", { name: "Compare selected runs" }).click();
+    await expect(page.getByTestId("diff-summary")).toContainText(
+      "routing decisions differ for 1 task",
+    );
+    await expect(page.getByTestId("rule-overrides")).toContainText(
+      "disabled action rule on Lead -> Builder",
+    );
+    await expect(page.getByTestId("routing-changed")).toContainText(
+      /(selected → unmatched|unmatched → selected)/,
+    );
+    // A bad override is explained, not silently ignored.
+    await page
+      .getByLabel("Run overrides")
+      .fill(JSON.stringify({ rules: { disable: ["no-such-rule"] } }));
+    await example.getByRole("button", { name: "Run (fixture)" }).click();
+    await expect(page.getByRole("alert").first()).toContainText("unknown rule");
+    await expect(page.getByTestId("run-row")).toHaveCount(2);
   } finally {
     await app.close();
     await rm(directory, { recursive: true, force: true });

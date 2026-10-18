@@ -1,0 +1,103 @@
+.team-settings .settings-card {
+  display: grid;
+  gap: 8px;
+}
+.team-settings .settings-card label {
+  display: grid;
+  gap: 3px;
+  font-size: 12.5px;
+}
+.ts-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 12.5px;
+}
+.ts-facts dt {
+  color: var(--muted);
+}
+.ts-facts dd {
+  margin: 0;
+}
+.ts-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.ts-table th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 500;
+  border-bottom: 1px solid var(--line);
+  padding: 4px 6px;
+}
+.ts-table td {
+  vertical-align: top;
+  border-bottom: 1px solid var(--line);
+  padding: 4px 6px;
+}
+.ts-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 2px;
+  font-size: 12.5px;
+}
+.team-settings .bad,
+.project-lifecycle .bad {
+  color: #f0b4b4;
+}
+.team-settings .good {
+  color: #9bdfc1;
+}
+.project-lifecycle {
+  display: grid;
+  gap: 6px;
+  margin: 6px 0;
+}
+.project-lifecycle .detach-offer {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: grid;
+  gap: 6px;
+  font-size: 12.5px;
+}
+.project-lifecycle .detach-offer p {
+  margin: 0;
+}
+.assign-tasks .task-editor {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  display: grid;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.assign-tasks .task-deps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 12px;
+}
+.assign-tasks .task-editor .row input {
+  flex: 1;
+  min-width: 0;
+}
+.assign-tasks .task-editor .row select {
+  flex: 0 1 40%;
+  min-width: 0;
+}
+.assign-tasks label.inline,
+.assign-tasks .task-deps label {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+.assign-tasks input[type="checkbox"] {
+  width: auto;
+  flex: none;
+  margin: 0;
+}

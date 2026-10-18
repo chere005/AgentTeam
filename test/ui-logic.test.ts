@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  INSTRUCTION_SOFT_LIMIT,
+  instructionLengthHint,
+  sparklinePoints,
+} from "../ui/instruction-length.ts";
+import {
   allLayouts,
   clampWidth,
   defaultLayout,
@@ -275,4 +280,26 @@ test("hierarchy navigation", () => {
     { id: "y", parentId: "x" },
   ];
   assert.deepEqual(descendants(cyc, "x"), ["y"]);
+});
+
+test("instruction length hint is soft: guidance when empty, a warning only above the threshold", () => {
+  assert.equal(instructionLengthHint("   ").level, "none");
+  const ok = instructionLengthHint("Review the diff. Output: JSON verdict.");
+  assert.equal(ok.level, "ok");
+  assert.equal(ok.approxTokens, Math.ceil(ok.chars / 4));
+  assert.equal(
+    instructionLengthHint("x".repeat(INSTRUCTION_SOFT_LIMIT)).level,
+    "ok",
+  );
+  const long = instructionLengthHint("x".repeat(INSTRUCTION_SOFT_LIMIT + 1));
+  assert.equal(long.level, "long");
+  assert.match(long.message, /on-demand skill/);
+  assert.match(long.message, /still save/);
+});
+
+test("sparkline points fit the box and handle one or no value", () => {
+  assert.equal(sparklinePoints([], 100, 20), "");
+  assert.equal(sparklinePoints([5], 100, 20), "50.0,0.0");
+  assert.equal(sparklinePoints([0, 10], 100, 20), "0.0,20.0 100.0,0.0");
+  assert.equal(sparklinePoints([0, 0], 100, 20), "0.0,20.0 100.0,20.0");
 });

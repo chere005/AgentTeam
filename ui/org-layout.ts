@@ -12,6 +12,7 @@
  * - `aside` ids (the global Team Assistant) are not part of the tree; they are stacked in a column
  *   left of it, at the top, out of the way.
  * - Deterministic: the same input (order included) always gives the same positions.
+ * - `wrap` (compact layout for wide teams, `fitOrgLayout`): leaf siblings in lines of `wrap`.
  */
 export type OrgNode = { id: string; parentId?: string | null };
 export type OrgEdge = { from: string; to: string; kind?: string };
@@ -27,6 +28,12 @@ export type OrgLayoutOptions = {
   origin?: Point;
   /** Laid out beside the tree, never in it (e.g. the Team Assistant). */
   aside?: string[];
+  /**
+   * Compact layout for wide teams: siblings that are all leaves are placed in lines of at most
+   * `wrap` cards under their parent instead of one long row. Every other line is shifted by half
+   * a column, so the connectors to a lower line run through the gaps of the line above.
+   */
+  wrap?: number;
 };
 export type OrgLayout = {
   positions: Record<string, Point>;
@@ -123,12 +130,40 @@ export function orgLayout(
     if (p) children.get(p)!.push(n.id);
     else roots.push(n.id);
   }
+  // Compact layout: lines of leaf siblings (line index and vertical offset inside their row).
+  const wrap =
+    opts.wrap && Number.isFinite(opts.wrap) && opts.wrap >= 1
+      ? Math.floor(opts.wrap)
+      : 0;
+  const lineGap = Math.round(gapY * 0.6);
+  const line: Record<string, number> = {};
+  const lineOffset: Record<string, number> = {};
+  const wrapped = (id: string) => {
+    const kids = children.get(id)!;
+    return (
+      wrap > 0 &&
+      kids.length > wrap &&
+      kids.every((k) => !children.get(k)!.length)
+    );
+  };
+  for (const n of members) {
+    if (!wrapped(n.id)) continue;
+    const kids = children.get(n.id)!;
+    const lineH = Math.max(...kids.map((k) => size(k).height));
+    kids.forEach((k, i) => {
+      line[k] = Math.floor(i / wrap);
+      lineOffset[k] = line[k] * (lineH + lineGap);
+    });
+  }
   // Depth and row heights.
   const depth: Record<string, number> = {};
   const rowHeight: number[] = [];
   const visit = (id: string, d: number) => {
     depth[id] = d;
-    rowHeight[d] = Math.max(rowHeight[d] ?? 0, size(id).height);
+    rowHeight[d] = Math.max(
+      rowHeight[d] ?? 0,
+      (lineOffset[id] ?? 0) + size(id).height,
+    );
     for (const c of children.get(id)!) visit(c, d + 1);
   };
   for (const r of roots) visit(r, 0);
@@ -152,6 +187,26 @@ export function orgLayout(
       center[id] = left + w / 2;
       return left + w;
     }
+    if (wrapped(id)) {
+      // Grid of leaf lines; odd lines shifted by half a column.
+      const colW = Math.max(...kids.map((k) => size(k).width));
+      const pitch = colW + gapX;
+      let right = left;
+      kids.forEach((k, i) => {
+        const shiftX = line[k] % 2 ? pitch / 2 : 0;
+        center[k] = left + shiftX + (i % wrap) * pitch + colW / 2;
+        right = Math.max(right, center[k] + colW / 2);
+      });
+      // The parent sits over the first line.
+      const first = kids.slice(0, wrap);
+      center[id] = (center[first[0]] + center[first[first.length - 1]]) / 2;
+      const overhang = left - (center[id] - w / 2);
+      if (overhang > 0) {
+        shift(id, overhang);
+        right += overhang;
+      }
+      return Math.max(right, center[id] + w / 2);
+    }
     let cursor = left;
     let right = left;
     for (const c of kids) {
@@ -174,7 +229,7 @@ export function orgLayout(
     const s = size(n.id);
     positions[n.id] = {
       x: Math.round(center[n.id] - s.width / 2),
-      y: Math.round(rowY[depth[n.id]]),
+      y: Math.round(rowY[depth[n.id]] + (lineOffset[n.id] ?? 0)),
     };
   }
   // Aside column: left of the tree, top-aligned.
@@ -212,4 +267,30 @@ export function overlap(a: Point & Size, b: Point & Size): boolean {
     a.y < b.y + b.height &&
     b.y < a.y + a.height
   );
+}
+
+/**
+ * The org layout for a canvas: the regular one when it fits `maxWidth` (flow units, i.e. the
+ * canvas width at the lowest readable zoom), else the widest compact (`wrap`) layout that fits,
+ * else the narrowest one tried (wrap 2). Wrapping only reflows leaf sibling rows.
+ */
+export function fitOrgLayout(
+  nodes: OrgNode[],
+  edges: OrgEdge[],
+  opts: OrgLayoutOptions,
+  maxWidth: number,
+): OrgLayout & { wrap: number | null } {
+  const plain = orgLayout(nodes, edges, { ...opts, wrap: undefined });
+  if (!(maxWidth > 0) || plain.bounds.width <= maxWidth)
+    return { ...plain, wrap: null };
+  const kidCounts = new Map<string, number>();
+  for (const p of Object.values(plain.parent))
+    if (p) kidCounts.set(p, (kidCounts.get(p) ?? 0) + 1);
+  const widest = Math.max(0, ...kidCounts.values());
+  let last: OrgLayout | null = null;
+  for (let w = widest - 1; w >= 2; w--) {
+    last = orgLayout(nodes, edges, { ...opts, wrap: w });
+    if (last.bounds.width <= maxWidth) return { ...last, wrap: w };
+  }
+  return last ? { ...last, wrap: 2 } : { ...plain, wrap: null };
 }

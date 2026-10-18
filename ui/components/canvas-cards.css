@@ -14,10 +14,14 @@
   gap: 6px;
 }
 .agent-card.far .card-glance b {
-  font-size: calc(15px * var(--inv));
-  white-space: nowrap;
+  /* Up to two lines, so names like "Engineering Manager" stay whole at far zoom. */
+  font-size: calc(14px * var(--inv));
+  line-height: 1.15;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 .agent-card.far .glance-line {
   font-size: calc(11px * var(--inv));
@@ -104,4 +108,41 @@
 }
 .main-pane:focus {
   outline: none;
+}
+/* Edges: tree connectors (parent → child) solid and orthogonal, other links lighter and dashed;
+   the kind label only while hovered or selected (TeamCanvas FlowEdge). */
+:root {
+  --edge-tree: #56667b;
+  --edge-link: #3d4859;
+  --edge-hover: #8fa3ba;
+  --edge-busy: #5fb89f;
+  --edge-pulse: #8ceacb;
+  --edge-pulse-failure: #f18c8c;
+}
+.edge-caption {
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.edge-caption.shown {
+  visibility: visible;
+  opacity: 1;
+}
+/* Shown when the user has panned/zoomed by hand and the canvas then changed size. */
+.fit-hint {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 5;
+  font-size: 11.5px;
+  padding: 4px 9px;
+  gap: 5px;
+  color: var(--muted);
+  background: var(--surface-2);
+  border-color: var(--line);
+}
+@media (prefers-reduced-motion: reduce) {
+  .edge-caption {
+    transition: none;
+  }
 }

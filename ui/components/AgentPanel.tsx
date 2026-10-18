@@ -29,6 +29,8 @@ import { RoleTypeSelect } from "./RoleType";
 import { RulesEditor } from "./AccessUi";
 import type { AccessRule } from "../access-view";
 import type { FeatureId } from "../features";
+import { registerUnsaved } from "./UnsavedGuard";
+import { instructionLengthHint } from "../instruction-length";
 import "./runtime-ui.css";
 import "./agent-panel.css";
 
@@ -610,6 +612,7 @@ export function AgentFormSections({
             placeholder="Standards, constraints and what a good result looks like…"
           />
         </label>
+        <InstructionLength text={form.instructions} />
         <label>
           Available tool identifiers
           <input
@@ -807,6 +810,20 @@ function useChanges(agent: Agent, events: TeamEvent[]) {
  * Side panel for the selected agent (opened by selecting it on the canvas). Edits are kept in a
  * local form until "Save changes"; the panel follows server updates while nothing is unsaved.
  */
+function InstructionLength({ text }: { text: string }) {
+  const hint = instructionLengthHint(text);
+  return (
+    <small
+      className={hint.level === "long" ? "notice" : "quiet"}
+      role="status"
+      data-testid="instruction-length"
+      data-level={hint.level}
+    >
+      {hint.chars.toLocaleString()} characters. {hint.message}
+    </small>
+  );
+}
+
 export function AgentPanel({
   agent,
   data,
@@ -858,12 +875,32 @@ export function AgentPanel({
       setBase(JSON.stringify(form));
       setError("");
       await act(async () => undefined);
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      return false;
     } finally {
       setBusy(false);
     }
   }
+  // Closing the panel, selecting another agent or switching team asks first (UnsavedGuard).
+  const guardSource = useRef({ dirty, save, base, name: agent.name });
+  guardSource.current = { dirty, save, base, name: agent.name };
+  useEffect(
+    () =>
+      registerUnsaved({
+        get name() {
+          return guardSource.current.name;
+        },
+        dirty: () => guardSource.current.dirty,
+        save: () => guardSource.current.save(),
+        discard: () => {
+          setForm(JSON.parse(guardSource.current.base));
+          setError("");
+        },
+      }),
+    [],
+  );
   return (
     <section
       className="agent-panel"

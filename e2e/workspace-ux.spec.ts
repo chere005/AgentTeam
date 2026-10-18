@@ -117,7 +117,17 @@ test("workspace persistence: open tabs, side panel width, selection and canvas v
     const transform = await page
       .locator(".react-flow__viewport")
       .evaluate((el) => (el as HTMLElement).style.transform);
-    expect(transform).toContain(`scale(${saved.zoom})`);
+    // Compare numerically: the browser serialises the inline transform with ~6 significant digits,
+    // and the stored zoom is arbitrary when the wheel interrupts a running fit animation (e.g. the
+    // debounced re-fit after the side panel resize), so "scale(1.8847736625514404)" reads back as
+    // "scale(1.88477)".
+    const m = transform.match(
+      /translate\(([-\d.e]+)px, ([-\d.e]+)px\) scale\(([-\d.e]+)\)/,
+    );
+    expect(m, transform).not.toBeNull();
+    expect(Number(m![3])).toBeCloseTo(saved.zoom, 4);
+    expect(Math.abs(Number(m![1]) - saved.x)).toBeLessThan(0.5);
+    expect(Math.abs(Number(m![2]) - saved.y)).toBeLessThan(0.5);
     // Closing a tab persists too.
     await page.getByRole("button", { name: "Close Activity log" }).click();
     await expect(tab(page, "Activity log")).toHaveCount(0);

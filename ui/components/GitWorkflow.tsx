@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
+import { GitIntegrate } from "./GitIntegrate";
 
 type State = {
   repository: string | null;
@@ -193,6 +194,14 @@ export function GitWorkflowPanel({
         </div>
       )}
       <BranchSwitcher
+        agentId={agentId}
+        workspace={workspace}
+        st={st}
+        run={run}
+        busy={busy}
+        tick={tick}
+      />
+      <GitIntegrate
         agentId={agentId}
         workspace={workspace}
         st={st}

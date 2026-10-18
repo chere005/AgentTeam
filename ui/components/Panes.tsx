@@ -15,6 +15,7 @@ import {
 } from "./Validation";
 import { PipelineHistory, PIPELINE_SAMPLE_ID } from "./Pipeline";
 import { AssignProject, useAssignRequest } from "./Projects";
+import { ProjectLifecycle } from "./ProjectLifecycle";
 import { WorkflowLimits } from "./Limits";
 import { WorkflowRecovery } from "./Recovery";
 import { WorkflowSharedState } from "./SharedState";
@@ -73,6 +74,7 @@ import {
 } from "../api";
 import { eventVisible } from "../team-view";
 import type { FeatureId } from "../features";
+import { GitRenamePair } from "./GitRenamePair";
 /** Comma-separated declared task paths from the task form. */
 const declaredPaths = (text: string) =>
   text
@@ -495,6 +497,19 @@ export function Workflows(p: PaneProps) {
     [target, setTarget] = useState(""),
     [match, setMatch] = useState("");
   const [assigning, setAssigning] = useState(false);
+  // Archived projects are hidden unless asked for (src/project-lifecycle.ts).
+  const [showArchived, setShowArchived] = useState(false);
+  const archived = p.data.workflows.filter(
+    (w) =>
+      (w as { lifecycle?: { state: string } }).lifecycle?.state === "archived",
+  ).length;
+  const shownWorkflows = showArchived
+    ? p.data.workflows
+    : p.data.workflows.filter(
+        (w) =>
+          (w as { lifecycle?: { state: string } }).lifecycle?.state !==
+          "archived",
+      );
   useAssignRequest(() => setAssigning(true));
   const selected = p.data.agents.find((a) => a.id === p.selected);
   const teamName = p.data.teamView?.team.name ?? "this team";
@@ -602,7 +617,17 @@ export function Workflows(p: PaneProps) {
           <button onClick={() => setAssigning(true)}>Assign project</button>
         </div>
       )}
-      {p.data.workflows.map((w) => (
+      {archived > 0 && (
+        <label className="inline show-archived">
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(e) => setShowArchived(e.target.checked)}
+          />
+          Show archived ({archived})
+        </label>
+      )}
+      {shownWorkflows.map((w) => (
         <section className="workflow" key={w.id}>
           <div className="row between">
             <b>{w.name}</b>
@@ -613,6 +638,7 @@ export function Workflows(p: PaneProps) {
             </span>
           </div>
           <p>{w.goal}</p>
+          <ProjectLifecycle workflow={w} act={p.act} />
           <SampleSetup workflow={w} act={p.act} />
           {w.setup?.sample === PIPELINE_SAMPLE_ID && (
             <PipelineHistory workflowId={w.id} act={p.act} />
@@ -1364,6 +1390,21 @@ export function Workspace(p: PaneProps & { view: WorkspaceView }) {
               {git?.status.length === 0 && (
                 <p className="hint">Working tree is clean.</p>
               )}
+              <GitRenamePair
+                files={git?.status ?? []}
+                disabled={!git?.canMutate}
+                onStage={(from, to) =>
+                  p.act(async () => {
+                    await api("/agents/" + agent.id + "/git/mutate", "POST", {
+                      workspace: root,
+                      action: "stage",
+                      paths: [],
+                      renames: [{ from, to }],
+                    });
+                    await loadGit();
+                  })
+                }
+              />
               <label>
                 Commit staged changes
                 <input
