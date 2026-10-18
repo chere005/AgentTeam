@@ -1,0 +1,118 @@
+.rules-editor {
+  margin-top: 10px;
+  border-top: 1px solid #354454;
+  padding-top: 8px;
+}
+.rules-editor summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: #c6d9ec;
+}
+.rule-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 6px 0;
+}
+.rule-row input {
+  flex: 1;
+  min-width: 0;
+}
+.rule-row code {
+  flex: 1;
+  word-break: break-all;
+}
+.external-notice {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 11px;
+  color: #d8c58f;
+  border: 1px dashed #6d6240;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 10px 0 0;
+}
+.external-notice.active {
+  color: #ffb4a0;
+  border-color: #a05a46;
+}
+.effective-access h3 {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.effective-lists {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 760px) {
+  .effective-lists {
+    grid-template-columns: 1fr;
+  }
+}
+.effective-lists ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.effective-lists li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  border-left: 3px solid #4d6b58;
+  background: #16222d;
+  font-size: 12px;
+}
+.effective-lists li.write {
+  border-left-color: #e4b879;
+}
+.effective-lists li.no {
+  border-left-color: #b86a5a;
+}
+.effective-lists small {
+  color: #9fb3c4;
+}
+.launch-review {
+  border: 1px solid #3c5362;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  margin: 10px 0;
+}
+.launch-review code {
+  margin-right: 6px;
+}
+.coop-section {
+  margin-top: 22px;
+}
+.coop-item {
+  border: 1px solid #3c5362;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.coop-item small,
+.coop-item .reason {
+  display: block;
+  color: #9fb3c4;
+  margin-top: 3px;
+}
+.coop-item .reason.blocking {
+  color: #f0b9a8;
+}
+.coop-tag {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: #2a3b4a;
+  margin-left: 6px;
+}
+.coop-tag.warn {
+  background: #5a3a2e;
+}

@@ -1,6 +1,8 @@
 import { watch as fsWatch, type FSWatcher, type WatchEventType } from "node:fs";
 import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { decide, hasRestrictions } from "./access.ts";
+import type { Agent } from "./model.ts";
 import type { Store } from "./store.ts";
 import type { WorkspaceService } from "./workspaces.ts";
 
@@ -276,15 +278,50 @@ export class WatchService {
         options.onStop?.(root);
       },
       onChange: (info) => {
-        for (const agentId of this.subscribers.get(info.root) ?? [])
+        for (const agentId of this.subscribers.get(info.root) ?? []) {
+          const paths = this.visiblePaths(agentId, info.root, info.paths);
+          // Only excluded files changed: nothing this agent may see, so no event (and no names).
+          if (paths === null) continue;
           this.store.emit("workspace.changed", agentId, {
             workspace: info.root,
             mode: info.mode,
             git: info.git,
-            paths: info.paths,
+            paths,
           });
+        }
       },
     });
+  }
+  /**
+   * Changed names the agent may see under its attachment rules (src/access.ts); excluded file names
+   * never reach the event stream. Null when every reported change was excluded and Git state did
+   * not change.
+   */
+  visiblePaths(
+    agentId: string,
+    root: string,
+    paths: string[],
+  ): string[] | null {
+    let ws: Agent["workspaces"][number] | undefined;
+    try {
+      ws = this.store
+        .get<Agent>("agent", agentId)
+        .workspaces.find((w) => w.path === root);
+    } catch {
+      return null;
+    }
+    if (!ws) return null; // detached since subscribing
+    if (!hasRestrictions(ws)) return paths;
+    const visible = paths.filter((p) => {
+      const rel = p.replace(/\\/g, "/");
+      if (rel.split("/")[0] === ".git") return true; // Git state names (HEAD, index, refs)
+      return decide(ws, rel).access !== "none";
+    });
+    return paths.length &&
+      !visible.length &&
+      !paths.some((p) => p.startsWith(".git"))
+      ? null
+      : visible;
   }
   async subscribe(agentId: string, input: unknown) {
     const loc = await this.ws.location(agentId, input);

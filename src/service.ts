@@ -4,15 +4,29 @@ import { realpath, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { ResourceCoordinator } from "./resources.ts";
+import { normalizeRules } from "./access.ts";
+import { canonicalDeclaredPaths } from "./declared-paths.ts";
 import { ValidationService } from "./validation.ts";
 import { LimitsService } from "./limits.ts";
 import { RecoveryService } from "./checkpoints.ts";
 import { SharedStateService } from "./shared-state.ts";
 import { ArtifactRegistry } from "./artifacts.ts";
+import { WorkflowGraphService } from "./workflow-graph.ts";
 import { Orchestration, matchEvidence } from "./orchestration.ts";
+import { OwnershipService } from "./ownership.ts";
+import { LockRecovery } from "./lock-recovery.ts";
+import { ParallelWork } from "./parallel.ts";
 import { withRoleDefaults } from "./roles.ts";
 import { Store } from "./store.ts";
 import { SkillCatalog } from "./skills.ts";
+import { adapterFor } from "./skill-adapters.ts";
+import {
+  attachContext,
+  classifySkills,
+  composeSections,
+  decideSkills,
+  sectionsText,
+} from "./skill-loading.ts";
 import {
   agentSchema,
   edgeSchema,
@@ -40,6 +54,14 @@ export class TeamService {
   shared: SharedStateService;
   artifacts: ArtifactRegistry;
   orchestration: Orchestration;
+  /** Who drives each agent's session (team, embedded chat, CLI, native app): src/ownership.ts. */
+  ownership: OwnershipService;
+  /** Crash/ownership lock reconciliation (src/lock-recovery.ts). */
+  locks: LockRecovery;
+  /** Guided parallel work: assignments, integration, write-conflict routing (src/parallel.ts). */
+  parallel: ParallelWork;
+  /** Executable workflow graphs (src/workflow-graph.ts). */
+  graphs: WorkflowGraphService;
   constructor(store: Store, skills: SkillCatalog) {
     this.store = store;
     this.approvals = new Approvals(store);
@@ -51,6 +73,10 @@ export class TeamService {
     this.shared = new SharedStateService(this);
     this.artifacts = new ArtifactRegistry(this);
     this.orchestration = new Orchestration(this);
+    this.ownership = new OwnershipService(this);
+    this.locks = new LockRecovery(this);
+    this.parallel = new ParallelWork(this);
+    this.graphs = new WorkflowGraphService(this);
   }
   async saveAgent(input: unknown, id?: string) {
     const data = agentSchema.parse(withRoleDefaults(input));
@@ -86,6 +112,14 @@ export class TeamService {
         400,
       );
       ws.path = await realpath(ws.path);
+      if (ws.rules) ws.rules = normalizeRules(ws.rules);
+      if (ws.explicitOnly)
+        assert(
+          ws.rules?.some((r) => r.access !== "none"),
+          "invalid_rule",
+          "An explicit-only attachment needs at least one file or folder rule",
+          400,
+        );
       assert(
         (await stat(ws.path)).isDirectory(),
         "invalid_path",
@@ -342,7 +376,10 @@ export class TeamService {
       !data.dependsOn.includes(workflow.coordination.planTaskId)
     )
       data.dependsOn.push(workflow.coordination.planTaskId);
-    this.store.get<Agent>("agent", data.agentId);
+    const assignee = this.store.get<Agent>("agent", data.agentId);
+    const declared = canonicalDeclaredPaths(assignee, data.resourcePaths);
+    if (declared) data.resourcePaths = declared;
+    else delete data.resourcePaths;
     if (data.invokedBy) {
       this.store.get<Agent>("agent", data.invokedBy);
       assert(
@@ -649,8 +686,14 @@ export class TeamService {
         "agent_busy",
         "Finish or stop active work before transferring control",
       );
+      assert(
+        !this.resources.drainingFor(id).length,
+        "lease_draining",
+        "A previous run's process may still be writing in this agent's folders; wait for its lease to drain (or force-release it after confirming it stopped) before transferring control",
+      );
       agent.control = control;
       this.store.put("agent", agent);
+      this.ownership.onControl(id, control);
       this.store.emit(
         control === "human" ? "agent.control_taken" : "agent.returned",
         id,
@@ -732,16 +775,14 @@ export class TeamService {
         );
       return { ...assignment, skill };
     });
-    const sections = [
-      `Agent: ${agent.name}\nRole: ${agent.role}`,
-      agent.instructions,
-    ];
-    for (const { mode, skill } of loaded)
-      sections.push(
-        mode === "always"
-          ? `Assigned skill: ${skill.name}\nResource base: ${skill.baseDir}\n${skill.body}`
-          : `Available skill: ${skill.name}\n${skill.description}\nRead ${skill.path} when needed. Resources are relative to ${skill.baseDir}.`,
-      );
+    const connection = this.connection(agent.environment);
+    const adapter = adapterFor(agent.environment, connection.transport);
+    // Change detection: first use pins a skill; a changed one is skipped until the user accepts it.
+    const entries = await classifySkills(this.store, loaded, {
+      persist: true,
+    });
+    const decisions = decideSkills(entries, undefined);
+    const sections = composeSections(agent, entries, decisions, adapter);
     const cwd = agent.workspaces.find((w) => w.active)?.path ?? null;
     if (cwd) {
       const canonical = await realpath(cwd);
@@ -751,28 +792,42 @@ export class TeamService {
         "Active workspace path changed; reattach it",
       );
     }
-    return {
+    const plan = {
       agentId,
-      connection: this.connection(agent.environment),
+      connection,
       environment: agent.environment,
       model: agent.model,
       effort: agent.effort,
       cwd,
-      instructions: sections.filter(Boolean).join("\n\n"),
-      skills: loaded.map(({ mode, skill }) => ({
+      instructions: sectionsText(sections),
+      skills: loaded.map(({ mode, skill }, i) => ({
         id: skill.id,
         name: skill.name,
         mode,
         hash: skill.hash,
         path: skill.path,
         compatibility: skill.compatibility,
+        version: skill.version ?? null,
+        state: decisions[i].state,
+        reason: decisions[i].reason,
       })),
       workspaces: agent.workspaces,
       tools: agent.tools,
-      warnings: loaded
-        .filter((l) => l.skill.compatibility !== "declared")
-        .map((l) => `${l.skill.name}: compatibility inferred or unverified`),
+      warnings: [
+        ...loaded
+          .filter((l) => l.skill.compatibility !== "declared")
+          .map((l) => `${l.skill.name}: compatibility inferred or unverified`),
+        ...decisions
+          .filter((d) => d.state === "skipped")
+          .map((d) => `${d.name}: ${d.reason}`),
+      ],
     };
+    return attachContext(plan, {
+      agent,
+      entries,
+      adapter,
+      baseInstructions: plan.instructions,
+    });
   }
 }
 export type LaunchPlan = Awaited<ReturnType<TeamService["launchPlan"]>>;

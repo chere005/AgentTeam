@@ -6,6 +6,20 @@ export const workspaceSchema = z
     path: z.string().min(1),
     access: z.enum(["read", "write"]),
     active: z.boolean().default(false),
+    /** File/subfolder rules and exclusions refining `access` (src/access.ts); absent = whole folder. */
+    rules: z
+      .array(
+        z
+          .object({
+            path: z.string().min(1).max(500),
+            access: z.enum(["none", "read", "write"]),
+          })
+          .strict(),
+      )
+      .max(200)
+      .optional(),
+    /** Grant only the listed rules (explicit files/folders), not the whole folder. */
+    explicitOnly: z.boolean().optional(),
   })
   .strict();
 export const ROLE_TYPES = [
@@ -161,6 +175,11 @@ export const taskSchema = z
     changedFiles: z.array(z.string().max(500)).max(1000).optional(),
     tags: z.array(z.string().max(100)).max(100).optional(),
     completionChecks: z.array(completionCheckSchema).max(20).optional(),
+    /**
+     * Declared files/folders (absolute, inside the agent's attached folders) this task will touch.
+     * Only these are leased; absent or empty keeps the safe default of leasing every attached folder.
+     */
+    resourcePaths: z.array(z.string().min(1).max(1000)).max(50).optional(),
   })
   .strict();
 export type AgentInput = z.infer<typeof agentSchema>;

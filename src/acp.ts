@@ -34,6 +34,7 @@ export const acpAdapter: RuntimeAdapter = {
       stdio: ["pipe", "pipe", "pipe"],
       ...plan.options,
     });
+    if (child.pid) hooks?.onSpawn?.(child.pid);
     let stderr = "",
       bytes = 0,
       replay = false,

@@ -1,6 +1,7 @@
-import { comparePriority } from "./priorities.ts";
+import { buildQueue, reservationHolders } from "./queue.ts";
 import { TeamService } from "./service.ts";
 import { RunManager, commandFor, executeCommand } from "./runtime.ts";
+import { prepareRunContext } from "./run-context.ts";
 import type { Task } from "./model.ts";
 export class Scheduler {
   executeProvider: typeof executeCommand;
@@ -27,6 +28,7 @@ export class Scheduler {
     // Completed work stays completed; running work becomes interrupted/resumable (or blocked on an
     // uncertain effect) with its checkpoint, and dead processes' leases are released.
     this.service.recovery.recover();
+    this.service.graphs.recover(); // workflow-graph steps: effect ledger decides command steps
     this.timer = setInterval(() => void this.tick(), 750);
   }
   stop() {
@@ -39,33 +41,29 @@ export class Scheduler {
     try {
       this.service.limits.sweep(); // runtime clock + runtime/token budget trips
       this.service.recovery.sweep(); // automatic retries whose backoff elapsed
-      const tasks = this.service.store
-        .list<Task>("task")
-        .filter((t) => t.status === "queued");
-      const requests = this.service.store.list<{
-        id: string;
-        agentId: string;
-        queuedAt: string;
-      }>("run-request");
-      // One clock reading for every score so equal-age work keeps FIFO (stable sort) order.
-      const now = Date.now();
-      const candidates = [
-        ...tasks.map((task) => ({
-          kind: "task" as const,
-          task,
-          priority: this.service.resources.priority(task.agentId),
-          score: this.service.resources.score(task, now),
-        })),
-        ...requests.map((request) => ({
-          kind: "chat" as const,
-          request,
-          priority: this.service.resources.priority(request.agentId),
-          score:
-            this.service.resources.priority(request.agentId) +
-            Math.max(0, now - Date.parse(request.queuedAt)) / 5000,
-        })),
-      ].sort(comparePriority);
+      this.service.graphs.sweep(); // workflow-graph steps waiting on gates without an event
+      this.service.locks.sweep(); // draining leases whose processes have exited
+      // One ordering for tasks and chat run requests (src/queue.ts): Preempt first, then priority plus
+      // aging; one clock reading keeps equal-age work FIFO. Entries waiting only for a lease on paths
+      // overlapping a lower-ranked entry reserve those paths (starvation guard).
+      const queue = buildQueue(this.service);
+      const tasksById = new Map(
+        this.service.store
+          .list<Task>("task")
+          .filter((t) => t.status === "queued")
+          .map((t) => [t.id, t]),
+      );
+      const candidates = queue.map((entry) =>
+        entry.kind === "chat"
+          ? { kind: "chat" as const, request: { id: entry.id }, entry }
+          : { kind: "task" as const, task: tasksById.get(entry.id)!, entry },
+      );
+      const reserved = new Set<string>();
+      for (const entry of queue)
+        if (reservationHolders(this.service, queue, entry).length)
+          reserved.add(entry.id);
       for (const candidate of candidates) {
+        if (reserved.has(candidate.entry.id)) continue; // a higher-ranked request holds these paths
         if (candidate.kind === "chat") {
           if (this.stopped || !this.runs.enabled) break;
           try {
@@ -122,6 +120,22 @@ export class Scheduler {
     let effectId: string | null = null;
     try {
       this.runs.assertRuntimeReady(plan);
+      // Guided parallel work: remember the checkouts' state to compare changed files afterwards.
+      if (this.service.parallel.isAssigned(task.id))
+        await this.service.parallel.begin(task).catch(() => {});
+      // Skill selection (always/on-demand), cited knowledge and the per-run context record. It is
+      // synchronous unless a knowledge source is included, and like every other await here it runs
+      // BEFORE the ledger records the provider run as started: a crash or abort here leaves the task
+      // plainly interrupted, never an uncertain mutating effect.
+      const context = prepareRunContext(
+        this.service,
+        plan,
+        `${task.title}\n${task.instructions}`,
+        task.id,
+      );
+      if (context instanceof Promise) await context;
+      if (controller.signal.aborted)
+        throw new Error("Cancelled before the provider started");
       const recovery = this.service.recovery;
       // Selected dependency outputs, readable shared state, artifacts and bounded workflow metadata:
       // size-limited (the task's maxContextChars), labelled untrusted, withheld for fresh memory.
@@ -164,6 +178,8 @@ export class Scheduler {
           controller.signal,
           {
             profile: "task",
+            onSpawn: (pid) =>
+              this.service.resources.attachProcess(task.id, pid),
             permission: (request, signal) =>
               this.service.approvals.request(
                 task.agentId,
@@ -175,6 +191,9 @@ export class Scheduler {
         );
       if (!result.trim()) throw new Error("Provider returned no text");
       if (run.replay === null) recovery.finishRun(task, run.effectId, result);
+      // Detect writes outside the assignment / overlapping another worker and route them to the coordinator.
+      if (this.service.parallel.isAssigned(task.id))
+        await this.service.parallel.check(task);
       const evidence = await this.service.limits.evaluate(
         task,
         result.slice(0, 100000),

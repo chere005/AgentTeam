@@ -26,7 +26,11 @@ import { recommendations } from "./config.ts";
 import { recoveryRoute } from "./recovery-routes.ts";
 import { WorkspaceExtras } from "./workspace-routes.ts";
 import { createInspector } from "./inspector-routes.ts";
+import { createAssistantRoutes } from "./assistant-routes.ts";
 import { sharedRoute } from "./shared-routes.ts";
+import { graphRoute } from "./workflow-graph.ts";
+import { accessRoute } from "./access-routes.ts";
+import { capabilityRoute } from "./capability-routes.ts";
 import { orchestrationRoute } from "./orchestration.ts";
 import {
   AppError,
@@ -64,6 +68,8 @@ export function createApi(
   discovery = new RuntimeDiscovery(),
 ) {
   const store = service.store;
+  // Deterministic graph command steps obey the same live-execution switch as provider runs.
+  service.graphs.enabled = () => runs.enabled;
   // Test mode never starts editors, file managers or browsers: launches are recorded instead and
   // exposed at GET /test/launches (and as server.launches for in-process tests).
   const testMode = process.env.AGENTTEAM_TEST === "1";
@@ -110,6 +116,18 @@ export function createApi(
         version: (r as { version?: string }).version,
         path: (r as { path?: string }).path,
       })),
+  });
+  const accessContext = {
+    liveEnabled: () => runs.enabled,
+    readiness: (environment: string) =>
+      runs.readiness?.(environment) ?? { state: "ready" as const },
+  };
+  const assistant = createAssistantRoutes(service, {
+    context: {
+      liveEnabled: () => runs.enabled,
+      readiness: (environment) =>
+        runs.readiness?.(environment) ?? { state: "ready" },
+    },
   });
   const server = createServer(async (req, res) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -243,16 +261,33 @@ export function createApi(
         }
         return send({ ...result, execution });
       }
+      const assisted = await assistant.route(method, url, () => body(req));
+      if (assisted) return send(assisted.data, assisted.status);
       const inspected = await inspector.route(method, url, () => body(req));
       if (inspected) return send(inspected.data, inspected.status);
       const recovered = await recoveryRoute(service, method, url, () =>
         body(req),
       );
       if (recovered) return send(recovered.data, recovered.status);
+      const accessed = await accessRoute(
+        service,
+        accessContext,
+        { worktrees: development.worktrees },
+        method,
+        url,
+        () => body(req),
+      );
+      if (accessed) return send(accessed.data, accessed.status);
+      const graphed = await graphRoute(service, method, url, () => body(req));
+      if (graphed) return send(graphed.data, graphed.status);
       const sharedResult = await sharedRoute(service, method, url, () =>
         body(req),
       );
       if (sharedResult) return send(sharedResult.data, sharedResult.status);
+      const capable = await capabilityRoute(service, method, url, () =>
+        body(req),
+      );
+      if (capable) return send(capable.data, capable.status);
       const orchestrated = await orchestrationRoute(service, method, url, () =>
         body(req),
       );

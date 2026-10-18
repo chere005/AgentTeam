@@ -1,0 +1,138 @@
+.wg {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  font-size: 12px;
+  align-content: start;
+}
+.wg label {
+  display: grid;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.wg label input[type="checkbox"] {
+  display: inline;
+  margin-right: 6px;
+}
+.wg textarea {
+  min-height: 52px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+.wg h4 {
+  margin: 6px 0 2px;
+}
+.wg-list,
+.wg-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.wg-list button.active {
+  border-color: var(--accent);
+}
+.wg-steps li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+.wg-editor,
+.wg-run {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+}
+.wg-run {
+  border-style: dashed;
+}
+.wg-form {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--panel);
+}
+.wg-flow {
+  height: 300px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0d1118;
+}
+.wg-flow .react-flow__node div {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+}
+.wg-ok {
+  border-left: 3px solid #3c9d73;
+  padding-left: 8px;
+}
+.wg-bad {
+  border-left: 3px solid #c25b5b;
+  padding-left: 8px;
+}
+.wg-ok ul,
+.wg-bad ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+.wg-commands {
+  display: grid;
+  gap: 4px;
+  background: #2f2a1c;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.wg-commands ul {
+  margin: 2px 0;
+  padding-left: 16px;
+}
+.wg-node-state {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid var(--line);
+  padding: 4px 0;
+}
+.wg-ask {
+  display: grid;
+  gap: 4px;
+  background: #1f2a3a;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.wg-attention {
+  margin: 0;
+  padding-left: 18px;
+  color: #f0d48a;
+}
+.wg-path {
+  margin: 0;
+  padding-left: 22px;
+  display: grid;
+  gap: 4px;
+}
+.badge.wg-completed {
+  background: #204a36;
+  color: #9be0bd;
+}
+.badge.wg-failed {
+  background: #4a2424;
+  color: #f0a0a0;
+}
+.badge.wg-cancelled {
+  background: #4a3f1f;
+  color: #f0d48a;
+}
+.badge.wg-skipped {
+  background: #2a3140;
+  color: #9aa7ba;
+}

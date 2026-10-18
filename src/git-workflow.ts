@@ -15,7 +15,7 @@ import {
 import { ResourceCoordinator, overlaps } from "./resources.ts";
 import type { Store } from "./store.ts";
 import type { WorkspaceService } from "./workspaces.ts";
-import { withRepoLock } from "./worktrees.ts";
+import { withRepoLockFor as withRepoLock } from "./repo-lock.ts";
 import { launch, type OpenPlan } from "./editors.ts";
 import { applyStaging, resolveGitPath } from "./git-stage.ts";
 import {
@@ -204,12 +204,24 @@ export class GitWorkflow {
   }
 
   // ---- shared plumbing ----------------------------------------------------
-  private async context(agentId: string, workspace: string, write: boolean) {
+  private async context(
+    agentId: string,
+    workspace: string,
+    write: boolean,
+    allowRestricted = false,
+  ) {
     const loc = await this.ws.location(
       agentId,
       { workspace, path: "." },
       write,
     );
+    // Whole-tree Git changes would touch paths the attachment's rules exclude or make read-only.
+    if (write && loc.restricted && !allowRestricted)
+      throw new AppError(
+        403,
+        "access_rules_git",
+        "This attachment has exclusions or explicit-only rules, so Git actions that change the whole working tree are refused. Stage individual allowed paths instead, or remove the rules.",
+      );
     let top: string;
     try {
       top = await realpath(
@@ -410,7 +422,8 @@ export class GitWorkflow {
       }
     }
     const scope = attachmentScope(repo, loc.root);
-    // A subfolder attachment only counts its own files.
+    // A subfolder attachment only counts its own files; excluded paths are not counted or named.
+    const visible = await this.ws.visibleInRepo(agentId, loc.root, repo);
     const status = parseStatus(
       (
         await git(repo, [
@@ -421,7 +434,7 @@ export class GitWorkflow {
           ...scoped(scope),
         ])
       ).out,
-    );
+    ).filter((f) => visible(f.path));
     const conflicted = status.filter((f) => isConflictStatus(f.status)).length;
     const operation = await this.operation(repo);
     const remotesFull = await this.remotes(repo);
@@ -918,7 +931,12 @@ export class GitWorkflow {
       .object({ ...common, sha: z.string().min(4).max(64) })
       .strict()
       .parse(input);
-    const { repo, scope } = await this.context(agentId, data.workspace, false);
+    const { loc, repo, scope } = await this.context(
+      agentId,
+      data.workspace,
+      false,
+    );
+    const visible = await this.ws.visibleInRepo(agentId, loc.root, repo);
     const sha = await this.ws.resolveRevision(repo, data.sha, "Commit");
     if (scope) {
       // A subfolder attachment only sees commits that touch it.
@@ -960,10 +978,14 @@ export class GitWorkflow {
         files.push({ status: status[0], from: parts[i++], path: parts[i++] });
       else files.push({ status: status[0], path: parts[i++] });
     }
+    const shown = files.filter(
+      (f) => visible(f.path) && (!f.from || visible(f.from)),
+    );
     return {
       sha,
       message: body.trim().slice(0, 20_000),
-      files,
+      hiddenFiles: files.length - shown.length,
+      files: shown,
       filesTruncated: parts.length > files.length * 2 && files.length >= 500,
     };
   }
@@ -1171,9 +1193,16 @@ export class GitWorkflow {
   // ---- conflicts ------------------------------------------------------------
   async conflicts(agentId: string, input: unknown) {
     const data = z.object(common).strict().parse(input);
-    const { repo, scope } = await this.context(agentId, data.workspace, false);
+    const { loc, repo, scope } = await this.context(
+      agentId,
+      data.workspace,
+      false,
+    );
     const operation = await this.operation(repo);
-    const files = await this.conflictList(repo, scope);
+    const visible = await this.ws.visibleInRepo(agentId, loc.root, repo);
+    const files = (await this.conflictList(repo, scope)).filter((f) =>
+      visible(f.path),
+    );
     return {
       operation,
       files,
@@ -1300,7 +1329,13 @@ export class GitWorkflow {
       })
       .strict()
       .parse(input);
-    const { loc, repo } = await this.context(agentId, data.workspace, true);
+    const { loc, repo } = await this.context(
+      agentId,
+      data.workspace,
+      true,
+      true,
+    );
+    await this.ws.assertPathsWritable(agentId, loc.root, data.paths);
     return this.mutate(agentId, repo, async () => {
       const list = await this.conflictList(repo, "");
       for (const p of data.paths)

@@ -5,6 +5,8 @@ import { api, agentInput, type Agent, type Snapshot } from "../api";
 import { resolveModelState } from "../../src/model-choices";
 import { InvocationPanel } from "./InvocationPanel";
 import { RoleTypeSelect } from "./RoleType";
+import { RulesEditor } from "./AccessUi";
+import type { AccessRule } from "../access-view";
 import "./runtime-ui.css";
 const defaults = {
   schedulingPriority: 50,
@@ -19,7 +21,13 @@ const defaults = {
   instructions: "",
   tools: [] as string[],
   skills: [] as { id: string; mode: string; allowUnverified: boolean }[],
-  workspaces: [] as { path: string; access: string; active: boolean }[],
+  workspaces: [] as {
+    path: string;
+    access: string;
+    active: boolean;
+    rules?: AccessRule[];
+    explicitOnly?: boolean;
+  }[],
   parentId: null as string | null,
 };
 export function AgentEditor({
@@ -391,8 +399,11 @@ export function AgentEditor({
               </div>
               <p className="hint">
                 Showing skills compatible with {form.environment}. Always-load
-                skills are included in every launch. On-demand skills require
-                runtime file tools.
+                skills are included in every launch. On-demand skills are added
+                to a run only when its request matches; the model cannot load
+                them itself on the Claude and Wolfram adapters (see Skills,
+                tools &amp; knowledge). Assigning a skill never grants tools or
+                folders.
               </p>
               <div className="skill-picks">
                 {skills
@@ -530,6 +541,25 @@ export function AgentEditor({
                         Working directory
                       </label>
                     </div>
+                    <RulesEditor
+                      ws={ws}
+                      onChange={(next) =>
+                        update(
+                          "workspaces",
+                          form.workspaces.map((w, j) =>
+                            j === i
+                              ? {
+                                  ...w,
+                                  rules: next.rules.length
+                                    ? next.rules
+                                    : undefined,
+                                  explicitOnly: next.explicitOnly || undefined,
+                                }
+                              : w,
+                          ),
+                        )
+                      }
+                    />
                   </div>
                   <button
                     className="icon"

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type Agent, type Snapshot, type TeamEvent } from "../api";
 import "./inspector.css";
+import { ConversationLink } from "./ConversationExtras";
 
 /** Encodes every character the desktop IPC path filter rejects (".", "_") as well as reserved ones. */
 const enc = (v: string) =>
@@ -302,9 +303,11 @@ function Timeline(p: Props) {
                 </button>
               ))}
               {e.conversation && (
-                <button onClick={() => p.openChat(e.conversation!.agentId)}>
-                  Open conversation
-                </button>
+                <ConversationLink
+                  eventSeq={e.seq}
+                  openChat={p.openChat}
+                  label="Open conversation"
+                />
               )}
             </div>
             {open === e.seq && <pre>{JSON.stringify(e.data, null, 2)}</pre>}

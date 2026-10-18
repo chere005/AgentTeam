@@ -27,6 +27,10 @@ First functional desktop release for macOS, Windows and Linux.
 - Shared workflow state and artifacts: typed, permissioned, versioned fields with conflict detection, state committed atomically with task completion and carried in checkpoints, and a size-limited untrusted context for downstream tasks.
 - Run inspector: correlated timeline with filters, "why is this waiting?" explanations, transfer details, routing/access previews, a fixture-only team playground with run comparison, and a redacted diagnostic export.
 - Saved workspace layouts, an attention inbox, canvas groups and hierarchy navigation, keyboard shortcuts and accessibility improvements.
+- Team Assistant change proposals with a reviewable diff, significance flags, user-only approval/apply (bound to the exact operations), staleness detection, atomic apply with rollback and an audit trail; explicit session ownership (team, embedded chat, CLI, native app).
+- Skills, tools and knowledge: on-demand skill selection with recorded reasons and context cost, user-accepted skill updates, an effective-instructions preview, an MCP tool registry with grants and a metadata-only connection test, and cited knowledge sources from attached folders.
+- File-level access rules and exclusions, one queue ordering for tasks and chat runs with visible wait reasons, per-task declared lock paths, guided parallel assignments with conflict detection, per-repository Git serialization across worktrees, and draining leases after a crash.
+- Executable workflow graphs: task, command, condition, human-input, fan-out/join and bounded-loop steps with static validation, confirmed and confined command steps, an immutable executed path and retry from the failed step.
 - Durable checkpoints and an effect ledger: interrupted tasks resume after a restart without re-running completed work; uncertain external effects wait for your decision; permission requests survive a restart; per-task retry policy with backoff (API only for now).
 
 ## Install and first run
@@ -37,7 +41,7 @@ This initial release is unsigned and the macOS app is not notarized. Your OS may
 
 ## Important limitations
 
-The Codex adapter is read-only; Claude is currently tool-free chat. Wolfram uses a new LLMSynthesize bridge requiring local Wolfram LLM configuration. Live subscription-backed execution is not fully validated. The Team Assistant can see and advise on the team; applying its suggestions is currently done through the UI. CLI view shows resume commands rather than an embedded terminal. Native provider-app opening is implemented for macOS.
+The Codex adapter is read-only; Claude is currently tool-free chat. Wolfram uses a new LLMSynthesize bridge requiring local Wolfram LLM configuration. Live subscription-backed execution is not fully validated. The Team Assistant can propose configuration changes; you review and apply them in the Assistant changes pane (it cannot apply them itself). Granted MCP servers are not yet passed to providers. CLI view shows resume commands rather than an embedded terminal. Native provider-app opening is implemented for macOS.
 
 Attached-folder access rules and resource locks govern AgentTeam operations. They do not sandbox external editors, native apps or independently launched CLI sessions. The Access pane distinguishes provider access from AgentTeam access.
 

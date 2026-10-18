@@ -2,6 +2,7 @@ import { PrioritySelect, priorityName } from "./PrioritySelect";
 import { useEffect, useState } from "react";
 import { LockKeyhole, Plus, Users, Clock, ShieldCheck } from "lucide-react";
 import { api, type Snapshot, type TeamEvent } from "../api";
+import { Cooperation } from "./Cooperation";
 export function Resources({
   data,
   events,
@@ -347,6 +348,7 @@ export function Resources({
           tasks to finish first.
         </p>
       </section>
+      <Cooperation data={data} events={events} act={act} />
       <p className="hint">
         Locks apply to work launched by AgentTeam and its Git mutations.
         External editors and native sessions are outside this coordination

@@ -53,6 +53,7 @@ import {
   type Group,
 } from "../groups";
 import "./canvas-cards.css";
+import { accessLabel, accessTitle } from "../access-view";
 import {
   api,
   saved,
@@ -73,6 +74,8 @@ type Props = {
   chat: (id: string) => void;
   /** Open the saved-teams pane to insert a team onto the canvas. */
   openTeams?: () => void;
+  /** Open the executable workflow graphs pane (separate from this communication graph). */
+  openGraphs?: () => void;
 };
 /** Below this React Flow zoom, cards switch to the large-type glance layout. */
 const FAR_ZOOM = 0.6;
@@ -161,21 +164,14 @@ function Card({ data }: NodeProps) {
       <div
         className="card-access"
         title={
-          a.workspaces
-            .map(
-              (w) =>
-                w.path +
-                " — " +
-                (w.access === "write" ? "read & write" : "read only"),
-            )
-            .join("\n") || "No attached folders"
+          a.workspaces.map((w) => accessTitle(w)).join("\n") ||
+          "No attached folders"
         }
       >
         {a.workspaces.length ? (
           a.workspaces.map((w) => (
             <span key={w.path}>
-              {w.access === "write" ? "RW" : "RO"} ·{" "}
-              {w.path.split(/[\\/]/).pop()}
+              {accessLabel(w)} · {w.path.split(/[\\/]/).pop()}
               {w.active ? " · active" : ""}
             </span>
           ))
@@ -569,6 +565,14 @@ export function TeamCanvas(p: Props) {
           >
             <Users size={15} />
             Insert team
+          </button>
+        )}
+        {p.openGraphs && (
+          <button
+            title="Executable workflow graphs: steps, conditions, commands, human input"
+            onClick={p.openGraphs}
+          >
+            Workflow graphs
           </button>
         )}
         <div className="grow" />

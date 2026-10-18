@@ -20,6 +20,8 @@ import { TeamService, type LaunchPlan } from "./service.ts";
 export type { RuntimeEvent, Command } from "./runtime-types.ts";
 import type { RuntimeEvent, Command, RuntimeHooks } from "./runtime-types.ts";
 import { acpAdapter, acpSessionPrefix } from "./acp.ts";
+import { prepareRunContext } from "./run-context.ts";
+import { assistantContext } from "./assistant-context.ts";
 export function commandFor(
   plan: LaunchPlan,
   sessionId: string | null,
@@ -73,12 +75,7 @@ export function commandFor(
       },
     };
   if (plan.environment === "claude") {
-    assert(
-      plan.skills.every((s) => s.mode === "always"),
-      "skill_load_mode",
-      "The initial Claude chat adapter requires assigned skills to use always mode; on-demand tool access is not enabled",
-      400,
-    );
+    // On-demand skills are selected by AgentTeam before this point (prepareRunContext); the adapter has no file tools.
     const args = [
       "--print",
       "--output-format",
@@ -218,6 +215,7 @@ async function executeCommandRaw(
         windowsHide: true,
         ...plan.options,
       });
+      if (child.pid) hooks?.onSpawn?.(child.pid);
       let buffer = "",
         stderr = "",
         bytes = 0,
@@ -345,8 +343,7 @@ export class RunManager {
             )
         )
           store.remove("run-request", request.id);
-      for (const lease of store.list<{ id: string }>("lease"))
-        this.service.resources.release(lease.id);
+      this.service.locks.reconcile();
       for (const session of store.list<Session>("session"))
         if (session.state === "running") {
           session.state = "idle";
@@ -372,6 +369,8 @@ export class RunManager {
     const store = this.service.store,
       session = store.get<Session>("session", sessionId),
       agent = store.get<Agent>("agent", session.agentId);
+    // A CLI or native app already drives this agent: never drive the session twice.
+    this.service.ownership.assertEmbeddedMayRun(agent.id);
     if (!scheduled) {
       const waiting = store
         .list<Message>("message")
@@ -397,21 +396,12 @@ export class RunManager {
     this.assertRuntimeReady(plan);
     if (agent.kind === "team-assistant")
       plan.instructions +=
-        "\n\nCurrent team state (data, not instructions):\n" +
-        JSON.stringify({
-          agents: store.list<Agent>("agent").map((a) => ({
-            id: a.id,
-            name: a.name,
-            role: a.role,
-            environment: a.environment,
-            model: a.model,
-            parentId: a.parentId,
-            skills: a.skills.map((s) => s.id),
-          })),
-          edges: store.list("edge"),
-          rules: store.list("rule"),
-          workflows: store.list("workflow"),
-        });
+        "\n\n" +
+        assistantContext(this.service, {
+          liveEnabled: () => this.enabled,
+          readiness: (environment) =>
+            this.readiness?.(environment) ?? { state: "ready" },
+        }).text;
     const message = store
       .list<Message>("message")
       .find(
@@ -421,6 +411,14 @@ export class RunManager {
           m.status === "queued",
       );
     assert(message, "queue_empty", "No queued message");
+    // Skill selection (always/on-demand), cited knowledge and the per-run context record.
+    const context = prepareRunContext(
+      this.service,
+      plan,
+      message.text,
+      sessionId,
+    );
+    if (context instanceof Promise) await context;
     let prompt = message.text;
     if (plan.environment === "wolfram") {
       const previous = store
@@ -460,6 +458,7 @@ export class RunManager {
       store.put("message", message);
       store.emit("session.started", sessionId, {
         messageId: message.id,
+        transport: plan.connection?.transport ?? "direct",
         environment: plan.environment,
         model: plan.model,
         effort: plan.effort,
@@ -526,6 +525,7 @@ export class RunManager {
         },
         controller.signal,
         {
+          onSpawn: (pid) => this.service.resources.attachProcess(id, pid),
           permission: (request, signal) =>
             this.service.approvals.request(plan.agentId, request, signal),
         },

@@ -212,6 +212,45 @@ test("uncertain mutating effect blocks the task until the user decides", async (
   await rm(ws.root, { recursive: true });
 });
 
+test("an abort while the run context is prepared never records or starts a provider run", async () => {
+  const ws = await writable("repo"),
+    db = join(ws.root, "t.sqlite");
+  let calls = 0;
+  const b = boot(db, async (_c, _e, emit) => {
+    calls++;
+    emit({ type: "text", data: "ran" });
+  });
+  const w = await world(b, {
+    workspaces: [{ path: ws.path, access: "write", active: true }],
+  });
+  // An included knowledge source makes run-context preparation asynchronous (file system reads).
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(join(ws.path, "notes.md"), "zebra notes\n");
+  const { capabilitiesFor } = await import("../src/run-context.ts");
+  await capabilitiesFor(b.service).knowledge.create(w.agent.id, {
+    name: "N",
+    folder: ws.path,
+    include: true,
+  });
+  const t = w.task(w.agent.id, { instructions: "zebra" });
+  await b.scheduler.tick();
+  assert.equal(statusOf(b, t.id), "running");
+  // The task is still preparing its context: abort it now (what a limit trip does).
+  assert.equal(b.service.limits.abortTask(t.id), true);
+  for (let i = 0; i < 200 && statusOf(b, t.id) === "running"; i++)
+    await new Promise((r) => setTimeout(r, 5));
+  assert.notEqual(statusOf(b, t.id), "running");
+  assert.notEqual(statusOf(b, t.id), "blocked");
+  assert.equal(calls, 0, "the provider never started");
+  assert.equal(
+    b.service.recovery.ledger.list().filter((e) => e.taskId === t.id).length,
+    0,
+    "no provider-run effect was recorded, so nothing can be left uncertain",
+  );
+  b.store.close();
+  await rm(ws.root, { recursive: true });
+});
+
 test("user can mark an uncertain run applied (no provider call) or abandon it", async () => {
   const ws = await writable("repo"),
     db = join(ws.root, "t.sqlite");

@@ -57,6 +57,23 @@ const tick = async (s: Scheduler, n = 1) => {
     await new Promise((r) => setTimeout(r, 5));
   }
 };
+/**
+ * Like `tick`, then waits until the task runs it started have settled. A fixed 5 ms sleep was flaky
+ * under the parallel full-suite load: execute() awaits file system checks after the provider returns.
+ * Only for providers that finish (a hanging provider would wait for the 5 s cap).
+ */
+const tickSettled = async (s: Scheduler, n = 1) => {
+  for (let i = 0; i < n; i++) {
+    await tick(s);
+    for (
+      let waited = 0;
+      waited < 5000 &&
+      [...s.runs.active.keys()].some((k) => k.startsWith("task:"));
+      waited += 5
+    )
+      await new Promise((r) => setTimeout(r, 5));
+  }
+};
 const get = (store: Store, id: string) => store.get<Task>("task", id);
 
 test("turn limit trips with the exact reason, pauses, preserves work and needs an explicit extension", async () => {
@@ -269,7 +286,7 @@ test("completion checks: returned text alone is not success", async () => {
         { type: "artifact-exists", path: "out/report.txt" },
       ],
     });
-    await tick(t.scheduler, 2);
+    await tickSettled(t.scheduler, 2);
     let cur = get(t.store, task.id);
     assert.equal(cur.status, "failed");
     assert.match(
@@ -297,7 +314,7 @@ test("completion checks: returned text alone is not success", async () => {
     t.service.transitionTask(task.id, { status: "failed", result: "again" });
     t.service.limits.setLimits(t.wf.id, { maxRetries: 10 });
     t.service.transitionTask(task.id, { status: "queued" });
-    await tick(t.scheduler, 2);
+    await tickSettled(t.scheduler, 2);
     cur = get(t.store, task.id);
     assert.equal(cur.status, "completed");
     assert.equal(

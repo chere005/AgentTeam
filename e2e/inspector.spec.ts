@@ -225,7 +225,19 @@ test("run inspector: timeline, wait explainer, transfers, previews, playground c
 
     // ---- canvas: open a connection to see its transfers -------------------------------------------
     await page.getByRole("button", { name: /^Team canvas/ }).click();
-    await page.locator(".react-flow__edge").first().click({ force: true });
+    // `force` skips Playwright's stability check, so wait until the canvas has finished its initial
+    // fitView (the edge stops moving); a click on a still-moving edge can miss it under load.
+    const edge = page.locator(".react-flow__edge").first();
+    await expect(edge).toBeVisible();
+    await expect
+      .poll(async () => {
+        const a = await edge.boundingBox();
+        await page.waitForTimeout(120);
+        const b = await edge.boundingBox();
+        return !!a && !!b && JSON.stringify(a) === JSON.stringify(b);
+      })
+      .toBe(true);
+    await edge.click({ force: true });
     const dialog = page.getByRole("dialog", { name: "Connection settings" });
     await expect(
       dialog.getByText("Transfers on this connection"),

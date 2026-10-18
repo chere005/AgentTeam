@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { open, realpath, stat } from "node:fs/promises";
+import { decideBoth, lexicalRelative } from "./access.ts";
 import { isAbsolute, relative, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -193,9 +194,13 @@ export class ArtifactRegistry {
     return this.service.store;
   }
   private roots(agentId: string) {
-    return this.store
-      .get<Agent>("agent", agentId)
-      .workspaces.map((w) => ({ path: w.path, active: w.active }));
+    return this.store.get<Agent>("agent", agentId).workspaces.map((w) => ({
+      path: w.path,
+      active: w.active,
+      access: w.access,
+      rules: w.rules,
+      explicitOnly: w.explicitOnly,
+    }));
   }
   /** Async part of registration: confine the path / measure the body. Nothing is persisted. */
   async prepare(
@@ -254,6 +259,14 @@ export class ArtifactRegistry {
       400,
     );
     const loc = await confineToWorkspace(root.path, input.path!);
+    // Exclusions and explicit-only rules apply to artifact registration like to file browsing.
+    const access = decideBoth(root, lexicalRelative(input.path!), loc.rel);
+    assert(
+      access.access !== "none",
+      "access_denied",
+      `Access denied: ${access.reason}`,
+      403,
+    );
     const info = await stat(loc.real);
     assert(
       info.isFile(),
@@ -473,6 +486,27 @@ export class ArtifactRegistry {
       };
     }
     const src = a.source;
+    // An exclusion added after registration also hides the file's current content: the producing
+    // agent's attachment rules are re-checked at read time (the record itself stays as evidence).
+    if (a.provenance.agentId) {
+      let attachment: Agent["workspaces"][number] | undefined;
+      try {
+        attachment = this.store
+          .get<Agent>("agent", a.provenance.agentId)
+          .workspaces.find((w) => w.path === src.root);
+      } catch {
+        /* agent removed: confinement below still applies */
+      }
+      if (attachment) {
+        const access = decideBoth(attachment, src.path, src.path);
+        assert(
+          access.access !== "none",
+          "access_denied",
+          `Access denied: ${access.reason}`,
+          403,
+        );
+      }
+    }
     const loc = await confineToWorkspace(src.root, src.path);
     assert(
       loc.real === src.realPath,

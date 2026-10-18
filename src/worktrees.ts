@@ -25,22 +25,9 @@ import {
 
 const exec = promisify(execFile);
 
-/** Serializes Git metadata changes (branch/worktree add/remove) per repository. */
-const repoQueues = new Map<string, Promise<unknown>>();
-export async function withRepoLock<T>(
-  repo: string,
-  fn: () => Promise<T>,
-): Promise<T> {
-  const previous = repoQueues.get(repo) ?? Promise.resolve();
-  const next = previous.then(fn, fn);
-  const tail = next.catch(() => {});
-  repoQueues.set(repo, tail);
-  try {
-    return await next;
-  } finally {
-    if (repoQueues.get(repo) === tail) repoQueues.delete(repo);
-  }
-}
+/** Serializes Git metadata changes per repository (shared with Git workflow actions; src/repo-lock.ts). */
+export { withRepoLock } from "./repo-lock.ts";
+import { withRepoLock } from "./repo-lock.ts";
 
 type GitResult = { ok: boolean; out: string; err: string };
 async function run(cwd: string, args: string[]): Promise<GitResult> {

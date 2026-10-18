@@ -21,7 +21,21 @@ import { HarnessSettings } from "./HarnessSettings";
 import { GitWorkflowPanel } from "./GitWorkflow";
 import { FilePreview, OpenWith } from "./FilePreview";
 import { EditorSettings } from "./EditorSettings";
+import {
+  ConversationLink,
+  ConversationSearch,
+  LiveActivity,
+  NewBelow,
+  OwnershipBar,
+  UnreadDivider,
+  takeThenOpen,
+  useChatScroll,
+  useUnread,
+} from "./ConversationExtras";
+import { dividerIndex, unreadLabel } from "../conversation";
 import { useWorkspaceWatch } from "./useWorkspaceWatch";
+import { EffectiveAccess, LaunchReview, ExternalNotice } from "./AccessUi";
+import { accessLabel } from "../access-view";
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowUp,
@@ -52,6 +66,12 @@ import {
   type Snapshot,
   type TeamEvent,
 } from "../api";
+/** Comma-separated declared task paths from the task form. */
+const declaredPaths = (text: string) =>
+  text
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
 export type PaneProps = {
   data: Snapshot;
   selected: string;
@@ -62,7 +82,7 @@ export type PaneProps = {
   /** Select an agent and show its conversation pane. */
   openChat?: (id: string) => void;
 };
-function AgentPicker(p: PaneProps) {
+function AgentPicker(p: PaneProps & { unread?: Record<string, number> }) {
   return (
     <select
       aria-label="Agent"
@@ -72,6 +92,7 @@ function AgentPicker(p: PaneProps) {
       {p.data.agents.map((a) => (
         <option value={a.id} key={a.id}>
           {a.name}
+          {p.unread?.[a.id] ? ` (${unreadLabel(p.unread[a.id])} new)` : ""}
         </option>
       ))}
     </select>
@@ -82,10 +103,20 @@ export function Chat(p: PaneProps) {
     [draft, setDraft] = useState(""),
     [mode, setMode] = useState("chat"),
     [cli, setCli] = useState<any>(null);
-  const end = useRef<HTMLDivElement>(null),
+  const box = useRef<HTMLDivElement>(null),
     agent = p.data.agents.find((a) => a.id === p.selected),
     session = p.data.sessions.find((s) => s.agentId === p.selected);
-  const [sending, setSending] = useState(false);
+  const [sending, setSending] = useState(false),
+    [searching, setSearching] = useState(false),
+    // Which agent the loaded messages belong to (scroll restore must not run on stale messages).
+    [owner, setOwner] = useState("");
+  const unread = useUnread(p.events, p.selected);
+  const unreadAtOpen = unread.atOpen;
+  const scroll = useChatScroll(
+    p.selected,
+    owner === p.selected ? messages.length : 0,
+    box,
+  );
   // Synchronous guards: state updates are async, so a fast double Enter/click could otherwise
   // post the same message twice. `composing` tracks IME composition across browsers.
   const sendLock = useRef(false),
@@ -98,22 +129,23 @@ export function Chat(p: PaneProps) {
     setDraft(saved("draft." + p.selected, ""));
     setCli(null);
     setMode("chat");
+    setSearching(false);
   }, [p.selected]);
   useEffect(() => {
     if (!session) return;
     let alive = true;
     api("/sessions/" + session.id + "/messages")
       .then((m) => {
-        if (alive) setMessages(m);
+        if (alive) {
+          setMessages(m);
+          setOwner(p.selected);
+        }
       })
       .catch(() => {});
     return () => {
       alive = false;
     };
   }, [session?.id, p.events]);
-  useEffect(() => {
-    end.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
   async function send() {
     if (!agent || !draft.trim() || sendLock.current || composing.current)
       return;
@@ -150,7 +182,7 @@ export function Chat(p: PaneProps) {
       <div className="chat-toolbar">
         <div>
           <span className="eyebrow">TALKING TO</span>
-          <AgentPicker {...p} />
+          <AgentPicker {...p} unread={unread.counts} />
         </div>
         <div className="row">
           <button
@@ -161,18 +193,20 @@ export function Chat(p: PaneProps) {
             <Settings2 size={17} />
           </button>
           <button
-            onClick={() =>
-              void p.act(() =>
-                api("/agents/" + agent.id + "/control", "POST", {
-                  owner: agent.control === "human" ? "team" : "human",
-                }),
-              )
-            }
+            className="icon"
+            title="Search messages"
+            aria-label="Search messages"
+            aria-pressed={searching}
+            onClick={() => setSearching((v) => !v)}
           >
-            {agent.control === "human" ? "Return to team" : "Take control"}
+            <Search size={17} />
           </button>
         </div>
       </div>
+      <OwnershipBar agent={agent} events={p.events} act={p.act} />
+      {searching && (
+        <ConversationSearch agentId={agent.id} openChat={p.openChat} />
+      )}
       <div className="chat-mode">
         <div className="tabs">
           <button
@@ -185,7 +219,7 @@ export function Chat(p: PaneProps) {
             className={mode === "cli" ? "active" : ""}
             onClick={() =>
               void p.act(async () => {
-                setCli(await window.agentteam.openAgent(agent.id, "cli"));
+                setCli(await takeThenOpen(agent.id, "cli"));
                 setMode("cli");
               })
             }
@@ -195,10 +229,7 @@ export function Chat(p: PaneProps) {
           <button
             onClick={() =>
               void p.act(async () => {
-                const result = await window.agentteam.openAgent(
-                  agent.id,
-                  "native",
-                );
+                const result = await takeThenOpen(agent.id, "native");
                 setCli(result);
                 setMode("cli");
               })
@@ -229,15 +260,16 @@ export function Chat(p: PaneProps) {
                 Copy command
               </button>
               <p className="hint">
-                CLI sessions run in your own terminal. Take control first to
-                keep the team scheduler from using this agent at the same time.
+                CLI sessions run in your own terminal. Ownership was taken so
+                the team scheduler and embedded chat leave this agent alone; use
+                Return ownership above when you are done.
               </p>
             </>
           )}
         </div>
       ) : (
         <>
-          <div className="messages scroll">
+          <div className="messages scroll" ref={box} onScroll={scroll.onScroll}>
             {!messages.length && (
               <div className="welcome">
                 <span className={"welcome-icon " + agent.environment}>
@@ -282,8 +314,15 @@ export function Chat(p: PaneProps) {
                 </div>
               </div>
             )}
-            {messages.map((m) => (
-              <article className={"message " + m.role} key={m.id}>
+            {messages.map((m, i) => (
+              <article
+                className={"message " + m.role}
+                key={m.id}
+                data-message-id={m.id}
+              >
+                {i === dividerIndex(messages, unreadAtOpen) && (
+                  <UnreadDivider n={unreadAtOpen} />
+                )}
                 <div className="message-label">
                   <span
                     className={
@@ -311,7 +350,14 @@ export function Chat(p: PaneProps) {
                 {agent.name} is processing…
               </div>
             )}
-            <div ref={end} />
+            {session && (
+              <LiveActivity
+                events={p.events}
+                sessionId={session.id}
+                name={agent.name}
+              />
+            )}
+            <NewBelow n={scroll.below} jump={scroll.toBottom} />
           </div>
           <div className="composer-wrap">
             {!p.data.liveExecution && (
@@ -408,6 +454,7 @@ export function Workflows(p: PaneProps) {
     [invoke, setInvoke] = useState(""),
     [deps, setDeps] = useState<string[]>([]),
     [needsValidation, setNeedsValidation] = useState(false),
+    [taskPaths, setTaskPaths] = useState(""),
     [routeText, setRouteText] = useState(""),
     [route, setRoute] = useState<any>(null),
     [rule, setRule] = useState(false),
@@ -582,6 +629,13 @@ export function Workflows(p: PaneProps) {
                 </p>
               )}
               {t.result && <pre>{t.result}</pre>}
+              {p.openChat && (
+                <ConversationLink
+                  taskId={t.id}
+                  openChat={p.openChat}
+                  label="Open agent conversation"
+                />
+              )}
               <TaskValidation
                 task={t}
                 liveExecution={p.data.liveExecution}
@@ -657,7 +711,11 @@ export function Workflows(p: PaneProps) {
                     dependsOn: deps,
                     ...(needsValidation ? { requiresValidation: true } : {}),
                     ...(invoke ? { invokedBy: invoke } : {}),
+                    ...(declaredPaths(taskPaths).length
+                      ? { resourcePaths: declaredPaths(taskPaths) }
+                      : {}),
                   });
+                  setTaskPaths("");
                   setTaskFor("");
                   setTitle("");
                   setNeedsValidation(false);
@@ -733,6 +791,22 @@ export function Workflows(p: PaneProps) {
                   After {t.title}
                 </label>
               ))}
+              <label>
+                Paths this task will touch (optional)
+                <input
+                  aria-label="Declared paths"
+                  placeholder="Absolute paths, comma separated; empty locks every attached folder"
+                  value={taskPaths}
+                  onChange={(e) => setTaskPaths(e.target.value)}
+                />
+              </label>
+              {taskAgent && (
+                <LaunchReview
+                  agentId={taskAgent}
+                  workflowId={w.id}
+                  resourcePaths={declaredPaths(taskPaths)}
+                />
+              )}
               <button className="primary">Queue task</button>
             </form>
           )}
@@ -1636,12 +1710,25 @@ function AccessView({
         <div className={"access-folder " + w.access} key={w.path}>
           <div className="row between">
             <FolderOpen size={20} />
-            <b>{w.access === "write" ? "READ & WRITE" : "READ ONLY"}</b>
+            <b>
+              {w.explicitOnly
+                ? "LISTED PATHS ONLY"
+                : w.access === "write"
+                  ? "READ & WRITE"
+                  : "READ ONLY"}
+            </b>
+            <span className="badge" title="Rules and exclusions">
+              {accessLabel(w)}
+            </span>
             {w.active && <span className="badge green">Working directory</span>}
           </div>
           <code className="full-path">{w.path}</code>
           <div className="access-actions">
-            <span>✓ Browse all descendants</span>
+            <span>
+              {w.explicitOnly || w.rules?.length
+                ? "✓ Browse what the rules below allow"
+                : "✓ Browse all descendants"}
+            </span>
             <span>✓ Preview files</span>
             <span>
               {w.access === "write"
@@ -1663,6 +1750,10 @@ function AccessView({
           </small>
         </div>
       ))}
+      <EffectiveAccess
+        agentId={agent.id}
+        events={JSON.stringify(agent.workspaces)}
+      />
       <button onClick={edit}>
         <Settings2 size={15} />
         Edit folder access

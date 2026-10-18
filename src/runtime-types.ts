@@ -17,6 +17,8 @@ export type RuntimeEvent = {
 export type RuntimeHooks = {
   /** Selects provider timeout/output bounds; defaults to "chat". */
   profile?: "chat" | "task";
+  /** Called with the provider process id once spawned (lease/process reconciliation, src/lock-recovery.ts). */
+  onSpawn?: (pid: number) => void;
   permission?: (
     request: RequestPermissionRequest,
     signal: AbortSignal,

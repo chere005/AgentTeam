@@ -24,6 +24,14 @@ export type Lease = {
   workflowId: string | null;
   paths: string[];
   acquiredAt: string;
+  /** "declared": only the task's declared paths; "attached-folders": every attached folder (default). */
+  scope?: "declared" | "attached-folders";
+  /** Backend process that granted the lease (crash/ownership reconciliation, src/lock-recovery.ts). */
+  ownerPid?: number;
+  /** Provider process ids registered for this lease; it is not freed while one still runs. */
+  processPids?: number[];
+  /** Set when a lease is kept past a restart because its provider process may still be running. */
+  draining?: { since: string; reason: string };
 };
 export function contains(root: string, path: string) {
   const rel = relative(resolve(root), resolve(path));
@@ -34,7 +42,18 @@ export function contains(root: string, path: string) {
 export function overlaps(a: string, b: string) {
   return contains(a, b) || contains(b, a);
 }
+/** True when a process with this id exists (signal 0; EPERM still means it is alive). */
+export function pidAlive(pid: number) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
 export class ResourceCoordinator {
+  alive: (pid: number) => boolean = pidAlive;
   store: Store;
   constructor(store: Store) {
     this.store = store;
@@ -72,9 +91,25 @@ export class ResourceCoordinator {
       ),
     );
   }
+  /**
+   * Paths a holder `id` reserves: the task's declared paths when it declared any, else every
+   * attached folder (the safe default). Chat runs and Git actions never declare paths.
+   */
+  pathsFor(
+    agentId: string,
+    id: string,
+  ): { paths: string[]; scope: "declared" | "attached-folders" } {
+    const agent = this.store.get<Agent>("agent", agentId);
+    const task = this.store.list<Task>("task").find((t) => t.id === id);
+    if (task?.resourcePaths?.length)
+      return { paths: task.resourcePaths, scope: "declared" };
+    return {
+      paths: agent.workspaces.map((w) => w.path),
+      scope: "attached-folders",
+    };
+  }
   conflicts(agentId: string, workflowId: string | null, id: string) {
-    const agent = this.store.get<Agent>("agent", agentId),
-      paths = agent.workspaces.map((w) => w.path);
+    const paths = this.pathsFor(agentId, id).paths;
     const coordination = workflowId
       ? (
           this.store.get<Workflow>("workflow", workflowId) as Workflow & {
@@ -83,7 +118,11 @@ export class ResourceCoordinator {
         ).coordination
       : undefined;
     const resources = this.store.list<Resource>("resource");
-    const leases = this.store.list<Lease>("lease").filter((l) => l.id !== id);
+    // A draining lease keeps blocking even its own id: a resumed task must not start a second writer
+    // while the previous provider process may still be running.
+    const leases = this.store
+      .list<Lease>("lease")
+      .filter((l) => l.id !== id || l.draining);
     return leases.filter((lease) => {
       const pairs = paths.flatMap((path) =>
         lease.paths
@@ -119,12 +158,14 @@ export class ResourceCoordinator {
             .map((l) => this.store.get<Agent>("agent", l.agentId).name)
             .join(", "),
       );
-      const agent = this.store.get<Agent>("agent", agentId);
+      const reserved = this.pathsFor(agentId, id);
       const lease: Lease = {
         id,
         agentId,
         workflowId,
-        paths: agent.workspaces.map((w) => w.path),
+        paths: reserved.paths,
+        scope: reserved.scope,
+        ownerPid: process.pid,
         acquiredAt: new Date().toISOString(),
       };
       this.store.put("lease", lease);
@@ -132,11 +173,42 @@ export class ResourceCoordinator {
       return lease;
     });
   }
-  release(id: string) {
-    if (this.store.list<Lease>("lease").some((l) => l.id === id)) {
-      this.store.remove("lease", id);
-      this.store.emit("resource.released", id);
+  /** Provider processes registered for a lease that are still running. */
+  livePids(lease: Lease) {
+    return [lease.ownerPid, ...(lease.processPids ?? [])]
+      .filter((p): p is number => typeof p === "number" && p !== process.pid)
+      .filter((p) => this.alive(p));
+  }
+  /** Record a provider process on the lease so a crash cannot free the lease while it still runs. */
+  attachProcess(id: string, pid: number) {
+    const lease = this.store.list<Lease>("lease").find((l) => l.id === id);
+    if (!lease) return;
+    this.store.put("lease", {
+      ...lease,
+      processPids: [...new Set([...(lease.processPids ?? []), pid])],
+    });
+  }
+  /** A lease kept after a restart because its previous owner/provider process may still run. */
+  drainingFor(agentId: string) {
+    return this.store
+      .list<Lease>("lease")
+      .filter((l) => l.agentId === agentId && l.draining);
+  }
+  /**
+   * Release after the work has actually stopped. A draining lease whose process is still alive is
+   * kept (`force` is the explicit user override, recorded in the event stream).
+   */
+  release(id: string, force = false) {
+    const lease = this.store.list<Lease>("lease").find((l) => l.id === id);
+    if (!lease) return;
+    if (lease.draining && !force && this.livePids(lease).length) {
+      this.store.emit("resource.release_deferred", id, {
+        pids: this.livePids(lease),
+      });
+      return;
     }
+    this.store.remove("lease", id);
+    this.store.emit("resource.released", id, force ? { forced: true } : {});
   }
   /** Counted slots for capped pools (e.g. Wolfram validation runs); separate from path leases. */
   acquireSlot(pool: string, id: string, cap: number) {

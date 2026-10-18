@@ -599,6 +599,50 @@ test("real fs.watch reports external edits (debounced) and WatchService publishe
   );
 });
 
+test("workspace.changed never names files the agent's exclusions hide", async (t) => {
+  const { root, store, team, ws, agent } = await fixture(t);
+  await mkdir(join(root, "secrets"));
+  await team.saveAgent(
+    {
+      name: "Builder",
+      environment: "codex",
+      workspaces: [
+        {
+          path: root,
+          access: "write",
+          active: true,
+          rules: [{ path: "secrets", access: "none" }],
+        },
+      ],
+    },
+    agent.id,
+  );
+  const svc = new WatchService(store, ws, { debounceMs: 60, maxWaitMs: 500 });
+  t.after(() => svc.close());
+  svc.subscribers.set(root, new Set([agent.id]));
+  const fire = (paths: string[], git = false) =>
+    svc.watcher.o.onChange({
+      root,
+      mode: "watch",
+      paths,
+      git,
+      at: new Date().toISOString(),
+    });
+  const events = () =>
+    store.history(0, 100).filter((e) => e.type === "workspace.changed");
+  fire(["secrets/plan-acquisition.txt"]);
+  assert.equal(
+    events().length,
+    0,
+    "a change limited to excluded files emits nothing",
+  );
+  fire(["secrets/x.txt", "src/a.ts", "SECRETS/y.txt"]);
+  assert.deepEqual((events()[0].data as any).paths, ["src/a.ts"]);
+  assert.ok(
+    !JSON.stringify(store.history(0, 100)).includes("plan-acquisition"),
+  );
+});
+
 // ---- HTTP wiring ------------------------------------------------------------------
 test("new workspace routes are authenticated and enforce folder boundaries", async (t) => {
   const { root, store, team, agent } = await fixture(t);

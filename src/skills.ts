@@ -24,6 +24,10 @@ export type Skill = {
     "declared" | "source-inferred" | "format-compatible" | "unknown";
   requiresTools: string[];
   compatibilityNotes: string;
+  /** Declared `version` / `metadata.version` from the SKILL.md front matter, when present. */
+  version?: string;
+  /** Declared `metadata.triggers` (comma separated phrases), used for on-demand matching. */
+  triggers?: string[];
   body: string;
 };
 const manifest = z
@@ -37,6 +41,26 @@ const manifest = z
     compatibilityEvidence: z.enum(["format-only", "declared"]).optional(),
   })
   .strict();
+function declaredExtras(meta: Record<string, unknown>) {
+  const nested =
+    meta.metadata && typeof meta.metadata === "object"
+      ? (meta.metadata as Record<string, unknown>)
+      : {};
+  const raw = nested.version ?? meta.version;
+  const version =
+    typeof raw === "string" || typeof raw === "number"
+      ? String(raw).slice(0, 40)
+      : undefined;
+  const triggers =
+    typeof nested.triggers === "string"
+      ? nested.triggers
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean)
+          .slice(0, 40)
+      : undefined;
+  return { ...(version ? { version } : {}), ...(triggers ? { triggers } : {}) };
+}
 export class SkillCatalog {
   roots: SkillRoot[];
   items = new Map<string, Skill>();
@@ -135,6 +159,7 @@ export class SkillCatalog {
                     : "unknown",
             requiresTools: extra?.requiresTools ?? [],
             compatibilityNotes: meta.compatibility ?? "",
+            ...declaredExtras(meta),
             body: content.slice(match[0].length),
           });
         } catch (e) {

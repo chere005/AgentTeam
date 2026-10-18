@@ -15,6 +15,16 @@ import { openCommand } from "./native.ts";
 import { applyStaging } from "./git-stage.ts";
 import { randomUUID } from "node:crypto";
 import { ResourceCoordinator } from "./resources.ts";
+import {
+  decideBoth,
+  filterDiff,
+  hasRestrictions,
+  lexicalRelative,
+  repoPathFilter,
+  traversable,
+  type AccessLevel,
+} from "./access.ts";
+import { withRepoLockFor } from "./repo-lock.ts";
 import { Store } from "./store.ts";
 import { AppError, assert, type Agent } from "./model.ts";
 import {
@@ -27,6 +37,7 @@ import {
   revisionProblem,
 } from "./diff.ts";
 const exec = promisify(execFile);
+const lexicalRel = lexicalRelative;
 const requestSchema = z
   .object({ workspace: z.string(), path: z.string().default(".") })
   .strict();
@@ -35,7 +46,12 @@ export class WorkspaceService {
   constructor(store: Store) {
     this.store = store;
   }
-  async location(agentId: string, input: unknown, write = false) {
+  async location(
+    agentId: string,
+    input: unknown,
+    write = false,
+    opts: { traverse?: boolean } = {},
+  ) {
     const data = requestSchema.parse(input);
     const agent = this.store.get<Agent>("agent", agentId);
     const ws = agent.workspaces.find((w) => w.path === data.workspace);
@@ -46,7 +62,9 @@ export class WorkspaceService {
       403,
     );
     assert(
-      !write || ws.access === "write",
+      !write ||
+        ws.access === "write" ||
+        (ws.rules ?? []).some((r) => r.access === "write"),
       "read_only",
       "Agent has read-only access",
       403,
@@ -84,10 +102,67 @@ export class WorkspaceService {
       "Direct access to Git internals is not supported",
       403,
     );
-    return { root, target, relative: rel || ".", access: ws.access };
+    // Rules and exclusions: stricter of the lexical request path and the real path.
+    const lexical = lexicalRel(data.path);
+    const decision = decideBoth(ws, lexical, rel.split("\\").join("/"));
+    let access: AccessLevel = decision.access;
+    if (access === "none") {
+      const onlyListing =
+        opts.traverse &&
+        !write &&
+        traversable(ws, rel.split("\\").join("/")) &&
+        decision.source !== "exclusion";
+      assert(
+        onlyListing,
+        "access_denied",
+        `Access denied: ${decision.reason}`,
+        403,
+      );
+    } else
+      assert(
+        !write || access === "write",
+        "read_only",
+        decision.source === "inherited"
+          ? "Agent has read-only access"
+          : `Read-only here: ${decision.reason}`,
+        403,
+      );
+    return {
+      root,
+      target,
+      relative: rel || ".",
+      access: access as "none" | "read" | "write",
+      /** True when exclusions/explicit-only rules apply: whole-tree Git changes are refused. */
+      restricted: hasRestrictions(ws),
+    };
+  }
+  /** Staging/resolving names paths directly: each must be writable under the attachment's rules. */
+  async assertPathsWritable(agentId: string, root: string, paths: string[]) {
+    const agent = this.store.get<Agent>("agent", agentId);
+    const ws = agent.workspaces.find((w) => w.path === root);
+    if (!ws || !hasRestrictions(ws)) return;
+    for (const p of paths) {
+      const rel = lexicalRel(p);
+      const d = decideBoth(ws, rel, rel);
+      assert(
+        d.access === "write",
+        d.access === "none" ? "access_denied" : "read_only",
+        `${p}: ${d.reason}`,
+        403,
+      );
+    }
+  }
+  /** Predicate hiding repository-relative paths the agent's rules exclude (status, diffs, commit files). */
+  async visibleInRepo(agentId: string, root: string, repoTop: string) {
+    const agent = this.store.get<Agent>("agent", agentId);
+    const ws = agent.workspaces.find((w) => w.path === root);
+    if (!ws || !hasRestrictions(ws)) return () => true;
+    return repoPathFilter(ws, repoTop, root);
   }
   async browse(agentId: string, input: unknown) {
-    const loc = await this.location(agentId, input);
+    const loc = await this.location(agentId, input, false, {
+      traverse: true,
+    });
     assert(
       (await stat(loc.target)).isDirectory(),
       "not_directory",
@@ -95,10 +170,22 @@ export class WorkspaceService {
       400,
     );
     const entries = await readdir(loc.target, { withFileTypes: true });
+    const ws = this.store
+      .get<Agent>("agent", agentId)
+      .workspaces.find((w) => w.path === loc.root)!;
+    const shown = (name: string, dir: boolean) => {
+      if (!ws.rules?.length && !ws.explicitOnly) return true;
+      const rel = join(loc.relative === "." ? "" : loc.relative, name)
+        .split("\\")
+        .join("/");
+      const d = decideBoth(ws, rel, rel);
+      return d.access !== "none" || (dir && traversable(ws, rel));
+    };
     return {
       ...loc,
       entries: entries
         .filter((e) => e.name !== ".git")
+        .filter((e) => shown(e.name, e.isDirectory()))
         .map((e) => ({
           name: e.name,
           path: join(loc.relative, e.name),
@@ -276,6 +363,7 @@ export class WorkspaceService {
       ? loc.target
       : dirname(loc.target);
     const repo = (await this.git(cwd, ["rev-parse", "--show-toplevel"])).trim();
+    const visible = await this.visibleInRepo(agentId, loc.root, repo);
     const [status, branch, branches, worktrees] = await Promise.all([
       this.git(cwd, [
         "status",
@@ -292,10 +380,15 @@ export class WorkspaceService {
     return {
       repository: repo,
       branch: branch.trim() || "(detached HEAD)",
-      status: parseStatus(status),
+      status: parseStatus(status).filter(
+        (f) => visible(f.path) && (!f.from || visible(f.from)),
+      ),
       branches: branches.trim().split("\n").filter(Boolean),
       worktrees: parseWorktrees(worktrees),
-      canMutate: loc.access === "write" && (await realpath(repo)) === loc.root,
+      canMutate:
+        loc.access === "write" &&
+        !loc.restricted &&
+        (await realpath(repo)) === loc.root,
     };
   }
   async diff(agentId: string, input: unknown) {
@@ -319,7 +412,17 @@ export class WorkspaceService {
       "--",
       loc.relative,
     ]);
-    return { diff: text, staged: data.staged, path: loc.relative };
+    // `git diff` prints repository-relative paths: resolve them against the repository top, not the
+    // attachment (a subfolder attachment would otherwise match its rules against the wrong path).
+    const repoTop = (
+      await this.git(loc.root, ["rev-parse", "--show-toplevel"])
+    ).trim();
+    const visible = await this.visibleInRepo(agentId, loc.root, repoTop);
+    return {
+      diff: filterDiff(text, visible),
+      staged: data.staged,
+      path: loc.relative,
+    };
   }
   /** Who else could have produced changes in this checkout; never claims more than the evidence. */
   private attribution(
@@ -437,7 +540,14 @@ export class WorkspaceService {
         ],
         4_000_000,
       );
-      files = parseNameStatus(names.text);
+      const visible = await this.visibleInRepo(
+        agentId,
+        loc.root,
+        info.repository,
+      );
+      files = parseNameStatus(names.text).filter(
+        (f) => visible(f.path) && (!f.from || visible(f.from)),
+      );
     } else
       files = info.status.filter((f) =>
         data.staged
@@ -586,6 +696,33 @@ export class WorkspaceService {
       "Attach the repository root with write access for Git mutations",
       403,
     );
+    // Commit rewrites whatever is staged, including paths the rules exclude; staging checks each path.
+    assert(
+      !(loc.restricted && data.action === "commit"),
+      "access_rules_git",
+      "This attachment has exclusions or explicit-only rules, so committing the whole index is refused",
+      403,
+    );
+    if (data.action !== "commit")
+      await this.assertPathsWritable(agentId, loc.root, [
+        ...data.paths,
+        ...(data.renames ?? []).flatMap((r) => [r.from, r.to]),
+      ]);
+    return withRepoLockFor(repo, () =>
+      this.mutateLocked(agentId, data, loc, repo),
+    );
+  }
+  private async mutateLocked(
+    agentId: string,
+    data: {
+      action: "stage" | "unstage" | "commit";
+      paths: string[];
+      renames?: { from: string; to: string }[];
+      message?: string;
+    },
+    loc: { root: string },
+    repo: string,
+  ) {
     const coordinator = new ResourceCoordinator(this.store),
       leaseId = "git:" + randomUUID();
     coordinator.acquire(leaseId, agentId, null);

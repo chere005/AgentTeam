@@ -1,5 +1,7 @@
 import { z } from "zod";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
+import { decideBoth } from "./access.ts";
+import { queueReasons, resourceBusyReason } from "./queue.ts";
 import { realpath } from "node:fs/promises";
 import { overlaps, contains } from "./resources.ts";
 import { priorityName } from "./priorities.ts";
@@ -570,8 +572,24 @@ export function explainWaiting(
     const sub = explainTask(service, ctx, t.id);
     for (const r of sub.reasons) reasons.push({ ...r, taskId: t.id });
   }
+  // Queued chat runs share the task queue (same ordering, aging, Preempt and lease reasons).
+  const chats = service.store
+    .list<{ id: string; agentId: string }>("run-request")
+    .filter((r) => r.agentId === agent.id);
+  for (const c of chats) {
+    const busy = resourceBusyReason(service, {
+      agentId: agent.id,
+      workflowId: null,
+      id: c.id,
+    });
+    if (busy)
+      reasons.push({ ...busy, refs: { ...busy.refs, sessionId: c.id } });
+    for (const r of queueReasons(service, c.id))
+      reasons.push({ ...r, refs: { ...r.refs, sessionId: c.id } });
+  }
   const blocking = reasons.find((r) => r.blocking);
-  const waiting = !!blocking || tasks.some((t) => t.status === "queued");
+  const waiting =
+    !!blocking || chats.length > 0 || tasks.some((t) => t.status === "queued");
   return {
     subject: { kind: "agent", id: agent.id, name: agent.name },
     status: activity.state,
@@ -766,39 +784,12 @@ function explainTask(
         : `${agent.name} is in a running conversation.`,
       refs: { taskId: busyTask?.id, sessionId: busySession?.id },
     });
-  const conflicts = service.resources.conflicts(
-    agent.id,
-    task.workflowId,
-    task.id,
-  );
-  if (conflicts.length) {
-    const mine = agent.workspaces.map((w) => w.path);
-    push({
-      code: "resource-busy",
-      blocking: true,
-      title: "Shared files or folders are leased",
-      detail: conflicts
-        .map((lease: Lease) => {
-          const pairs = mine.flatMap((p) =>
-            lease.paths
-              .filter((o) => overlaps(p, o))
-              .map((o) => (p === o ? p : `${p} ~ ${o}`)),
-          );
-          const kind = store.list<Task>("task").some((t) => t.id === lease.id)
-            ? "task"
-            : "conversation";
-          return `${name(lease.agentId)} holds the lease (${kind} ${lease.id.slice(0, 8)}, since ${lease.acquiredAt}) over ${pairs.join(", ")}`;
-        })
-        .join("; "),
-      refs: {
-        leases: conflicts.map((l: Lease) => ({
-          id: l.id,
-          agentId: l.agentId,
-          paths: l.paths.filter((o) => mine.some((p) => overlaps(p, o))),
-        })),
-      },
-    });
-  }
+  const busy = resourceBusyReason(service, {
+    agentId: agent.id,
+    workflowId: task.workflowId,
+    id: task.id,
+  });
+  if (busy) push(busy);
   const recovery = service.recovery.state(task.id);
   if (recovery.notBefore && Date.parse(recovery.notBefore) > Date.now())
     push({
@@ -833,43 +824,8 @@ function explainTask(
       title: "Live execution is paused",
       detail: "The scheduler does not start tasks while execution is disabled.",
     });
-  // ---- queue position, priority and aging (context, not a blocker) ----------------------------
-  const queued = service.resources.ordered(
-    store.list<Task>("task").filter((t) => t.status === "queued"),
-  );
-  const position = queued.findIndex((t) => t.id === task.id);
-  if (position >= 0) {
-    const priority = service.resources.priority(agent.id);
-    const waited = Math.max(
-      0,
-      (Date.now() - Date.parse(task.queuedAt ?? new Date().toISOString())) /
-        1000,
-    );
-    const score = service.resources.score(task);
-    const ahead = queued
-      .slice(0, position)
-      .slice(0, 5)
-      .map((t) => ({
-        id: t.id,
-        title: t.title,
-        agent: name(t.agentId),
-        priority: priorityName(service.resources.priority(t.agentId)),
-      }));
-    push({
-      code: "queue-position",
-      blocking: false,
-      title: `Queue position ${position + 1} of ${queued.length}`,
-      detail: `${priorityName(priority)} priority (${priority}); waited ${Math.round(waited)} s, aging adds ${(waited / AGING_SECONDS).toFixed(1)} points, effective score ${score.toFixed(1)}.${priority === 101 ? " Preempt gets queue precedence but never interrupts running work." : ""}${position ? " Ahead: " + ahead.map((a) => `"${a.title}" (${a.agent})`).join(", ") + "." : ""}`,
-      refs: {
-        position: position + 1,
-        total: queued.length,
-        priority,
-        effectivePriority: score,
-        waitedSeconds: Math.round(waited),
-        ahead,
-      },
-    });
-  }
+  // ---- queue position, aging, owner and pending higher-priority requests (src/queue.ts) ------
+  for (const r of queueReasons(service, task.id)) push(r);
   return finish(
     true,
     "Eligible: nothing blocks this task; the next scheduler tick can start it",
@@ -1102,6 +1058,8 @@ export async function previewAccess(
       .filter((w) => contains(w.path, canonical))
       .sort((a, b) => b.path.length - a.path.length)[0];
     const insideGit = /(^|[\\/])\.git([\\/]|$)/.test(canonical);
+    const relPath = ws ? relative(ws.path, canonical).replace(/\\/g, "/") : "";
+    const rd = ws ? decideBoth(ws, relPath, relPath) : null;
     let allowed = true,
       reason = `Inside ${ws?.path} (${ws?.access}).`;
     if (!isAbsolute(want.path)) {
@@ -1110,9 +1068,15 @@ export async function previewAccess(
     } else if (!ws) {
       allowed = false;
       reason = "Outside every folder attached to this agent.";
-    } else if (want.access === "write" && ws.access !== "write") {
+    } else if (rd && rd.access === "none") {
       allowed = false;
-      reason = `The folder ${ws.path} is attached read-only.`;
+      reason = rd.reason + ".";
+    } else if (want.access === "write" && rd && rd.access !== "write") {
+      allowed = false;
+      reason =
+        ws.access !== "write"
+          ? `The folder ${ws.path} is attached read-only.`
+          : rd.reason + " (read-only).";
     } else if (insideGit) {
       allowed = false;
       reason = "AgentTeam file browsing blocks .git; use the Git tools.";

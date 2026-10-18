@@ -17,6 +17,9 @@ import {
   Command,
   Search,
   Inbox as InboxIcon,
+  Bot,
+  Wrench,
+  Workflow,
 } from "lucide-react";
 import {
   api,
@@ -29,6 +32,9 @@ import {
 } from "./api";
 import { Resources } from "./components/Resources";
 import { Inspector } from "./components/Inspector";
+import { Capabilities } from "./components/Capabilities";
+import { AssistantPanel } from "./components/AssistantPanel";
+import { WorkflowGraphs } from "./components/WorkflowGraphs";
 import { TeamLibrary } from "./components/Teams";
 import { TeamCanvas } from "./components/TeamCanvas";
 import { AgentEditor } from "./components/AgentEditor";
@@ -57,7 +63,10 @@ export type Panel =
   | "resources"
   | "teams"
   | "inbox"
-  | "inspector";
+  | "inspector"
+  | "capabilities"
+  | "assistant"
+  | "graphs";
 const panels: { id: Panel; name: string; icon: typeof Network }[] = [
   { id: "chat", name: "Conversations", icon: MessageSquare },
   { id: "team", name: "Team canvas", icon: Network },
@@ -68,6 +77,9 @@ const panels: { id: Panel; name: string; icon: typeof Network }[] = [
   { id: "teams", name: "Saved teams", icon: Library },
   { id: "inbox", name: "Attention inbox", icon: InboxIcon },
   { id: "inspector", name: "Run inspector", icon: Search },
+  { id: "capabilities", name: "Skills, tools & knowledge", icon: Wrench },
+  { id: "assistant", name: "Assistant changes", icon: Bot },
+  { id: "graphs", name: "Workflow graphs", icon: Workflow },
   { id: "activity", name: "Activity", icon: Activity },
   { id: "settings", name: "Settings", icon: Settings },
 ];
@@ -276,6 +288,7 @@ export default function App() {
             {...props}
             add={() => setEditor("new")}
             openTeams={() => setMain("teams")}
+            openGraphs={() => setMain("graphs")}
             chat={openConversation}
           />
         );
@@ -311,9 +324,22 @@ export default function App() {
             open={openInbox}
           />
         );
+      case "capabilities":
+        return <Capabilities {...props} />;
       case "inspector":
         return (
           <Inspector data={data} events={events} openChat={props.openChat} />
+        );
+      case "assistant":
+        return <AssistantPanel data={data} events={events} />;
+      case "graphs":
+        return (
+          <WorkflowGraphs
+            data={data}
+            events={events}
+            act={act}
+            goCanvas={() => setMain("team")}
+          />
         );
       case "activity":
         return <ActivityLog events={events} data={data} />;

@@ -8,7 +8,7 @@ Updated October 18, 2026. This is the remaining work for the desktop application
 
 ## Current baseline
 
-**Continuation checkpoint:** see [docs/CONTINUATION.md](docs/CONTINUATION.md) for the detailed code map, verified baseline, limitations, and next implementation steps. Work is paused at the user's request. The newest requested deliverable is still unimplemented:
+**Continuation checkpoint:** see [docs/CONTINUATION.md](docs/CONTINUATION.md) for the current handoff: what exists, how it was verified, limitations and next steps. The multi-stage sample below is still unimplemented:
 
 - [ ] Create a paused sample: Opus 5.5 plan → Sonnet 5.5 implementation with up to five workers → parallel Codex max/Fable reviews → separate Fable adjudication → up to five additional Sonnet workers → parallel final reviews → concise Fable stage report.
 - [ ] Preserve immutable Markdown handoff/attempt notes across stages and retries, with a scrollable workflow history and references to the exact inputs consumed.
@@ -20,7 +20,7 @@ The code review viewer now has changed-file navigation, staged and unstaged view
 
 Automatic harness discovery, model choices, and manual executable overrides need real-installation verification. Worktree creation, inline feedback, and basic development-server controls/preview now have desktop implementations and a passing combined fixture test. Their advanced behavior and platform coverage remain open below. ACP v1 has a working protocol-fixture integration; real provider adapters still need validation.
 
-At this checkpoint, type checking and the production build pass. All 43 backend tests pass, including ACP protocol and permission tests. Desktop tests pass for agent configuration/chat, review/preview/worktree flow, and ACP settings/approval/conversation delivery. Live-provider and other-platform ACP validation remain pending. Release workflow configuration exists; publication and downloadable artifacts still need verification.
+Current check results are recorded in docs/CONTINUATION.md (fixture and desktop tests on macOS). Live-provider and other-platform ACP validation remain pending. Release workflow configuration exists; publication and downloadable artifacts still need verification.
 
 ## Wolfram-validated math/physics sample — next sample workflow
 
@@ -114,18 +114,11 @@ References: [ACP protocol](https://agentclientprotocol.com/protocol/overview), [
 
 ## 5 AgentTeam assistant and conversation workspace — P1
 
-- [ ] Give the background Team Assistant tools to create/edit agents, teams, edges, rules, workflows, and resource assignments.
-- [ ] Show proposed configuration changes in a reviewable diff before applying changes with significant effects.
-- [ ] Validate all assistant changes through the same backend rules as the forms; log who changed what.
-- [ ] Let the assistant inspect current workflow states, queues, leases, failures, and available skills/tools.
-- [ ] Make long-lived background coordination explicit: status, current goal, pause/resume, and stopping conditions.
-- [ ] Complete the three agent-opening modes: embedded conversation, interactive CLI/terminal, and native application where supported.
+- [ ] Widen the Team Assistant's change tools: proposals (`src/assistant.ts`) cover agent create/update, edge create/update, rule create, workflow create + stopping limits and folder attach/detach, applied only by the user. Missing: saved-team insertion, rule edit/delete, deleting agents/edges/workflows, `resources.save` and workflow coordination operations. Assistant output reaches the backend only as a fenced `agentteam-proposal` block read by `/assistant/proposals/extract`; no provider tool endpoint (MCP/ACP) exposes it, and nothing was verified with a live assistant. Direct form edits are not audited with an actor (only proposal steps are).
+- [ ] Complete the three agent-opening modes: embedded conversation and CLI/native ownership are explicit (`src/ownership.ts`), but CLI is still copy-a-command instructions and native launch is `open -a` on macOS only (other platforms refuse); a native app's separate conversation is flagged, never imported.
 - [ ] Replace CLI instructions-only behavior with an embedded terminal when the provider supports it.
-- [ ] Preserve drafts and scroll state per agent and show unread responses without losing the current conversation.
-- [ ] Stream partial text and tool activity into conversations instead of showing only completed output.
-- [ ] Add message search and links from a task/event/review comment to the relevant conversation point.
-- [ ] Make Take control and Return ownership explicit across embedded chat, CLI, native apps, and background tasks.
-- [ ] Prevent duplicate driving of the same session and clearly show when a native app opens a separate session.
+- [ ] Verify the conversation workspace in the app with real replies: unread badges/divider (`useUnread`) and streamed partial text/tool activity (`LiveActivity`, from `runtime.text`/`runtime.tool` events) are unit-tested only; direct CLI adapters emit whole messages and only ACP emits chunks/tool calls.
+- [ ] Exercise the task/event/review-comment links to a conversation point in the app (`/conversations/link`, backend-tested): a background task run is not stored as conversation messages, so a task link opens the nearest message in time and says so.
 
 ## 6 Real agent-to-agent orchestration — P1
 
@@ -139,7 +132,7 @@ References: [ACP protocol](https://agentclientprotocol.com/protocol/overview), [
 
 Implemented and fixture-tested (see `docs/durable-execution.md`): immutable checkpoints, effect ledger, interrupted/blocked recovery, retry policy, persisted approvals, recovery API and panel. Remaining:
 
-- [ ] Add human-input steps (free-form questions to the user, not only provider permission requests) with the same persisted pending request, answer history and resume-at-same-point behavior as approvals.
+- [ ] Human-input steps exist as workflow-graph nodes (persisted approval record, free-text answer, answerable after restart); still open: agent- or provider-initiated free-form questions inside a running task with resume at the same point.
 - [ ] Verify resume with a live provider: the recorded provider session id is passed to Codex/Claude/ACP on resume, but only fixture adapters were exercised. Record ACP `session/load` support before relying on it.
 - [ ] Route AgentTeam-controlled teammate/tool invocations through the effect ledger when they exist (today the ledger covers provider runs, chat runs and ACP mutating tool calls).
 - [ ] Add a retry-policy editor (max attempts, backoff, automatic retry) to the Recovery panel; it is API-only (`PUT /tasks/:id/retry-policy`).
@@ -174,43 +167,24 @@ Implemented and fixture-tested (`src/shared-state.ts`, `src/artifacts.ts`, `src/
 - [ ] Bind gate evidence to exact inputs/revisions and require the configured check/review outcome; missing, failed, inconclusive, cancelled, or stale evidence keeps the gate closed. Surface blockers and retain decisions across restart. Use this mechanism for the Wolfram sample's actual kernel-validation requirement.
 - [ ] Test gate bypass attempts and stale evidence with controlled fixtures, then verify provider/kernel execution separately. Preserve mock-based orchestration tests; do not adopt a blanket ban on mocks or treat fixture success as live-provider validation.
 
-- [ ] Add workflow nodes for conditions, tool/command calls, human input, parallel fan-out, join, and bounded loops.
-- [ ] Keep the agent communication graph distinct from an executable workflow graph while letting users navigate between them.
-- [ ] Support rules such as “tests fail → Builder; tests pass → Reviewer.”
-- [ ] Define typed inputs/outputs and reference previous step results or shared state.
-- [ ] Run deterministic checks without paying for another model call.
-- [ ] Configure branch/join behavior for failed, cancelled, skipped, and partially completed tasks.
-- [ ] Validate invalid cycles, unreachable steps, missing inputs, and loops without limits before execution.
-- [ ] Show the actual executed path and allow retry from the failed step.
+Workflow graphs are implemented and fixture-tested (`src/workflow-graph*.ts`, `ui/components/WorkflowGraphs.tsx`, `test/workflow-graph.test.ts`, `e2e/workflow-graph.spec.ts`; see `docs/durable-execution.md`). Remaining:
+
+- [ ] Let graph steps write typed outputs into shared state/artifacts through `SharedStateService.write` (steps can only read state today).
+- [ ] Abort a running command step when a limit trip or runtime budget pauses the workflow (today it ends by its own timeout or a run cancel).
+- [ ] Join early exit (continue after N branches and cancel the rest), graph delete/archive, templates/import, and a graph-aware card on the canvas.
+- [ ] Verify agent steps of a graph with a live provider (fixture-tested only) and the command step on Windows (path confinement and `taskkill` tree stop are unverified there).
 
 ## 12 Skills, tools, and reference knowledge — P1
 
-- [ ] Verify the bundled skill catalog against supported environments and required tools; keep upstream licenses and revisions visible.
 - [ ] Expand useful coverage of popular languages, frameworks, databases, testing, security review, and Wolfram work where gaps remain.
 - [ ] Keep curated defaults and locally installed harness skills in separate sections, grouped/filterable by environment.
-- [ ] Show Always load versus On demand accurately for each adapter; implement on-demand loading where it is currently unsupported.
-- [ ] Keep permanent role instructions short and focused on responsibilities/output contracts; load deep reference skills only when relevant. Record which skill versions loaded and why, expose their context cost, and disclose adapters that cannot support on-demand loading.
-- [ ] Provide effective-instructions preview showing role, persistent instructions, loaded skills, and tool requirements.
-- [ ] Detect skill changes, missing files, duplicates, and incompatible versions; let the user control updates.
-- [ ] Add an MCP/tool registry with per-agent grants, connection state, authentication configuration, and test connection.
-- [ ] Distinguish skills (instructions), tools (actions), and knowledge sources (reference material) in the UI.
-- [ ] Add per-agent/project knowledge sources with indexing status, source citations, refresh/removal, and access controls.
-- [ ] Ensure importing a skill does not automatically grant its requested tool or filesystem permissions.
+- [ ] Keep permanent role instructions short and focused on responsibilities/output contracts (editorial; versions, reasons and approximate context cost per run are recorded in `run.context` events, not yet charted in the UI).
+- [ ] MCP/tool registry follow-up: registry, per-agent grants, env-var-reference auth and metadata-only test exist, but no adapter passes granted servers to a provider (ACP `mcpServers: []`, Claude `--strict-mcp-config`); wire exposure with runtime enforcement, and add OS-keychain auth if wanted.
 
 ## 13 Resource access and cooperative work — P1
 
-- [ ] Extend folder-only access to explicit files, exclusions, and inherited read/write rules.
-- [ ] Make effective access obvious on cards, agent details, Workspace, and task launch review.
-- [ ] Show resources shared by multiple agents and the exact overlapping paths causing a conflict.
-- [ ] Finish named scheduling priorities and Preempt behavior consistently across tasks and chat runs.
-- [ ] Display queue position, aging, current owner, wait reason, and pending higher-priority requests.
-- [ ] Test starvation prevention under sustained normal-priority load and explain Preempt exceptions.
-- [ ] Reserve resources at the granularity needed for a task instead of always locking every attached folder.
-- [ ] Extend guided parallel work from a prerequisite plan to actual assignment of disjoint files/worktrees and a final integration step.
-- [ ] Detect conflicting writes in approved parallel workflows and route them to the coordinator.
-- [ ] Coordinate Git operations that share repository metadata across separate worktrees.
-- [ ] Reconcile locks after crashes and ownership transfers without permitting two writers during process shutdown.
-- [ ] Keep external editors/native agents clearly identified as outside AgentTeam's cooperative lock enforcement.
+- [ ] Guided parallel work (assignment of disjoint paths/worktrees, integration step, conflict routing; `src/parallel.ts`) is backend-tested only: add Playwright coverage for the Resources > "Guided parallel assignments" form, a real scheduler-driven parallel run with fixture providers, and detection for workers editing non-Git folders (currently reported as "unavailable"). Manual `POST /tasks/:id/status` completions skip conflict detection.
+- [ ] Register provider process ids for ACP-native subagents (only the direct-CLI and ACP adapter processes are recorded for lock draining).
 
 ## 14 Git and file workspace polish — P1
 

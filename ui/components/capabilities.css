@@ -1,0 +1,82 @@
+.cap-kinds {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  margin: 8px 0;
+}
+.cap-kind {
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.cap-kind p {
+  margin: 4px 0 0;
+}
+.kind-skill {
+  border-left-color: #6a8cff;
+}
+.kind-tool {
+  border-left-color: #e0a030;
+}
+.kind-knowledge {
+  border-left-color: #4caf7a;
+}
+.cap-body {
+  display: grid;
+  gap: 8px;
+}
+.cap-body h3 {
+  margin: 8px 0 0;
+  font-size: 14px;
+}
+.cap-table {
+  border-collapse: collapse;
+  font-size: 12px;
+  width: 100%;
+}
+.cap-table th,
+.cap-table td {
+  border: 1px solid var(--line);
+  padding: 4px 6px;
+  vertical-align: top;
+  text-align: left;
+}
+.cap-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.cap-list > li {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.cap-list pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 220px;
+  overflow: auto;
+  margin: 4px 0 0;
+}
+.cap-form {
+  display: grid;
+  gap: 6px;
+  max-width: 560px;
+}
+.cap-form label {
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+}
+.cap .badge.ok {
+  color: #2e7d4f;
+}
+.cap .badge.bad,
+.cap .bad-text {
+  color: #b3392f;
+}

@@ -11,6 +11,9 @@ export const PANE_IDS = [
   "teams",
   "inbox",
   "inspector",
+  "capabilities",
+  "assistant",
+  "graphs",
 ] as const;
 export type PaneId = (typeof PANE_IDS)[number];
 export type PaneLayout = {

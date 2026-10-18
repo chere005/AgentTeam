@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { ConversationLink } from "./ConversationExtras";
 import { api, type Agent } from "../api";
 
 /** Which diff the review applies to: staged/unstaged, or a branch comparison. */
@@ -142,9 +143,11 @@ export function ReviewComments({
               {c.resolved ? "Reopen" : "Resolve"}
             </button>
             {onOpenConversation && (
-              <button onClick={() => onOpenConversation(c.targetId)}>
-                Open conversation
-              </button>
+              <ConversationLink
+                commentId={c.id}
+                openChat={onOpenConversation}
+                label="Open conversation"
+              />
             )}
           </li>
         ))}

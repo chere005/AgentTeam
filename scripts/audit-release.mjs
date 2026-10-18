@@ -177,6 +177,17 @@ notes.push(
   `bundled skills: ${skillDirs.length} directories, ${bundled.length} catalog entries, ${catalog.skills.length - bundled.length} metadata-only`,
 );
 
+// 3b. Skill catalog validation report (same checks the app shows under Skills, tools & knowledge)
+{
+  const { validateSkillCatalog } = await import("../src/skill-validation.ts");
+  const report = await validateSkillCatalog({ assetsDir: at("assets") });
+  for (const f of report.findings.filter((f) => f.severity === "error"))
+    fail(`skill validation ${f.code}: ${f.message}`);
+  notes.push(
+    `skill validation: ${report.counts.skills} skills, ${report.counts.errors} errors, ${report.counts.warnings} warnings`,
+  );
+}
+
 // 4. Team templates
 const templates = readdirSync(at("assets", "team-templates")).filter((f) =>
   f.endsWith(".json"),

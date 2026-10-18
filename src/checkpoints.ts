@@ -702,8 +702,8 @@ export class RecoveryService {
     return this.store.transaction(() => {
       this.ledger.settleInterrupted();
       this.service.approvals.restore();
-      for (const lease of this.store.list<{ id: string }>("lease"))
-        this.service.resources.release(lease.id);
+      // Keep (as draining) leases whose backend/provider process may still run; free the rest.
+      this.service.locks.reconcile();
       const recovered: string[] = [];
       for (const task of this.store.list<Task>("task")) {
         if (task.status !== "running") continue;
