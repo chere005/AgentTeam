@@ -1,0 +1,9 @@
+{
+  "catalogId": "jeffallan--typescript-pro",
+  "environments": [
+    "codex",
+    "claude"
+  ],
+  "requiresTools": [],
+  "compatibilityEvidence": "format-only"
+}

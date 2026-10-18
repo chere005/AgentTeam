@@ -1,0 +1,623 @@
+{
+  "curatedOn": "2026-10-18",
+  "selectionPolicy": "First-party guidance where available; focused, established community language specialists. This is an editorial starter set, not an objective ranking. Bundled content is pinned and not executed during curation.",
+  "skills": [
+    {
+      "id": "curated:jeffallan--python-pro",
+      "name": "python-pro",
+      "title": "Python Pro",
+      "description": "Use when building Python 3.11+ applications requiring type safety, async programming, or robust error handling. Generates type-annotated Python code, configures mypy in strict mode, writes pytest test suites with fixtures and mocking, and validates code with black and ruff. Invoke for type hints, async/await patterns, dataclasses, dependency injection, logging configuration, and structured error handling.",
+      "category": "Languages",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/python-pro",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "b94b59450d7372ac0cf47c7313a189796a5a7b0470552b2fe9e9581ec6c3de04"
+    },
+    {
+      "id": "curated:jeffallan--typescript-pro",
+      "name": "typescript-pro",
+      "title": "Typescript Pro",
+      "description": "Implements advanced TypeScript type systems, creates custom type guards, utility types, and branded types, and configures tRPC for end-to-end type safety. Use when building TypeScript applications requiring advanced generics, conditional or mapped types, discriminated unions, monorepo setup, or full-stack type safety with tRPC.",
+      "category": "Languages",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/typescript-pro",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "1647f8b6f7efc926b61ccfad4832317bf336a78b13265735229e25602afb0350"
+    },
+    {
+      "id": "curated:jeffallan--javascript-pro",
+      "name": "javascript-pro",
+      "title": "Javascript Pro",
+      "description": "Writes, debugs, and refactors JavaScript code using modern ES2023+ features, async/await patterns, ESM module systems, and Node.js APIs. Use when building vanilla JavaScript applications, implementing Promise-based async flows, optimising browser or Node.js performance, working with Web Workers or Fetch API, or reviewing .js/.mjs/.cjs files for correctness and best practices.",
+      "category": "Languages",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/javascript-pro",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "861bcf73723a87cf3f634e3943feaf4c2d4ac3f89e4cd9eddb8289d6eaa9aabe"
+    },
+    {
+      "id": "curated:jeffallan--rust-engineer",
+      "name": "rust-engineer",
+      "title": "Rust Engineer",
+      "description": "Writes, reviews, and debugs idiomatic Rust code with memory safety and zero-cost abstractions. Implements ownership patterns, manages lifetimes, designs trait hierarchies, builds async applications with tokio, and structures error handling with Result/Option. Use when building Rust applications, solving ownership or borrowing issues, designing trait-based APIs, implementing async/await concurrency, creating FFI bindings, or optimizing for performance and memory safety. Invoke for Rust, Cargo, ownership, borrowing, lifetimes, async Rust, tokio, zero-cost abstractions, memory safety, systems programming.",
+      "category": "Languages",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/rust-engineer",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "bc50c5df721ff7a7e2ff9f643905c184fab33f103e5640f9ad26344aaf33ecfc"
+    },
+    {
+      "id": "curated:jeffallan--golang-pro",
+      "name": "golang-pro",
+      "title": "Golang Pro",
+      "description": "Implements concurrent Go patterns using goroutines and channels, designs and builds microservices with gRPC or REST, optimizes Go application performance with pprof, and enforces idiomatic Go with generics, interfaces, and robust error handling. Use when building Go applications requiring concurrent programming, microservices architecture, or high-performance systems. Invoke for goroutines, channels, Go generics, gRPC integration, CLI tools, benchmarks, or table-driven testing.",
+      "category": "Languages",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/golang-pro",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "99a670198a271dc740df81dcc8639522af2accc6277d475bf8c29a3432f319da"
+    },
+    {
+      "id": "curated:jeffallan--cpp-pro",
+      "name": "cpp-pro",
+      "title": "Cpp Pro",
+      "description": "Writes, optimizes, and debugs C++ applications using modern C++20/23 features, template metaprogramming, and high-performance systems techniques. Use when building or refactoring C++ code requiring concepts, ranges, coroutines, SIMD optimization, or careful memory management — or when addressing performance bottlenecks, concurrency issues, and build system configuration with CMake.",
+      "category": "Languages",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/cpp-pro",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "53017f862c526df6080210a1a00e6678c2cd5382b5d1a51026bf3b0bde7f7ed2"
+    },
+    {
+      "id": "curated:jeffallan--csharp-developer",
+      "name": "csharp-developer",
+      "title": "Csharp Developer",
+      "description": "Use when building C# applications with .NET 8+, ASP.NET Core APIs, or Blazor web apps. Builds REST APIs using minimal or controller-based routing, configures database access with Entity Framework Core, implements async patterns and cancellation, structures applications with CQRS via MediatR, and scaffolds Blazor components with state management. Invoke for C#, .NET, ASP.NET Core, Blazor, Entity Framework, EF Core, Minimal API, MAUI, SignalR.",
+      "category": "Languages",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/csharp-developer",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "31b274ba70980b4dbf69ccfb93f96c470ebf7201e9b050af8caf516212462d7a"
+    },
+    {
+      "id": "curated:jeffallan--java-architect",
+      "name": "java-architect",
+      "title": "Java Architect",
+      "description": "Use when building, configuring, or debugging enterprise Java applications with Spring Boot 3.x, microservices, or reactive programming. Invoke to implement WebFlux endpoints, optimize JPA queries and database performance, configure Spring Security with OAuth2/JWT, or resolve authentication issues and async processing challenges in cloud-native Spring applications.",
+      "category": "Languages",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/java-architect",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "6f229adf2c6042a7e762f82d372e828547cf1876e6a9a6451ee4b81a25cb468c"
+    },
+    {
+      "id": "curated:jeffallan--kotlin-specialist",
+      "name": "kotlin-specialist",
+      "title": "Kotlin Specialist",
+      "description": "Provides idiomatic Kotlin implementation patterns including coroutine concurrency, Flow stream handling, multiplatform architecture, Compose UI construction, Ktor server setup, and type-safe DSL design. Use when building Kotlin applications requiring coroutines, multiplatform development, or Android with Compose. Invoke for Flow API, KMP projects, Ktor servers, DSL design, sealed classes, suspend function, Android Kotlin, Kotlin Multiplatform.",
+      "category": "Languages",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/kotlin-specialist",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "aad72ccc56c540cfc96860267fda368b10f5fb537ff7c8899fe5701a5ae63e48"
+    },
+    {
+      "id": "curated:jeffallan--swift-expert",
+      "name": "swift-expert",
+      "title": "Swift Expert",
+      "description": "Builds iOS/macOS/watchOS/tvOS applications, implements SwiftUI views and state management, designs protocol-oriented architectures, handles async/await concurrency, implements actors for thread safety, and debugs Swift-specific issues. Use when building iOS/macOS applications with Swift 5.9+, SwiftUI, or async/await concurrency. Invoke for protocol-oriented programming, SwiftUI state management, actors, server-side Swift, UIKit integration, Combine, or Vapor.",
+      "category": "Languages",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/swift-expert",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "a50b57faf2eda7b2113b291f1b26f8fdcf431c86b355280e142db4a25bc1cd83"
+    },
+    {
+      "id": "curated:jeffallan--php-pro",
+      "name": "php-pro",
+      "title": "Php Pro",
+      "description": "Use when building PHP applications with modern PHP 8.3+ features, Laravel, or Symfony frameworks. Invokes strict typing, PHPStan level 9, async patterns with Swoole, and PSR standards. Creates controllers, configures middleware, generates migrations, writes PHPUnit/Pest tests, defines typed DTOs and value objects, sets up dependency injection, and scaffolds REST/GraphQL APIs. Use when working with Eloquent, Doctrine, Composer, Psalm, ReactPHP, or any PHP API development.",
+      "category": "Languages",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/php-pro",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "8eeb931a5a643cbac0a9a419d856d65cb00bee118360a875e1e18a4e7cac3cdf"
+    },
+    {
+      "id": "curated:jeffallan--sql-pro",
+      "name": "sql-pro",
+      "title": "Sql Pro",
+      "description": "Optimizes SQL queries, designs database schemas, and troubleshoots performance issues. Use when a user asks why their query is slow, needs help writing complex joins or aggregations, mentions database performance issues, or wants to design or migrate a schema. Invoke for complex queries, window functions, CTEs, indexing strategies, query plan analysis, covering index creation, recursive queries, EXPLAIN/ANALYZE interpretation, before/after query benchmarking, or migrating queries between database dialects (PostgreSQL, MySQL, SQL Server, Oracle).",
+      "category": "Databases",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/sql-pro",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "c2916129aa5624e1d0d56dde8722bfe05bcf4a0d49df308ebf1ede5b53676feb"
+    },
+    {
+      "id": "curated:jeffallan--postgres-pro",
+      "name": "postgres-pro",
+      "title": "Postgres Pro",
+      "description": "Use when optimizing PostgreSQL queries, configuring replication, or implementing advanced database features. Invoke for EXPLAIN analysis, JSONB operations, extension usage, VACUUM tuning, performance monitoring.",
+      "category": "Databases",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/postgres-pro",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "aa3bf7c9a5a7af779095ef7e1a1afd0939880edfb7853719bfd54fe80fc74bbe"
+    },
+    {
+      "id": "curated:jeffallan--database-optimizer",
+      "name": "database-optimizer",
+      "title": "Database Optimizer",
+      "description": "Optimizes database queries and improves performance across PostgreSQL and MySQL systems. Use when investigating slow queries, analyzing execution plans, or optimizing database performance. Invoke for index design, query rewrites, configuration tuning, partitioning strategies, lock contention resolution.",
+      "category": "Databases",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/database-optimizer",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "f36ebc7a53b1d786a8599ee63e35e142577592a6393a9953f54278ed6cab01fc"
+    },
+    {
+      "id": "curated:jeffallan--fastapi-expert",
+      "name": "fastapi-expert",
+      "title": "Fastapi Expert",
+      "description": "Use when building high-performance async Python APIs with FastAPI and Pydantic V2. Invoke to create REST endpoints, define Pydantic models, implement authentication flows, set up async SQLAlchemy database operations, add JWT authentication, build WebSocket endpoints, or generate OpenAPI documentation. Trigger terms: FastAPI, Pydantic, async Python, Python API, REST API Python, SQLAlchemy async, JWT authentication, OpenAPI, Swagger Python.",
+      "category": "Frameworks",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/fastapi-expert",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "aec3e59f351cdbafe1260dd65bfb23480918d2df1357b7fd7a9b7a32855e08d9"
+    },
+    {
+      "id": "curated:jeffallan--django-expert",
+      "name": "django-expert",
+      "title": "Django Expert",
+      "description": "Use when building Django web applications or REST APIs with Django REST Framework. Invoke when working with settings.py, models.py, manage.py, or any Django project file. Creates Django models with proper indexes, optimizes ORM queries using select_related/prefetch_related, builds DRF serializers and viewsets, and configures JWT authentication. Trigger terms: Django, DRF, Django REST Framework, Django ORM, Django model, serializer, viewset, Python web.",
+      "category": "Frameworks",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/django-expert",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "0107de33b8bfbf91ba64e09be529c9bf176883cfd89c534065eefba17cd631ae"
+    },
+    {
+      "id": "curated:jeffallan--nextjs-developer",
+      "name": "nextjs-developer",
+      "title": "Nextjs Developer",
+      "description": "Use when building Next.js 14+ applications with App Router, server components, or server actions. Invoke to configure route handlers, implement middleware, set up API routes, add streaming SSR, write generateMetadata for SEO, scaffold loading.tsx/error.tsx boundaries, or deploy to Vercel. Triggers on: Next.js, Next.js 14, App Router, RSC, use server, Server Components, Server Actions, React Server Components, generateMetadata, loading.tsx, Next.js deployment, Vercel, Next.js performance.",
+      "category": "Frameworks",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/nextjs-developer",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "cbe6b04b18fa956f2a6563d996dde44a4c14e13862f58fdbe9eb891e65acf562"
+    },
+    {
+      "id": "curated:jeffallan--vue-expert",
+      "name": "vue-expert",
+      "title": "Vue Expert",
+      "description": "Builds Vue 3 components with Composition API patterns, configures Nuxt 3 SSR/SSG projects, sets up Pinia stores, scaffolds Quasar/Capacitor mobile apps, implements PWA features, and optimises Vite builds. Use when creating Vue 3 applications with Composition API, writing reusable composables, managing state with Pinia, building hybrid mobile apps with Quasar or Capacitor, configuring service workers, or tuning Vite configuration and TypeScript integration.",
+      "category": "Frameworks",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/vue-expert",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "d95e3b1ee42f2d6a0f7a435536d147a35e31b1b3046dfe7937364d834e238136"
+    },
+    {
+      "id": "curated:jeffallan--spring-boot-engineer",
+      "name": "spring-boot-engineer",
+      "title": "Spring Boot Engineer",
+      "description": "Generates Spring Boot 3.x configurations, creates REST controllers, implements Spring Security 6 authentication flows, sets up Spring Data JPA repositories, and configures reactive WebFlux endpoints. Use when building Spring Boot 3.x applications, microservices, or reactive Java applications; invoke for Spring Data JPA, Spring Security 6, WebFlux, Spring Cloud integration, Java REST API design, or Microservices Java architecture.",
+      "category": "Frameworks",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/spring-boot-engineer",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "05ae6815d8677bc13d6859f540939123d6dc3993ea7268dcb3c2167524a0959b"
+    },
+    {
+      "id": "curated:jeffallan--playwright-expert",
+      "name": "playwright-expert",
+      "title": "Playwright Expert",
+      "description": "Use when writing E2E tests with Playwright, setting up test infrastructure, or debugging flaky browser tests. Invoke to write test scripts, create page objects, configure test fixtures, set up reporters, add CI integration, implement API mocking, or perform visual regression testing. Trigger terms: Playwright, E2E test, end-to-end, browser testing, automation, UI testing, visual testing, Page Object Model, test flakiness.",
+      "category": "Quality",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/playwright-expert",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "d84e24b9d20e910e519a763e4dc7f0744e81497ffcc6b29cf7806dc0c07cca12"
+    },
+    {
+      "id": "curated:jeffallan--test-master",
+      "name": "test-master",
+      "title": "Test Master",
+      "description": "Generates test files, creates mocking strategies, analyzes code coverage, designs test architectures, and produces test plans and defect reports across functional, performance, and security testing disciplines. Use when writing unit tests, integration tests, or E2E tests; creating test strategies or automation frameworks; analyzing coverage gaps; performance testing with k6 or Artillery; security testing with OWASP methods; debugging flaky tests; or working on QA, regression, test automation, quality gates, shift-left testing, or test maintenance.",
+      "category": "Quality",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/test-master",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "93c3710547afb31d51962b090dbc282d10d7f35528967ca307f135771460bb41"
+    },
+    {
+      "id": "curated:jeffallan--code-reviewer",
+      "name": "code-reviewer",
+      "title": "Code Reviewer",
+      "description": "Analyzes code diffs and files to identify bugs, security vulnerabilities (SQL injection, XSS, insecure deserialization), code smells, N+1 queries, naming issues, and architectural concerns, then produces a structured review report with prioritized, actionable feedback. Use when reviewing pull requests, conducting code quality audits, identifying refactoring opportunities, or checking for security issues. Invoke for PR reviews, code quality checks, refactoring suggestions, review code, code quality. Complements specialized skills (security-reviewer, test-master) by providing broad-scope review across correctness, performance, maintainability, and test coverage in a single pass.",
+      "category": "Quality",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/code-reviewer",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "f65c4468751bb509f4ff78b791dfbc664dfe6191d36d04626c92ed8c2174293b"
+    },
+    {
+      "id": "curated:jeffallan--security-reviewer",
+      "name": "security-reviewer",
+      "title": "Security Reviewer",
+      "description": "Identifies security vulnerabilities, generates structured audit reports with severity ratings, and provides actionable remediation guidance. Use when conducting security audits, reviewing code for vulnerabilities, or analyzing infrastructure security. Invoke for SAST scans, penetration testing, DevSecOps practices, cloud security reviews, dependency audits, secrets scanning, or compliance checks. Produces vulnerability reports, prioritized recommendations, and compliance checklists.",
+      "category": "Quality",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/security-reviewer",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "9f5feff0c3957fa4f1a872833f5df9cef7d3b68ec4d94812e1e659e0aeb28d21"
+    },
+    {
+      "id": "curated:jeffallan--devops-engineer",
+      "name": "devops-engineer",
+      "title": "Devops Engineer",
+      "description": "Creates Dockerfiles, configures CI/CD pipelines, writes Kubernetes manifests, and generates Terraform/Pulumi infrastructure templates. Handles deployment automation, GitOps configuration, incident response runbooks, and internal developer platform tooling. Use when setting up CI/CD pipelines, containerizing applications, managing infrastructure as code, deploying to Kubernetes clusters, configuring cloud platforms, automating releases, or responding to production incidents. Invoke for pipelines, Docker, Kubernetes, GitOps, Terraform, GitHub Actions, on-call, or platform engineering.",
+      "category": "Infrastructure",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/devops-engineer",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "552f6b0f31bc5d6cad3c692034407f22319424d2cdb94ade99ec108f760e4285"
+    },
+    {
+      "id": "curated:jeffallan--kubernetes-specialist",
+      "name": "kubernetes-specialist",
+      "title": "Kubernetes Specialist",
+      "description": "Use when deploying or managing Kubernetes workloads. Invoke to create deployment manifests, configure pod security policies, set up service accounts, define network isolation rules, debug pod crashes, analyze resource limits, inspect container logs, or right-size workloads. Use for Helm charts, RBAC policies, NetworkPolicies, storage configuration, performance optimization, GitOps pipelines, and multi-cluster management.",
+      "category": "Infrastructure",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/kubernetes-specialist",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "ff066ef0cc751dede5ca6d212744d45c8dfd0cc27a34a60fc8ecde18087f8d8f"
+    },
+    {
+      "id": "curated:jeffallan--terraform-engineer",
+      "name": "terraform-engineer",
+      "title": "Terraform Engineer",
+      "description": "Use when implementing infrastructure as code with Terraform across AWS, Azure, or GCP. Invoke for module development (create reusable modules, manage module versioning), state management (migrate backends, import existing resources, resolve state conflicts), provider configuration, multi-environment workflows, and infrastructure testing.",
+      "category": "Infrastructure",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/terraform-engineer",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "781ae1b0168136f17e1ea31258f734b3ca4f0fc43d080c8c04a4a428c77db8b9"
+    },
+    {
+      "id": "curated:supabase--supabase-postgres-best-practices",
+      "name": "supabase-postgres-best-practices",
+      "title": "Supabase Postgres Best Practices",
+      "description": "Postgres best practices maintained by Supabase, for Postgres running anywhere. Load this skill BEFORE writing or changing anything that lives in a Postgres database: creating or altering tables and columns (including choosing column types), schema design, migrations and declarative schema files, RLS policies and the tests that verify them, indexes, triggers, database functions, queues and scheduled jobs (pg_cron, pgmq), vector/semantic search (pgvector), and restoring dumps (pg_restore) or importing data. Also load it when diagnosing slow queries, high CPU, timeouts, EXPLAIN plans, connection exhaustion, locking, bloat, or rows visible to the wrong user or tenant. This is not just a performance guide — schema, migration, security, and SQL authoring tasks need these rules too, even for a one-column change or a single query.",
+      "category": "Databases",
+      "publisher": "Supabase · First party",
+      "source": "https://github.com/supabase/agent-skills",
+      "sourcePath": "skills/supabase-postgres-best-practices",
+      "commit": "c9be0e931b7930f7d02126d04774d904c381e7d7",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "ad65e776f45e761bafc609d3f506c77c1032225aa65e0c4c02f241b8071e5855"
+    },
+    {
+      "id": "curated:anthropic--frontend-design",
+      "name": "frontend-design",
+      "title": "Frontend Design",
+      "description": "Guidance for distinctive, intentional visual design when building new UI or reshaping an existing one. Helps with aesthetic direction, typography, and making choices that don't read as templated defaults.",
+      "category": "Design",
+      "publisher": "Anthropic · First party",
+      "source": "https://github.com/anthropics/skills",
+      "sourcePath": "skills/frontend-design",
+      "commit": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+      "license": "Apache-2.0",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "d91970639e9f5c37682ac7ab60094d35f1c7c1f38d731bd56396563aee10c1d3"
+    },
+    {
+      "id": "recommended:vercel--react-best-practices",
+      "name": "vercel-react-best-practices",
+      "title": "React Best Practices",
+      "description": "React and Next.js performance optimization guidelines from Vercel Engineering. This skill should be used when writing, reviewing, or refactoring React/Next.js code to ensure optimal performance patterns. Triggers on tasks involving React components, Next.js pages, data fetching, bundle optimization, or performance improvements.",
+      "category": "Frontend",
+      "publisher": "Vercel · First party",
+      "source": "https://github.com/vercel-labs/agent-skills",
+      "sourcePath": "skills/react-best-practices",
+      "commit": "063bee94c3f4df8453406c830b0a7df0f2860278",
+      "license": "MIT",
+      "bundled": false,
+      "reason": "Source recommendation only; no license text was supplied with this upstream snapshot. Review redistribution notices before bundling.",
+      "environmentSupport": {
+        "codex": "Agent Skills format; not validated",
+        "claude": "Agent Skills format; not validated",
+        "wolfram": "not validated"
+      }
+    },
+    {
+      "id": "recommended:vercel--composition-patterns",
+      "name": "vercel-composition-patterns",
+      "title": "Composition Patterns",
+      "description": "React composition patterns that scale. Use when refactoring components with boolean prop proliferation, building flexible component libraries, or designing reusable APIs. Triggers on tasks involving compound components, render props, context providers, or component architecture. Includes React 19 API changes.",
+      "category": "Frontend",
+      "publisher": "Vercel · First party",
+      "source": "https://github.com/vercel-labs/agent-skills",
+      "sourcePath": "skills/composition-patterns",
+      "commit": "063bee94c3f4df8453406c830b0a7df0f2860278",
+      "license": "MIT",
+      "bundled": false,
+      "reason": "Source recommendation only; no license text was supplied with this upstream snapshot. Review redistribution notices before bundling.",
+      "environmentSupport": {
+        "codex": "Agent Skills format; not validated",
+        "claude": "Agent Skills format; not validated",
+        "wolfram": "not validated"
+      }
+    },
+    {
+      "id": "recommended:vercel--web-design-guidelines",
+      "name": "web-design-guidelines",
+      "title": "Web Design Guidelines",
+      "description": "Review UI code for Web Interface Guidelines compliance. Use when asked to \"review my UI\", \"check accessibility\", \"audit design\", \"review UX\", or \"check my site against best practices\".",
+      "category": "Frontend",
+      "publisher": "Vercel · First party",
+      "source": "https://github.com/vercel-labs/agent-skills",
+      "sourcePath": "skills/web-design-guidelines",
+      "commit": "063bee94c3f4df8453406c830b0a7df0f2860278",
+      "license": "Not specified",
+      "bundled": false,
+      "reason": "Source recommendation only; no license text was supplied with this upstream snapshot. Review redistribution notices before bundling.",
+      "environmentSupport": {
+        "codex": "Agent Skills format; not validated",
+        "claude": "Agent Skills format; not validated",
+        "wolfram": "not validated"
+      }
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "catalogId": "jeffallan--devops-engineer",
+  "environments": [
+    "codex",
+    "claude"
+  ],
+  "requiresTools": [],
+  "compatibilityEvidence": "format-only"
+}

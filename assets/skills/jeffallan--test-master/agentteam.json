@@ -1,0 +1,9 @@
+{
+  "catalogId": "jeffallan--test-master",
+  "environments": [
+    "codex",
+    "claude"
+  ],
+  "requiresTools": [],
+  "compatibilityEvidence": "format-only"
+}

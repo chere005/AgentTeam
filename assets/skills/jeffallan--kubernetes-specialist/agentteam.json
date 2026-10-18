@@ -1,0 +1,9 @@
+{
+  "catalogId": "jeffallan--kubernetes-specialist",
+  "environments": [
+    "codex",
+    "claude"
+  ],
+  "requiresTools": [],
+  "compatibilityEvidence": "format-only"
+}

@@ -1,0 +1,9 @@
+{
+  "catalogId": "supabase--supabase-postgres-best-practices",
+  "environments": [
+    "codex",
+    "claude"
+  ],
+  "requiresTools": [],
+  "compatibilityEvidence": "format-only"
+}

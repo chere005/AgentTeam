@@ -1,0 +1,9 @@
+{
+  "catalogId": "jeffallan--terraform-engineer",
+  "environments": [
+    "codex",
+    "claude"
+  ],
+  "requiresTools": [],
+  "compatibilityEvidence": "format-only"
+}

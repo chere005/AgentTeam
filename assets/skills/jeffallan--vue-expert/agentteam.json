@@ -1,0 +1,9 @@
+{
+  "catalogId": "jeffallan--vue-expert",
+  "environments": [
+    "codex",
+    "claude"
+  ],
+  "requiresTools": [],
+  "compatibilityEvidence": "format-only"
+}

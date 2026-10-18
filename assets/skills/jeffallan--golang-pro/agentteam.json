@@ -1,0 +1,9 @@
+{
+  "catalogId": "jeffallan--golang-pro",
+  "environments": [
+    "codex",
+    "claude"
+  ],
+  "requiresTools": [],
+  "compatibilityEvidence": "format-only"
+}

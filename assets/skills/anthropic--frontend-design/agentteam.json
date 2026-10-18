@@ -1,0 +1,9 @@
+{
+  "catalogId": "anthropic--frontend-design",
+  "environments": [
+    "codex",
+    "claude"
+  ],
+  "requiresTools": [],
+  "compatibilityEvidence": "format-only"
+}

@@ -1,0 +1,9 @@
+{
+  "catalogId": "jeffallan--sql-pro",
+  "environments": [
+    "codex",
+    "claude"
+  ],
+  "requiresTools": [],
+  "compatibilityEvidence": "format-only"
+}
