@@ -3,15 +3,17 @@ import { api, type Snapshot, type TeamEvent } from "../api";
 import "./assistant.css";
 
 type DiffField = { path: string; before: unknown; after: unknown };
-type DiffEntry = {
+export type DiffEntry = {
   index: number;
   action: string;
   label: string;
+  /** Past-tense line shown after applying. */
+  done?: string;
   significant: boolean;
   reasons: string[];
   fields: DiffField[];
 };
-type Proposal = {
+export type Proposal = {
   id: string;
   title: string;
   rationale: string;
@@ -24,8 +26,10 @@ type Proposal = {
   expiresAt: string;
   /** "kind:id" of every pre-existing entity the proposal touches (team filter). */
   base?: Record<string, string | null>;
+  /** What applying changed, one line per operation. */
+  summary?: string[];
 };
-type Detail = {
+export type Detail = {
   proposal: Proposal;
   diff: DiffEntry[];
   stale: string[];
@@ -60,7 +64,47 @@ type Coord = {
 };
 const show = (v: unknown) =>
   typeof v === "string" ? v : JSON.stringify(v ?? null);
+
+/** Per-operation before/after table; shared by this panel and the chat's proposal card. */
+export function ProposalDiff({ diff }: { diff: DiffEntry[] }) {
+  return (
+    <div className="diff" data-testid="proposal-diff">
+      {diff.map((d) => (
+        <div key={d.index} className={"diff-op " + d.action}>
+          <b>
+            {d.index + 1}. {d.label}
+          </b>
+          {d.significant && (
+            <span className="badge limit-stopped">significant</span>
+          )}
+          <table>
+            <tbody>
+              {d.fields.map((f) => (
+                <tr key={f.path}>
+                  <th scope="row">{f.path}</th>
+                  <td className="before">
+                    {d.action === "create" ? "" : show(f.before)}
+                  </td>
+                  <td className="after">{show(f.after)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  );
+}
 const err = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** A proposal to select when the panel opens or is already open (chat "Open in Assistant changes"). */
+let requested = "";
+const SELECT_EVENT = "agentteam:select-proposal";
+export function requestProposal(id: string) {
+  requested = id;
+  if (typeof window !== "undefined")
+    window.dispatchEvent(new CustomEvent(SELECT_EVENT, { detail: id }));
+}
 
 /** Team of a proposal: null when it touches only the active team or global/new entities. */
 function otherTeamOf(p: Proposal, data: Snapshot): string | null {
@@ -78,7 +122,19 @@ function Proposals({ events, data }: { events: TeamEvent[]; data: Snapshot }) {
   // The Team Assistant is global; its proposals are shown in the team they change.
   const list = all.filter((p) => !otherTeamOf(p, data));
   const elsewhere = all.length - list.length;
-  const [sel, setSel] = useState("");
+  const [sel, setSel] = useState(() => {
+    const id = requested;
+    requested = "";
+    return id;
+  });
+  useEffect(() => {
+    const pick = (e: Event) => {
+      requested = "";
+      setSel(String((e as CustomEvent).detail ?? ""));
+    };
+    window.addEventListener(SELECT_EVENT, pick);
+    return () => window.removeEventListener(SELECT_EVENT, pick);
+  }, []);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [audit, setAudit] = useState<Audit[]>([]);
   const [error, setError] = useState("");
@@ -200,31 +256,7 @@ function Proposals({ events, data }: { events: TeamEvent[]; data: Snapshot }) {
               ))}
             </ul>
           )}
-          <div className="diff" data-testid="proposal-diff">
-            {detail.diff.map((d) => (
-              <div key={d.index} className={"diff-op " + d.action}>
-                <b>
-                  {d.index + 1}. {d.label}
-                </b>
-                {d.significant && (
-                  <span className="badge limit-stopped">significant</span>
-                )}
-                <table>
-                  <tbody>
-                    {d.fields.map((f) => (
-                      <tr key={f.path}>
-                        <th scope="row">{f.path}</th>
-                        <td className="before">
-                          {d.action === "create" ? "" : show(f.before)}
-                        </td>
-                        <td className="after">{show(f.after)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ))}
-          </div>
+          <ProposalDiff diff={detail.diff} />
           <div className="row">
             {detail.needsApproval && (
               <button
@@ -473,9 +505,10 @@ function Inspection() {
     >
       <summary>What the assistant can inspect (read-only, bounded)</summary>
       <p className="hint">
-        Sent to the assistant as untrusted data: workflow states, queues,
-        leases, failures and available skills/tools. It contains no task results
-        or credentials.
+        Sent to the assistant as untrusted data, after the proposal protocol:
+        the active team’s agents (roles, skills, tools), connections, rules,
+        workflows, queues, leases and failures, and the skill catalog. It
+        contains no task results or credentials.
       </p>
       <pre data-testid="assistant-context">{text}</pre>
     </details>

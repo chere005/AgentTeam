@@ -37,7 +37,15 @@ import {
   useChatScroll,
   useUnread,
 } from "./ConversationExtras";
-import { dividerIndex, unreadLabel } from "../conversation";
+import {
+  dividerIndex,
+  hasProposalBlock,
+  messageStatusLabel,
+  processingMessageIds,
+  splitProposalBlocks,
+  unreadLabel,
+} from "../conversation";
+import { ProposalCards } from "./ProposalCard";
 import { useWorkspaceWatch } from "./useWorkspaceWatch";
 import { EffectiveAccess, LaunchReview, ExternalNotice } from "./AccessUi";
 import { accessLabel } from "../access-view";
@@ -143,35 +151,38 @@ export function Chat(p: PaneProps) {
     setMode("chat");
     setSearching(false);
   }, [p.selected]);
+  // Every event refetches the list. A response is applied unless a NEWER request already
+  // answered: discarding every in-flight response whenever another event arrives (the previous
+  // behaviour) starved the list during a busy run, leaving a processing message labelled "queued".
+  const fetchSeq = useRef(0),
+    appliedSeq = useRef(0);
   useEffect(() => {
     if (!session) return;
-    let alive = true;
-    api("/sessions/" + session.id + "/messages")
+    const seq = ++fetchSeq.current;
+    const sid = session.id,
+      agentId = p.selected;
+    api("/sessions/" + sid + "/messages")
       .then((m) => {
-        if (alive) {
-          setMessages(m);
-          setOwner(p.selected);
-        }
+        if (seq <= appliedSeq.current || currentAgent.current !== agentId)
+          return;
+        appliedSeq.current = seq;
+        setMessages(m);
+        setOwner(agentId);
       })
       .catch(() => {});
-    return () => {
-      alive = false;
-    };
   }, [session?.id, p.events]);
-  async function send() {
-    if (!agent || !draft.trim() || sendLock.current || composing.current)
-      return;
+  async function sendText(text: string, fromDraft: boolean) {
+    if (!agent || !text.trim() || sendLock.current || composing.current) return;
     sendLock.current = true;
     setSending(true);
-    const text = draft;
     try {
       await p.act(async () => {
         const s = await api("/agents/" + agent.id + "/session", "POST");
         await api("/sessions/" + s.id + "/messages", "POST", { text });
         // Clear only what was sent: keep anything typed meanwhile or in another agent's draft.
-        if (saved("draft." + agent.id, "") === text)
+        if (fromDraft && saved("draft." + agent.id, "") === text)
           persist("draft." + agent.id, "");
-        if (currentAgent.current === agent.id)
+        if (fromDraft && currentAgent.current === agent.id)
           setDraft((d) => (d === text ? "" : d));
         if (p.data.liveExecution)
           await api("/sessions/" + s.id + "/run", "POST");
@@ -181,6 +192,11 @@ export function Chat(p: PaneProps) {
       setSending(false);
     }
   }
+  const send = () => sendText(draft, true);
+  const processingIds = session
+    ? processingMessageIds(p.events, session.id)
+    : [];
+  const isAssistant = agent?.kind === "team-assistant";
   if (!agent)
     return (
       <div className="empty">
@@ -371,9 +387,40 @@ export function Chat(p: PaneProps) {
                       minute: "2-digit",
                     })}
                   </time>
-                  <span className="badge">{m.status}</span>
+                  <span className="badge" data-testid="message-status">
+                    {messageStatusLabel(m, processingIds)}
+                  </span>
                 </div>
-                <div className="message-text">{m.text}</div>
+                {isAssistant &&
+                m.role === "assistant" &&
+                hasProposalBlock(m.text) ? (
+                  <>
+                    {splitProposalBlocks(m.text).map((part, j) =>
+                      part.kind === "text" ? (
+                        <div className="message-text" key={j}>
+                          {part.text}
+                        </div>
+                      ) : (
+                        <details className="proposal-json" key={j}>
+                          <summary>Show JSON</summary>
+                          <pre>{part.json}</pre>
+                        </details>
+                      ),
+                    )}
+                    <ProposalCards
+                      messageId={m.id}
+                      events={p.events}
+                      send={(text) => sendText(text, false)}
+                      openChanges={
+                        p.openFeature
+                          ? () => p.openFeature!("assistant")
+                          : undefined
+                      }
+                    />
+                  </>
+                ) : (
+                  <div className="message-text">{m.text}</div>
+                )}
               </article>
             ))}
             {session?.state === "running" && (

@@ -133,3 +133,72 @@ export function takePendingFocus(agentId: string) {
   return p.messageId;
 }
 export const FOCUS_EVENT = FOCUS;
+
+/** Same fence the backend extracts (src/assistant.ts PROPOSAL_FENCE / `extract`). */
+export const PROPOSAL_FENCE = "agentteam-proposal";
+export type MessagePart =
+  | { kind: "text"; text: string }
+  | { kind: "proposal"; json: string; index: number };
+/**
+ * Splits a Team Assistant reply into prose and ```agentteam-proposal blocks (same regex as the
+ * backend extract), so the chat can hide the raw JSON behind "Show JSON". Display only: the
+ * proposal itself always comes from the backend's validated extract.
+ */
+export function splitProposalBlocks(text: string): MessagePart[] {
+  const re = new RegExp(
+    "```" + PROPOSAL_FENCE + "[ \\t]*\\r?\\n([\\s\\S]*?)```",
+    "g",
+  );
+  const parts: MessagePart[] = [];
+  let last = 0,
+    index = 0;
+  for (const m of text.matchAll(re)) {
+    const before = text.slice(last, m.index).replace(/\s+$/, "");
+    if (before.trim()) parts.push({ kind: "text", text: before });
+    parts.push({ kind: "proposal", json: m[1].trim(), index: index++ });
+    last = m.index! + m[0].length;
+  }
+  const rest = text.slice(last).replace(/^\s+/, "");
+  if (rest.trim() || !parts.length) parts.push({ kind: "text", text: rest });
+  return parts;
+}
+export const hasProposalBlock = (text: string) =>
+  text.includes("```" + PROPOSAL_FENCE);
+
+/**
+ * The messages a run is processing right now, from the session events (`session.started` carries
+ * `messageIds`, or `messageId` from older backends; any end event closes it). Events arrive before
+ * a refetched message list does, so the status label follows them instead of a possibly stale list.
+ */
+export function processingMessageIds(
+  events: EventLike[],
+  sessionId: string,
+): string[] {
+  let current: string[] = [];
+  for (const e of events) {
+    if (e.entityId !== sessionId) continue;
+    if (e.type === "session.started")
+      current = Array.isArray(e.data?.messageIds)
+        ? e.data.messageIds.filter((x: unknown) => typeof x === "string")
+        : typeof e.data?.messageId === "string"
+          ? [e.data.messageId]
+          : [];
+    else if (END.has(e.type)) current = [];
+  }
+  return current;
+}
+/**
+ * Status label for a chat message. The stored status can lag behind (the list is refetched after
+ * events), so a user message the running provider call is working on reads "processing" even while
+ * the fetched copy still says "queued"; one sent after the run started stays "queued" (it goes into
+ * the next run). Without a start event in view (e.g. after a reload) the stored status is shown.
+ */
+export function messageStatusLabel(
+  m: { id: string; role: string; status: string },
+  processingIds: string[],
+): string {
+  if (m.role !== "user") return m.status;
+  if (processingIds.includes(m.id) && m.status === "queued")
+    return "processing";
+  return m.status;
+}

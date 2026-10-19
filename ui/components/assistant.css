@@ -81,3 +81,80 @@
 .assistant-panel textarea {
   width: 100%;
 }
+/* Chat: "Proposed changes" card under a Team Assistant reply. */
+.proposal-card {
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: var(--surface-1);
+  padding: 10px 12px;
+  margin: 10px 0 4px;
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+.proposal-card.invalid {
+  border-left-color: #e08585;
+}
+.proposal-card.applied {
+  border-left-color: #7fc79a;
+}
+.proposal-card.rejected,
+.proposal-card.stale,
+.proposal-card.expired,
+.proposal-card.failed {
+  border-left-color: var(--line-strong);
+}
+.proposal-card h4 {
+  margin: 0;
+  font-size: 14px;
+}
+.proposal-card p {
+  margin: 0;
+}
+.proposal-card-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.proposal-card-head .eyebrow {
+  margin-right: auto;
+}
+.proposal-card .diff-op {
+  margin: 4px 0;
+}
+.proposal-applied {
+  margin: 0;
+  padding-left: 18px;
+  color: #a9e2bd;
+}
+.proposal-error {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 12px;
+  color: #f0b4b4;
+  background: #2a1d20;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.proposal-json {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 4px 0;
+}
+.proposal-json summary {
+  cursor: pointer;
+}
+.proposal-json pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 240px;
+  overflow: auto;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.proposal-card .diff-op td.before {
+  width: 34%;
+}

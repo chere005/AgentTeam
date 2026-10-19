@@ -36,6 +36,13 @@ const refName = z.string().regex(REF);
 /** An existing entity id, or `@ref` naming an entity created earlier in the same proposal. */
 const idOrRef = z.string().min(1).max(200);
 const fields = z.record(z.string(), z.unknown());
+/** A skill assignment a proposal may add: catalog id and load mode only (never `allowUnverified`). */
+const skillAdd = z
+  .object({
+    id: z.string().min(1).max(300),
+    mode: z.enum(["always", "on-demand"]).default("on-demand"),
+  })
+  .strict();
 
 export const opSchema = z.discriminatedUnion("op", [
   z
@@ -48,6 +55,17 @@ export const opSchema = z.discriminatedUnion("op", [
   z
     .object({ op: z.literal("agent.update"), id: idOrRef, changes: fields })
     .strict(),
+  z
+    .object({
+      op: z.literal("agent.skills"),
+      agentId: idOrRef,
+      add: z.array(skillAdd).max(50).default([]),
+      remove: z.array(z.string().min(1).max(300)).max(50).default([]),
+    })
+    .strict()
+    .refine((o) => o.add.length + o.remove.length > 0, {
+      message: "agent.skills needs at least one skill to add or remove",
+    }),
   z.object({ op: z.literal("edge.create"), edge: fields }).strict(),
   z
     .object({ op: z.literal("edge.update"), id: idOrRef, changes: fields })
@@ -113,6 +131,8 @@ export type DiffEntry = {
   kind: "agent" | "edge" | "rule" | "workflow" | "limits" | "resource";
   target: string;
   label: string;
+  /** Past-tense one-liner shown after applying, e.g. "Added 3 skills to Frontend Engineer". */
+  done: string;
   fields: DiffField[];
   significant: boolean;
   reasons: string[];
@@ -135,6 +155,8 @@ export type Proposal = {
   statusReason?: string;
   appliedAt?: string;
   result?: { index: number; op: Op["op"]; id: string }[];
+  /** What applying changed, one line per operation (from the diff just before applying). */
+  summary?: string[];
 };
 export type AuditEntry = {
   id: string;
@@ -199,6 +221,27 @@ const diffFields = (
 
 type Refs = Map<string, { kind: "agent" | "workflow"; id: string }>;
 
+/**
+ * A proposal may only assign skills the agent's environment supports: `allowUnverified` is a
+ * user decision in the agent panel, so a proposal can keep an existing override but never add one.
+ */
+function assertNoNewUnverified(
+  previous: Agent["skills"],
+  next: unknown,
+  where: string,
+) {
+  if (!Array.isArray(next)) return;
+  for (const s of next as { id?: unknown; allowUnverified?: unknown }[])
+    assert(
+      !s ||
+        s.allowUnverified !== true ||
+        previous.some((p) => p.id === s.id && p.allowUnverified),
+      "proposal_invalid",
+      `${where}: a proposal cannot assign skill ${String(s?.id)} with allowUnverified; skills must support the agent's environment`,
+      400,
+    );
+}
+
 /** Resolves `@ref` to the entity id created earlier; ids pass through. */
 function resolveId(value: unknown, kind: "agent" | "workflow", refs: Refs) {
   if (typeof value !== "string") return value;
@@ -211,6 +254,19 @@ function resolveId(value: unknown, kind: "agent" | "workflow", refs: Refs) {
     400,
   );
   return ref.id;
+}
+
+type SkillsOp = Extract<Op, { op: "agent.skills" }>;
+/** The agent's skill list after an `agent.skills` op: removals, then additions (an existing id changes mode). */
+function nextSkills(current: Agent["skills"], op: SkillsOp): Agent["skills"] {
+  const removed = new Set(op.remove);
+  const out = current.filter((s) => !removed.has(s.id)).map((s) => ({ ...s }));
+  for (const add of op.add) {
+    const existing = out.find((s) => s.id === add.id);
+    if (existing) existing.mode = add.mode;
+    else out.push({ id: add.id, mode: add.mode, allowUnverified: false });
+  }
+  return out;
 }
 
 /** Executes operations through the TeamService mutations the forms use; shared by dry run and apply. */
@@ -236,6 +292,7 @@ export async function executeOps(
           "Proposals can only create ordinary agents",
           400,
         );
+        assertNoNewUnverified([], input.skills, "agent.create");
         id = (await service.saveAgent(input)).id;
         if (op.ref) refs.set(op.ref, { kind: "agent", id });
         break;
@@ -249,10 +306,25 @@ export async function executeOps(
           "Agent kind and control cannot be changed by a proposal",
           400,
         );
+        assertNoNewUnverified(
+          current.skills,
+          op.changes.skills,
+          "agent.update",
+        );
         const merged = { ...agentInputOf(current), ...op.changes };
         if ("parentId" in op.changes)
           merged.parentId = resolveId(merged.parentId, "agent", refs);
         await service.saveAgent(merged, id);
+        break;
+      }
+      case "agent.skills": {
+        id = String(resolveId(op.agentId, "agent", refs));
+        const current = store.get<Agent>("agent", id);
+        const skills = nextSkills(current.skills, op);
+        // Same validation as the agent panel (saveAgent): the skill must be in the catalog,
+        // support the agent's environment and need only tools the agent already has. Assigning
+        // skills never grants tools or folders.
+        await service.saveAgent({ ...agentInputOf(current), skills }, id);
         break;
       }
       case "resource.assign": {
@@ -370,6 +442,7 @@ function touchedKeys(ops: Op[]): string[] {
         agent(op.changes.parentId);
         break;
       case "resource.assign":
+      case "agent.skills":
         agent(op.agentId);
         break;
       case "edge.create":
@@ -434,8 +507,16 @@ export function buildDiff(service: TeamService, ops: Op[]): DiffEntry[] {
       return v;
     }
   };
+  const skillName = (id: string) => {
+    try {
+      return service.skills.get(id).name;
+    } catch {
+      return id;
+    }
+  };
   const agentBefore = (id: string): Record<string, unknown> | null => {
-    if (isRef(id)) return simulated.get(id) ?? null;
+    if (simulated.has(id)) return simulated.get(id) ?? null;
+    if (isRef(id)) return null;
     try {
       return agentInputOf(store.get<Agent>("agent", id));
     } catch {
@@ -472,6 +553,7 @@ export function buildDiff(service: TeamService, ops: Op[]): DiffEntry[] {
             kind: "agent",
             target: op.ref ? "@" + op.ref : String(input.name ?? "agent"),
             label: `Create agent ${String(input.name ?? "")}`.trim(),
+            done: `Created agent ${String(input.name ?? "")}`.trim(),
             fields: diffFields(null, input),
             reasons,
           }),
@@ -487,14 +569,86 @@ export function buildDiff(service: TeamService, ops: Op[]): DiffEntry[] {
         const reasons = changed
           .filter((f) => SIGNIFICANT_AGENT_KEYS.includes(f.path))
           .map((f) => `Changes ${f.path}`);
+        if (before) simulated.set(op.id, after);
         out.push(
           entry({
             action: "update",
             kind: "agent",
             target: op.id,
             label: `Edit agent ${label(op.id)}`,
+            done: `Updated ${label(op.id)}${changed.length ? ` (${changed.map((f) => f.path).join(", ")})` : ""}`,
             fields: changed,
             reasons,
+          }),
+        );
+        break;
+      }
+      case "agent.skills": {
+        const before = agentBefore(op.agentId);
+        const prev = (before?.skills ?? []) as Agent["skills"];
+        const next = nextSkills(prev, op);
+        const had = new Set(prev.map((s) => s.id));
+        const added = next.filter((s) => !had.has(s.id)).map((s) => s.id);
+        const kept = new Set(next.map((s) => s.id));
+        const removed = prev.filter((s) => !kept.has(s.id)).map((s) => s.id);
+        const modes = op.add.filter(
+          (a) =>
+            had.has(a.id) && prev.find((s) => s.id === a.id)?.mode !== a.mode,
+        );
+        const names = (ids: string[]) => ids.map(skillName).join(", ");
+        // Readable list for the diff table: names, the load mode only when it is "always".
+        const skillList = (list: Agent["skills"]) =>
+          list.length
+            ? list
+                .map(
+                  (s) =>
+                    skillName(s.id) + (s.mode === "always" ? " (always)" : ""),
+                )
+                .join(", ")
+            : "none";
+        const who = label(op.agentId);
+        const parts: string[] = [];
+        const plural = (n: number) => `${n} skill${n === 1 ? "" : "s"}`;
+        if (added.length)
+          parts.push(
+            `Added ${plural(added.length)} (${names(added)}) to ${who}`,
+          );
+        if (removed.length)
+          parts.push(
+            `Removed ${plural(removed.length)} (${names(removed)}) from ${who}`,
+          );
+        if (modes.length)
+          parts.push(
+            `Changed the load mode of ${plural(modes.length)} on ${who}`,
+          );
+        const labelParts = [
+          added.length ? `add skills ${names(added)}` : "",
+          removed.length ? `remove skills ${names(removed)}` : "",
+          modes.length
+            ? `change load mode of ${names(modes.map((m) => m.id))}`
+            : "",
+        ].filter(Boolean);
+        if (before) simulated.set(op.agentId, { ...before, skills: next });
+        out.push(
+          entry({
+            action: "update",
+            kind: "agent",
+            target: op.agentId,
+            label: labelParts.length
+              ? `${labelParts.join("; ").replace(/^./, (c) => c.toUpperCase())} (${who})`
+              : `Skills of ${who} (no change)`,
+            done: parts.join("; ") || `No skill changes for ${who}`,
+            fields: [
+              {
+                path: "skills",
+                before: summarize(skillList(prev)),
+                after: summarize(skillList(next)),
+              },
+            ],
+            reasons:
+              added.length || removed.length || modes.length
+                ? ["Changes skills"]
+                : [],
           }),
         );
         break;
@@ -507,6 +661,7 @@ export function buildDiff(service: TeamService, ops: Op[]): DiffEntry[] {
             kind: "resource",
             target: op.agentId,
             label: `${op.action === "add" ? "Attach" : "Detach"} ${op.workspace.path} ${op.action === "add" ? "(" + op.workspace.access + ") to" : "from"} ${label(op.agentId)}`,
+            done: `${op.action === "add" ? "Attached" : "Detached"} ${op.workspace.path} ${op.action === "add" ? "(" + op.workspace.access + ") to" : "from"} ${label(op.agentId)}`,
             fields: [
               {
                 path: "workspaces",
@@ -534,6 +689,7 @@ export function buildDiff(service: TeamService, ops: Op[]): DiffEntry[] {
             kind: "edge",
             target: `${label(e.from)} → ${label(e.to)}`,
             label: `Connect ${label(e.from)} → ${label(e.to)} (${String(e.kind ?? "")})`,
+            done: `Connected ${label(e.from)} → ${label(e.to)} (${String(e.kind ?? "")})`,
             fields: diffFields(null, e),
             reasons:
               e.enabled === false
@@ -562,6 +718,7 @@ export function buildDiff(service: TeamService, ops: Op[]): DiffEntry[] {
             kind: "edge",
             target: op.id,
             label: `Edit connection ${before ? `${label(before.from)} → ${label(before.to)}` : op.id}`,
+            done: `Updated connection ${before ? `${label(before.from)} → ${label(before.to)}` : op.id}`,
             fields: changed,
             reasons:
               changed.length && !onlyDisable
@@ -579,6 +736,7 @@ export function buildDiff(service: TeamService, ops: Op[]): DiffEntry[] {
             kind: "rule",
             target: label(r.agentId),
             label: `Add ${String(r.mode ?? "advisory")} ${String(r.kind ?? "delegate")} rule for ${label(r.agentId)}`,
+            done: `Added ${String(r.mode ?? "advisory")} ${String(r.kind ?? "delegate")} rule for ${label(r.agentId)}`,
             fields: diffFields(null, r),
             reasons:
               r.mode === "mandatory"
@@ -595,6 +753,7 @@ export function buildDiff(service: TeamService, ops: Op[]): DiffEntry[] {
             kind: "workflow",
             target: op.ref ? "@" + op.ref : String(op.workflow.name ?? ""),
             label: `Create workflow ${String(op.workflow.name ?? "")}`.trim(),
+            done: `Created project ${String(op.workflow.name ?? "")}`.trim(),
             fields: diffFields(null, op.workflow),
           }),
         );
@@ -631,6 +790,7 @@ export function buildDiff(service: TeamService, ops: Op[]): DiffEntry[] {
             kind: "limits",
             target: op.workflowId,
             label: `Change stopping conditions of workflow ${op.workflowId}`,
+            done: `Changed stopping conditions of workflow ${op.workflowId}`,
             fields: diffFields(before, op.limits).filter((f) =>
               Object.hasOwn(op.limits, f.path),
             ),
@@ -800,6 +960,9 @@ export class AssistantProposals {
           break;
         case "resource.assign":
           need(op.agentId, "resource.assign agentId");
+          break;
+        case "agent.skills":
+          need(op.agentId, "agent.skills agentId");
           break;
         case "edge.create":
           need(op.edge.from, "edge.from");
@@ -1033,6 +1196,8 @@ export class AssistantProposals {
           `The configuration changed since this was proposed: ${stale.join(", ")}`,
         );
       }
+      // Described against the state just before the mutations, so "Added 3 skills" stays true.
+      const summary = buildDiff(this.service, p.ops).map((d) => d.done);
       const snapshot = new Map<string, unknown[]>();
       for (const kind of SNAPSHOT_KINDS)
         snapshot.set(kind, this.store.list<{ id: string }>(kind));
@@ -1057,6 +1222,7 @@ export class AssistantProposals {
         status: "applied",
         appliedAt: new Date(this.opts.now()).toISOString(),
         result: results,
+        summary,
       };
       this.store.transaction(() => {
         this.store.put("proposal", applied);

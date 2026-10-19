@@ -309,6 +309,23 @@ async function executeCommandRaw(
     if (temporary) await rm(temporary, { recursive: true, force: true });
   }
 }
+/**
+ * Provider prompt for the queued user messages of one run: the message itself when there is one;
+ * otherwise all of them in order, the last marked as the current request, so the reply covers
+ * everything the user sent while no run was active.
+ */
+export function pendingPrompt(pending: { text: string }[]) {
+  if (pending.length === 1) return pending[0].text;
+  return (
+    "The user sent several messages since your last reply. Answer them together; the last one is the current request.\n\n" +
+    pending
+      .map(
+        (m, i) =>
+          `${i === pending.length - 1 ? "Current request" : `Earlier message ${i + 1}`}:\n${m.text}`,
+      )
+      .join("\n\n")
+  );
+}
 export class RunManager {
   service: TeamService;
   enabled: boolean;
@@ -403,24 +420,24 @@ export class RunManager {
           readiness: (environment) =>
             this.readiness?.(environment) ?? { state: "ready" },
         }).text;
-    const message = store
+    // EVERY queued user message of the session goes into this run, oldest first. Taking only the
+    // oldest one left a backlog (a message sent while execution was paused stays queued), so each
+    // later run answered the previous message and the newest one stayed queued.
+    const pending = store
       .list<Message>("message")
-      .find(
+      .filter(
         (m) =>
           m.sessionId === sessionId &&
           m.role === "user" &&
           m.status === "queued",
       );
-    assert(message, "queue_empty", "No queued message");
+    assert(pending.length, "queue_empty", "No queued message");
+    const message = pending[pending.length - 1];
+    const request = pendingPrompt(pending);
     // Skill selection (always/on-demand), cited knowledge and the per-run context record.
-    const context = prepareRunContext(
-      this.service,
-      plan,
-      message.text,
-      sessionId,
-    );
+    const context = prepareRunContext(this.service, plan, request, sessionId);
     if (context instanceof Promise) await context;
-    let prompt = message.text;
+    let prompt = request;
     if (plan.environment === "wolfram") {
       const previous = store
         .list<Message>("message")
@@ -454,11 +471,14 @@ export class RunManager {
       this.service.resources.acquire(sessionId, agent.id, null);
       store.remove("run-request", sessionId);
       current.state = "running";
-      message.status = "processing";
       store.put("session", current);
-      store.put("message", message);
+      for (const m of pending) {
+        m.status = "processing";
+        store.put("message", m);
+      }
       store.emit("session.started", sessionId, {
         messageId: message.id,
+        messageIds: pending.map((m) => m.id),
         transport: plan.connection?.transport ?? "direct",
         environment: plan.environment,
         model: plan.model,
@@ -467,7 +487,7 @@ export class RunManager {
     });
     const controller = new AbortController();
     this.active.set(sessionId, controller);
-    void this.run(sessionId, message, command, plan, controller).finally(() =>
+    void this.run(sessionId, pending, command, plan, controller).finally(() =>
       this.active.delete(sessionId),
     );
     return { sessionId, messageId: message.id, status: "running" };
@@ -491,12 +511,19 @@ export class RunManager {
   }
   private async run(
     id: string,
-    message: Message,
+    messages: Message[],
     command: Command,
     plan: LaunchPlan,
     controller: AbortController,
   ) {
     const store = this.service.store;
+    const message = messages[messages.length - 1];
+    const setStatus = (status: Message["status"]) => {
+      for (const m of messages) {
+        m.status = status;
+        store.put("message", m);
+      }
+    };
     let text = "";
     let effectId: string | null = null;
     try {
@@ -539,8 +566,7 @@ export class RunManager {
         502,
       );
       store.transaction(() => {
-        message.status = "delivered";
-        store.put("message", message);
+        setStatus("delivered");
         store.put<Message>("message", {
           id: randomUUID(),
           sessionId: id,
@@ -554,8 +580,7 @@ export class RunManager {
     } catch (e) {
       if (effectId) this.service.recovery.failEffect(effectId, e);
       store.transaction(() => {
-        message.status = "failed";
-        store.put("message", message);
+        setStatus("failed");
         store.emit(
           controller.signal.aborted ? "session.cancelled" : "session.failed",
           id,

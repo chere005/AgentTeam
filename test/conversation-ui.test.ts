@@ -86,3 +86,89 @@ test("unread counts, first-sight baseline, divider position and scroll rule", ()
     false,
   );
 });
+
+test("Team Assistant replies: proposal blocks are split out of the prose (raw JSON hidden by default)", async () => {
+  const { splitProposalBlocks, hasProposalBlock } =
+    await import("../ui/conversation.ts");
+  const text =
+    'Plan: add skills.\n\n```agentteam-proposal\n{"title":"x","ops":[]}\n```\nTell me if that works.';
+  assert.equal(hasProposalBlock(text), true);
+  assert.deepEqual(splitProposalBlocks(text), [
+    { kind: "text", text: "Plan: add skills." },
+    { kind: "proposal", json: '{"title":"x","ops":[]}', index: 0 },
+    { kind: "text", text: "Tell me if that works." },
+  ]);
+  assert.deepEqual(splitProposalBlocks("just text"), [
+    { kind: "text", text: "just text" },
+  ]);
+  // Other fences stay in the prose.
+  const code = "```json\n{}\n```";
+  assert.equal(hasProposalBlock(code), false);
+  assert.deepEqual(splitProposalBlocks(code), [{ kind: "text", text: code }]);
+  const two = splitProposalBlocks(
+    "```agentteam-proposal\n{}\n```\n```agentteam-proposal \n[]\n```",
+  );
+  assert.deepEqual(
+    two.map((p) => (p.kind === "proposal" ? p.index : -1)),
+    [0, 1],
+  );
+});
+
+test("chat status label follows the session events: processing vs queued", async () => {
+  const { messageStatusLabel, processingMessageIds } =
+    await import("../ui/conversation.ts");
+  const a = { id: "a", role: "user", status: "queued" };
+  const b = { id: "b", role: "user", status: "queued" };
+  const c = { id: "c", role: "user", status: "queued" };
+  const r = { id: "r", role: "assistant", status: "delivered" };
+  const ev = (seq: number, type: string, data: any = {}, entityId = "s1") => ({
+    seq,
+    type,
+    entityId,
+    data,
+  });
+  // Queued, nothing running.
+  assert.deepEqual(
+    processingMessageIds([ev(1, "session.run_queued")], "s1"),
+    [],
+  );
+  assert.equal(messageStatusLabel(a, []), "queued");
+  // The run took a and b (a backlog is answered together) while the fetched copies still say
+  // queued: both read processing; c, sent after the start, stays queued for the next run.
+  const started = [
+    ev(1, "session.run_queued"),
+    ev(2, "session.started", { messageId: "b", messageIds: ["a", "b"] }),
+  ];
+  const ids = processingMessageIds(started, "s1");
+  assert.deepEqual(ids, ["a", "b"]);
+  assert.equal(messageStatusLabel(a, ids), "processing");
+  assert.equal(messageStatusLabel(b, ids), "processing");
+  assert.equal(messageStatusLabel(c, ids), "queued");
+  // Older backends sent only messageId.
+  assert.deepEqual(
+    processingMessageIds([ev(2, "session.started", { messageId: "a" })], "s1"),
+    ["a"],
+  );
+  // Other sessions' events do not count; an end event closes the run.
+  assert.deepEqual(
+    processingMessageIds(
+      [ev(3, "session.started", { messageIds: ["x"] }, "s2")],
+      "s1",
+    ),
+    [],
+  );
+  assert.deepEqual(
+    processingMessageIds([...started, ev(3, "session.completed")], "s1"),
+    [],
+  );
+  // A refetched final status wins over the start event; replies keep theirs.
+  assert.equal(
+    messageStatusLabel({ ...a, status: "delivered" }, ids),
+    "delivered",
+  );
+  assert.equal(
+    messageStatusLabel({ ...a, status: "processing" }, []),
+    "processing",
+  );
+  assert.equal(messageStatusLabel(r, ["r"]), "delivered");
+});
