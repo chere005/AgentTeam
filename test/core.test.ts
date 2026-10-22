@@ -1,10 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  chmod,
   mkdtemp,
   mkdir,
+  realpath,
   writeFile,
   rm,
+  stat,
   symlink,
   readFile,
 } from "node:fs/promises";
@@ -320,6 +323,202 @@ test("runtime command arguments preserve prompts without shell interpretation", 
   assert(command.stdin.includes("$(touch /tmp/never)"));
   assert(command.args.includes('sandbox_mode="read-only"'));
   assert.equal(command.args.at(-1), "-");
+});
+test("provider file tools are limited to the attached workspace and assigned access", async (t) => {
+  const { service } = fixture(t);
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), "agentteam-tools-")),
+  );
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const claudeBuilder = await service.saveAgent({
+    name: "Claude Builder",
+    environment: "claude",
+    model: "sonnet",
+    roleType: "implementer",
+    tools: ["read", "grep", "glob", "edit", "write"],
+    workspaces: [{ path: root, access: "write", active: true }],
+  });
+  const claudePlan = await service.launchPlan(claudeBuilder.id);
+  const claude = commandFor(claudePlan, null, "Create a file", process.cwd());
+  assert.ok(claude.args.includes("--restricted"));
+  assert.ok(!claude.args.includes("--safe-mode"));
+  assert.equal(
+    claude.args[claude.args.indexOf("--tools") + 1],
+    "Read,Glob,Grep,Edit,Write",
+  );
+  assert.equal(
+    claude.args[claude.args.indexOf("--permission-mode") + 1],
+    "acceptEdits",
+  );
+  assert.equal(claude.cwd, root);
+
+  const codexBuilder = await service.saveAgent({
+    name: "Codex Builder",
+    environment: "codex",
+    model: "default",
+    roleType: "implementer",
+    tools: ["read", "edit", "write"],
+    workspaces: [{ path: root, access: "write", active: true }],
+  });
+  const codex = commandFor(
+    await service.launchPlan(codexBuilder.id),
+    null,
+    "Create a file",
+    process.cwd(),
+  );
+  assert.ok(codex.args.includes('sandbox_mode="workspace-write"'));
+
+  const reviewer = await service.saveAgent({
+    name: "Read-only reviewer",
+    environment: "codex",
+    roleType: "reviewer",
+    tools: ["read", "grep", "glob"],
+    workspaces: [{ path: root, access: "read", active: true }],
+  });
+  const readOnly = commandFor(
+    await service.launchPlan(reviewer.id),
+    null,
+    "Review",
+    process.cwd(),
+  );
+  assert.ok(readOnly.args.includes('sandbox_mode="read-only"'));
+
+  const restricted = await service.saveAgent({
+    name: "Rule-restricted builder",
+    environment: "claude",
+    roleType: "implementer",
+    tools: ["read", "grep", "glob", "edit", "write"],
+    workspaces: [
+      {
+        path: root,
+        access: "write",
+        active: true,
+        rules: [{ path: "private", access: "none" }],
+      },
+    ],
+  });
+  const restrictedCommand = commandFor(
+    await service.launchPlan(restricted.id),
+    null,
+    "Build",
+    process.cwd(),
+  );
+  assert.equal(
+    restrictedCommand.args[restrictedCommand.args.indexOf("--tools") + 1],
+    "",
+    "file tools are disabled when the provider cannot enforce per-file rules",
+  );
+});
+test("direct CLI MCP configuration is scoped to the run token and cleaned up", async (t) => {
+  const { service } = fixture(t);
+  const root = await realpath(await mkdtemp(join(tmpdir(), "agentteam-mcp-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const fixturePath = join(root, "provider-fixture.mjs");
+  await writeFile(
+    fixturePath,
+    `#!/usr/bin/env node
+import { readFileSync, statSync } from "node:fs";
+const args = process.argv.slice(2);
+const configIndex = args.indexOf("--mcp-config");
+const configPath = configIndex < 0 ? null : args[configIndex + 1];
+const payload = {
+  args,
+  configPath,
+  config: configPath ? JSON.parse(readFileSync(configPath, "utf8")) : null,
+  configMode: configPath ? (statSync(configPath).mode & 0o777).toString(8) : null,
+  token: process.env.AGENTTEAM_TOOL_TOKEN ?? null,
+};
+const out = (type, event) => console.log(JSON.stringify(event));
+if (args.includes("--json")) {
+  payload.config = args.filter((x) => x.startsWith("mcp_servers.agentteam."));
+  out("codex", { type: "item.completed", item: { type: "agent_message", text: JSON.stringify(payload) } });
+} else {
+  out("claude", { type: "assistant", message: { content: [{ type: "text", text: JSON.stringify(payload) }] } });
+  out("claude-result", { type: "result", subtype: "success" });
+}
+`,
+  );
+  await chmod(fixturePath, 0o700);
+  const manager = await service.saveAgent({
+    name: "Manager",
+    environment: "claude",
+    model: "opus",
+    roleType: "coordinator",
+    tools: ["read", "grep", "glob"],
+    workspaces: [{ path: root, access: "read", active: true }],
+  });
+  const plan = await service.launchPlan(manager.id);
+  const command = commandFor(plan, null, "Delegate a task", root);
+  command.executable = fixturePath;
+  command.teammateTools = {
+    url: "http://127.0.0.1:4317/mcp",
+    token: "run-scoped-test-token",
+  };
+  let output = "";
+  await executeCommand(
+    command,
+    "claude",
+    (event) => {
+      if (event.type === "text") output = String(event.data);
+    },
+    new AbortController().signal,
+  );
+  const payload = JSON.parse(output);
+  assert.equal(payload.token, "run-scoped-test-token");
+  assert.equal(payload.configMode, "600");
+  assert.deepEqual(payload.config.mcpServers.agentteam.headers, {
+    Authorization: "Bearer ${AGENTTEAM_TOOL_TOKEN}",
+  });
+  assert.deepEqual(
+    payload.config.mcpServers.agentteam.url,
+    command.teammateTools.url,
+  );
+  assert.ok(payload.args.includes("--restricted"));
+  assert.ok(payload.args.includes("mcp__agentteam__invoke_teammate"));
+  assert.ok(!payload.args.includes(command.teammateTools.token));
+  await assert.rejects(stat(payload.configPath), { code: "ENOENT" });
+
+  const builder = await service.saveAgent({
+    name: "Codex Builder",
+    environment: "codex",
+    roleType: "implementer",
+    tools: ["read", "grep", "glob", "edit", "write"],
+    workspaces: [{ path: root, access: "write", active: true }],
+  });
+  const codexCommand = commandFor(
+    await service.launchPlan(builder.id),
+    null,
+    "Write a file",
+    root,
+  );
+  codexCommand.executable = fixturePath;
+  codexCommand.teammateTools = {
+    url: "http://127.0.0.1:4317/mcp",
+    token: "codex-run-token",
+  };
+  output = "";
+  await executeCommand(
+    codexCommand,
+    "codex",
+    (event) => {
+      if (event.type === "text") output = String(event.data);
+    },
+    new AbortController().signal,
+  );
+  const codexPayload = JSON.parse(output);
+  assert.equal(codexPayload.token, "codex-run-token");
+  assert.ok(
+    codexPayload.config.includes(
+      'mcp_servers.agentteam.url="http://127.0.0.1:4317/mcp"',
+    ),
+  );
+  assert.ok(
+    codexPayload.config.includes(
+      'mcp_servers.agentteam.bearer_token_env_var="AGENTTEAM_TOOL_TOKEN"',
+    ),
+  );
+  assert.ok(codexPayload.args.includes('sandbox_mode="workspace-write"'));
+  assert.ok(!codexPayload.args.includes(codexCommand.teammateTools.token));
 });
 test("provider events decode results and surface failures", () => {
   assert.deepEqual(

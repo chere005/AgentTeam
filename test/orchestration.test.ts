@@ -1,12 +1,22 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Store } from "../src/store.ts";
 import { SkillCatalog } from "../src/skills.ts";
 import { TeamService } from "../src/service.ts";
 import { globMatch, matchEvidence } from "../src/orchestration.ts";
 import { ToolSessions, handleToolRpc } from "../src/tool-endpoint.ts";
 import { roleWarnings } from "../src/roles.ts";
-import type { Task } from "../src/model.ts";
+import type { Agent, Task } from "../src/model.ts";
 
 function setup() {
   const store = new Store(":memory:"),
@@ -1045,6 +1055,271 @@ test("HTTP MCP: a run token exposes policy-checked delegation and records its ha
     "Create client.py and return the path.",
   );
   assert.equal(store.get<Task>("task", handoff.childTaskId).status, "queued");
+});
+
+test("chat coordinator delegates to four teammates, waits for their task results, and revokes its tool token", async (t) => {
+  const { RunManager } = await import("../src/runtime.ts");
+  const { Scheduler } = await import("../src/scheduler.ts");
+  const { createApi } = await import("../src/http.ts");
+  const { service, agent, store } = setup();
+  const workspace = await realpath(
+    await mkdtemp(join(tmpdir(), "agentteam-delegation-")),
+  );
+  t.after(() => rm(workspace, { recursive: true, force: true }));
+  const attach = (access: "read" | "write") => [
+    { path: workspace, access, active: true },
+  ];
+  const manager = await agent("Manager", {
+    environment: "claude",
+    model: "opus",
+    roleType: "coordinator",
+    maxConcurrentInvocations: 3,
+  });
+  const cpp = await agent("C++ Builder", {
+    environment: "claude",
+    model: "sonnet",
+    roleType: "implementer",
+    workspaces: attach("write"),
+  });
+  const python = await agent("Python Builder", {
+    environment: "claude",
+    model: "sonnet",
+    roleType: "implementer",
+    workspaces: attach("write"),
+  });
+  const typescript = await agent("TypeScript Developer", {
+    environment: "claude",
+    model: "sonnet",
+    roleType: "implementer",
+    workspaces: attach("write"),
+  });
+  const reviewer = await agent("Code Reviewer", {
+    environment: "codex",
+    model: "default",
+    roleType: "reviewer",
+    workspaces: attach("read"),
+  });
+  for (const teammate of [cpp, python, typescript, reviewer])
+    service.saveEdge({ from: manager.id, to: teammate.id, kind: "delegate" });
+
+  const runs = new RunManager(service, true, process.cwd());
+  const server = createApi(service, "desktop-token", runs);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const url =
+    "http://127.0.0.1:" + (server.address() as { port: number }).port + "/mcp";
+  runs.teammateToolsUrl = () => url;
+  const outputs: string[] = [];
+  const childRuns = new Scheduler(
+    service,
+    runs,
+    async (command, environment, emit) => {
+      assert.ok(
+        command.teammateTools,
+        "task providers receive scoped MCP tools",
+      );
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${command.teammateTools.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      });
+      assert.equal(response.status, 200);
+      assert.deepEqual(
+        ((await response.json()) as any).result.tools.map(
+          (tool: any) => tool.name,
+        ),
+        ["invoke_teammate", "teammate_result"],
+      );
+      let result = `${environment} completed its assigned file`;
+      if (environment === "claude") {
+        assert.equal(command.cwd, workspace);
+        assert.ok(command.args.includes("--restricted"));
+        assert.ok(
+          command.args.includes("Read,Glob,Grep,Edit,Write"),
+          "builder gets only assigned workspace file tools",
+        );
+        const relativePath = command.stdin.includes("cpp/client.cpp")
+          ? "cpp/client.cpp"
+          : command.stdin.includes("python/client.py")
+            ? "python/client.py"
+            : "typescript/server.ts";
+        await mkdir(join(workspace, relativePath, ".."), { recursive: true });
+        await writeFile(
+          join(workspace, relativePath),
+          `fixture ${relativePath}`,
+        );
+        result = `completed ${relativePath}`;
+      } else {
+        assert.ok(command.args.includes('sandbox_mode="read-only"'));
+        for (const path of [
+          "cpp/client.cpp",
+          "python/client.py",
+          "typescript/server.ts",
+        ])
+          await readFile(join(workspace, path), "utf8");
+        result = "reviewed all three files from the read-only workspace";
+      }
+      outputs.push(result);
+      emit({ type: "text", data: result });
+    },
+  );
+  const rpc = (token: string, id: number, method: string, params?: unknown) =>
+    fetch(url, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+    });
+  try {
+    const session = service.session(manager.id);
+    let managerToken: string | undefined;
+    service.message(session.id, {
+      text: "Create the C++, Python and TypeScript socket demo, then review it.",
+    });
+    runs.execute = async (command, _environment, emit) => {
+      assert.ok(command.teammateTools, "direct chat gets scoped MCP tools");
+      assert.equal(command.args[command.args.indexOf("--tools") + 1], "");
+      managerToken = command.teammateTools.token;
+      const handoffs: { id: string; agent: Agent }[] = [];
+      for (const [recipient, title] of [
+        [cpp, "Write cpp/client.cpp"],
+        [python, "Write python/client.py"],
+        [typescript, "Write typescript/server.ts"],
+      ] as const) {
+        const response = await rpc(
+          command.teammateTools.token,
+          handoffs.length + 1,
+          "tools/call",
+          {
+            name: "invoke_teammate",
+            arguments: {
+              recipient: recipient.id,
+              title,
+              instructions: `Complete ${title} and return evidence.`,
+            },
+          },
+        );
+        assert.equal(response.status, 200);
+        const envelope = (await response.json()) as any;
+        const handoff = JSON.parse(envelope.result.content[0].text);
+        assert.equal(handoff.status, "queued");
+        handoffs.push({ id: handoff.childTaskId, agent: recipient });
+      }
+
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (
+          handoffs
+            .slice(0, 3)
+            .every(
+              ({ id }) => store.get<Task>("task", id).status === "completed",
+            )
+        )
+          break;
+        await childRuns.tick();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.ok(
+        handoffs
+          .slice(0, 3)
+          .every(
+            ({ id }) => store.get<Task>("task", id).status === "completed",
+          ),
+        "all builders finish before review is requested",
+      );
+      const reviewResponse = await rpc(
+        command.teammateTools.token,
+        4,
+        "tools/call",
+        {
+          name: "invoke_teammate",
+          arguments: {
+            recipient: reviewer.id,
+            title: "Review both socket clients and the TypeScript server",
+            instructions: "Read all three completed files and report findings.",
+          },
+        },
+      );
+      assert.equal(reviewResponse.status, 200);
+      const reviewEnvelope = (await reviewResponse.json()) as any;
+      const reviewHandoff = JSON.parse(reviewEnvelope.result.content[0].text);
+      handoffs.push({ id: reviewHandoff.childTaskId, agent: reviewer });
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (
+          store.get<Task>("task", reviewHandoff.childTaskId).status ===
+          "completed"
+        )
+          break;
+        await childRuns.tick();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      for (const [index, { id, agent: recipient }] of handoffs.entries()) {
+        const task = store.get<Task>("task", id);
+        assert.equal(task.status, "completed", `${recipient.name} completed`);
+        const response = await rpc(
+          command.teammateTools.token,
+          10 + index,
+          "tools/call",
+          { name: "teammate_result", arguments: { taskId: id } },
+        );
+        assert.equal(response.status, 200);
+        const result = JSON.parse(
+          ((await response.json()) as any).result.content[0].text,
+        );
+        assert.equal(result.status, "completed");
+        assert.match(result.result, /completed|reviewed/);
+      }
+      emit({
+        type: "text",
+        data: "All four teammates completed; results reviewed.",
+      });
+    };
+
+    await runs.start(session.id, true);
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (store.get<any>("session", session.id).state === "idle") break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const parent = store
+      .list<Task>("task")
+      .find((task) => task.agentId === manager.id)!;
+    assert.equal(parent.status, "completed");
+    const children = store
+      .list<Task>("task")
+      .filter((task) => task.parentTaskId === parent.id);
+    assert.equal(children.length, 4);
+    assert.deepEqual(
+      children
+        .map((task) => store.get<Agent>("agent", task.agentId).name)
+        .sort(),
+      [
+        "C++ Builder",
+        "Code Reviewer",
+        "Python Builder",
+        "TypeScript Developer",
+      ],
+    );
+    assert.equal(outputs.length, 4);
+    assert.equal(
+      store.list<any>("message").find((message) => message.role === "assistant")
+        ?.text,
+      "All four teammates completed; results reviewed.",
+    );
+    assert.ok(managerToken);
+    assert.equal(
+      (await rpc(managerToken, 99, "tools/list")).status,
+      401,
+      "the direct-chat tool token is revoked after the provider run",
+    );
+  } finally {
+    childRuns.stop();
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+  }
 });
 
 test("verdict comes only from the single object satisfying the review contract (quoted approve cannot open the gate)", async () => {

@@ -114,7 +114,7 @@ test("first run shows only the canvas and the chat: no long navigation, getting-
     );
     await expect(
       page.getByRole("list", { name: "Example teams" }).getByRole("button"),
-    ).toHaveCount(3);
+    ).toHaveCount(4);
     await page.getByRole("button", { name: "Close Team library" }).click();
     await expect(page.getByRole("tablist", { name: "Open views" })).toHaveCount(
       0,
@@ -221,6 +221,11 @@ test("agent panel: add a folder with edit access and a library skill on demand, 
     const panel = page.getByTestId("agent-panel");
     await expect(panel.getByTestId("agent-panel-name")).toHaveText("Builder");
     await expect(panel).toContainText("No folders yet");
+    await panel
+      .locator("details.setup-group")
+      .filter({ hasText: "Folders" })
+      .locator("summary")
+      .click();
     await panel.getByRole("button", { name: "Add folder" }).click();
     const access = panel.getByLabel("Access for " + folder);
     await expect(access).toHaveValue("read");
@@ -229,6 +234,11 @@ test("agent panel: add a folder with edit access and a library skill on demand, 
       "Can read and edit",
     ]);
     await access.selectOption("write");
+    await panel
+      .locator("details.setup-group")
+      .filter({ hasText: "Skills" })
+      .locator("summary")
+      .click();
     await panel.getByRole("button", { name: "Add skill" }).click();
     const picker = panel.getByTestId("skill-picker");
     await picker.getByLabel("Search skills").fill("code-reviewer");

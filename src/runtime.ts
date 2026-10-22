@@ -4,7 +4,7 @@ import type { Readiness } from "./runtime-scan.ts";
 import { spawn } from "node:child_process";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { projectRoot, providerLimits } from "./config.ts";
 import { toProviderError, errorKindOf } from "./provider-errors.ts";
 import { randomUUID } from "node:crypto";
@@ -23,6 +23,43 @@ import { acpAdapter, acpSessionPrefix } from "./acp.ts";
 import { prepareRunContext } from "./run-context.ts";
 import { assistantContext } from "./assistant-context.ts";
 import { ToolSessions } from "./tool-endpoint.ts";
+
+/** Provider file access is available only inside the current unrestricted attachment. */
+function workspaceCapabilities(plan: LaunchPlan) {
+  if (!plan.cwd) return { read: false, write: false };
+  const workspace = (plan.workspaces ?? [])
+    .filter((candidate) => {
+      const path = relative(candidate.path, plan.cwd!);
+      return (
+        path === "" ||
+        (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path))
+      );
+    })
+    .sort((a, b) => b.path.length - a.path.length)[0];
+  if (!workspace || workspace.rules?.length || workspace.explicitOnly)
+    return { read: false, write: false };
+  const read = plan.tools.includes("read");
+  return {
+    read,
+    write:
+      read &&
+      workspace.access === "write" &&
+      (plan.tools.includes("edit") || plan.tools.includes("write")),
+  };
+}
+
+function claudeFileTools(plan: LaunchPlan) {
+  const access = workspaceCapabilities(plan);
+  if (!access.read) return [];
+  return [
+    ...(plan.tools.includes("read") ? ["Read"] : []),
+    ...(plan.tools.includes("glob") ? ["Glob"] : []),
+    ...(plan.tools.includes("grep") ? ["Grep"] : []),
+    ...(access.write && plan.tools.includes("edit") ? ["Edit"] : []),
+    ...(access.write && plan.tools.includes("write") ? ["Write"] : []),
+  ];
+}
+
 export function commandFor(
   plan: LaunchPlan,
   sessionId: string | null,
@@ -76,15 +113,21 @@ export function commandFor(
       },
     };
   if (plan.environment === "claude") {
-    // On-demand skills are selected by AgentTeam before this point (prepareRunContext); the adapter has no file tools.
+    // On-demand skills are selected by AgentTeam. Restricted mode confines built-in file tools to
+    // this working directory; per-file rules cannot be represented by Claude's filesystem tools,
+    // so attachments with rules remain unavailable to those tools.
+    const capabilities = workspaceCapabilities(plan);
+    const fileTools = claudeFileTools(plan);
     const args = [
       "--print",
       "--output-format",
       "stream-json",
       "--verbose",
-      "--safe-mode",
+      "--restricted",
       "--tools",
-      "",
+      fileTools.join(","),
+      "--permission-mode",
+      capabilities.write ? "acceptEdits" : "dontAsk",
       "--strict-mcp-config",
       "--permission-prompts",
       "none",
@@ -110,7 +153,9 @@ export function commandFor(
     "--ignore-user-config",
     "--ignore-rules",
     "-c",
-    'sandbox_mode="read-only"',
+    `sandbox_mode=${JSON.stringify(
+      workspaceCapabilities(plan).write ? "workspace-write" : "read-only",
+    )}`,
     "-c",
     'approval_policy="never"',
   ];

@@ -123,7 +123,9 @@ test("example teams: listed with shape and org preview, inserted as teams (no pr
     await mkdtemp(join(tmpdir(), "agentteam-e2e-examples-")),
   );
   const workspace = join(directory, "product");
+  const quickstartWorkspace = join(directory, "quickstart");
   await mkdir(workspace);
+  await mkdir(quickstartWorkspace);
   const shots = join("test-results", "example-teams");
   await mkdir(shots, { recursive: true });
   const app = await electron.launch({
@@ -145,14 +147,21 @@ test("example teams: listed with shape and org preview, inserted as teams (no pr
     const openLibrary = () => openFeature(page, "Team library");
     await openLibrary();
     const list = page.getByRole("list", { name: "Example teams" });
-    await expect(list.getByRole("button")).toHaveCount(3);
-    await expect(list.getByTestId("example-shape")).toHaveCount(3);
+    await expect(list.getByRole("button")).toHaveCount(4);
+    await expect(list.getByTestId("example-shape")).toHaveCount(4);
+    await expect(list).toContainText("Quickstart: local sockets");
     await expect(list).toContainText("Plan → implement → review pipeline team");
     await expect(list).toContainText("Wolfram-validated reasoning team");
     await expect(list).toContainText("Product feature team");
     await expect(list).toContainText("Engineering Manager →");
 
     const examples = [
+      {
+        name: "Quickstart: local sockets (C++ + Python + TypeScript)",
+        file: "quickstart",
+        agents: 5,
+        configure: async () => {},
+      },
       {
         name: "Product feature team",
         file: "product",
@@ -180,7 +189,11 @@ test("example teams: listed with shape and org preview, inserted as teams (no pr
     ];
     for (const ex of examples) {
       await openLibrary();
-      await list.getByRole("button", { name: new RegExp(ex.name) }).click();
+      await list
+        .getByRole("button", {
+          name: new RegExp(ex.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+        })
+        .click();
       const preview = page.getByTestId("org-tree-preview").first();
       await expect(preview).toBeVisible();
       await expect(page.getByTestId("example-projects")).toContainText(
@@ -227,6 +240,43 @@ test("example teams: listed with shape and org preview, inserted as teams (no pr
         ),
       );
       await page.screenshot({ path: join(shots, `canvas-${ex.file}.png`) });
+
+      if (ex.file === "quickstart") {
+        await page.getByRole("button", { name: "Assign project" }).click();
+        const form = page.getByRole("form", { name: "Assign project" });
+        await expect(form.getByTestId("assign-project-type")).toContainText(
+          "existing 5 agents",
+        );
+        await form
+          .getByLabel("Project goal")
+          .fill("Build matching local socket clients and a TypeScript server");
+        await form.getByLabel("Project workspace").fill(quickstartWorkspace);
+        await form
+          .getByRole("button", { name: "Create paused project" })
+          .click();
+        await expect(form).toHaveCount(0);
+        const project = page.locator(".workflow").first();
+        await expect(project).toContainText(
+          "Build matching local socket clients",
+        );
+        await expect(project.locator(".badge").first()).toHaveText("paused");
+        const quickstartAgents = await api(page, "GET", "/agents");
+        const quickstartTeamId = (await api(page, "GET", "/snapshot"))
+          .activeTeamId;
+        const assigned = new Map(
+          quickstartAgents
+            .filter((a: any) => a.teamId === quickstartTeamId)
+            .map((a: any) => [a.name, a.workspaces]),
+        );
+        expect(assigned.get("Manager (Claude Opus)")[0].access).toBe("read");
+        for (const name of [
+          "C++ Builder (Claude Sonnet)",
+          "Python Builder (Claude Sonnet)",
+          "TypeScript Developer (Claude Sonnet)",
+        ])
+          expect(assigned.get(name)[0].access).toBe("write");
+        expect(assigned.get("Code Reviewer (Codex)")[0].access).toBe("read");
+      }
     }
 
     // Detailed cards are taller: Arrange measures them and keeps the invariants. The Wolfram team

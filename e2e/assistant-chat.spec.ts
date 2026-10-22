@@ -212,6 +212,11 @@ test("team assistant chat: proposal card, approve & apply adds skills, reject, i
 
     // ---- the skills show in the agent panel ---------------------------------------------------
     const panel = await openAgentPanel(page, "Frontend Engineer");
+    await panel
+      .locator("details.setup-group")
+      .filter({ hasText: "Skills" })
+      .locator("summary")
+      .click();
     const assigned = panel.getByRole("list", { name: "Assigned skills" });
     await expect(assigned.locator("li")).toHaveCount(3);
     await expect(assigned).toContainText(/frontend.design/i);

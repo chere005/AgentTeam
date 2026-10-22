@@ -142,6 +142,7 @@ test("example teams are listed with their shape and insert as teams only: no goa
     );
 
   for (const [id, options, agents] of [
+    ["quickstart-code-team", {}, 5],
     ["pipeline-review-team", { implementationWorkers: 2, fixWorkers: 1 }, 11],
     ["wolfram-validated-team", { wolframAgents: 1 }, 2],
     ["product-feature-team", {}, 7],
@@ -163,6 +164,31 @@ test("example teams are listed with their shape and insert as teams only: no goa
           .some((e) => e.from === a.parentId && e.to === a.id),
         `${id}: edge to ${a.name}`,
       );
+    if (id === "quickstart-code-team") {
+      const byName = (name: string) =>
+        members.agents.find((a) => a.name === name)!;
+      const manager = byName("Manager (Claude Opus)");
+      assert.equal(manager.maxConcurrentInvocations, 3);
+      for (const name of [
+        "C++ Builder (Claude Sonnet)",
+        "Python Builder (Claude Sonnet)",
+        "TypeScript Developer (Claude Sonnet)",
+        "Code Reviewer (Codex)",
+      ])
+        assert.ok(
+          w.service.permitted(manager.id, byName(name).id, "delegate"),
+          `manager can delegate to ${name}`,
+        );
+      for (const a of members.agents)
+        for (const skill of a.skills)
+          assert.ok(
+            w.service.skills.items.has(skill.id),
+            `${a.name}: bundled skill ${skill.id} exists`,
+          );
+      assert.deepEqual(r.profile.expectations, {});
+      assert.equal(r.profile.intendedLead, undefined);
+      assert.match(manager.instructions, /queued\/running is not a result/);
+    }
   }
   assert.equal(w.store.list<Workflow>("workflow").length, 0);
   assert.equal(w.store.list<Task>("task").length, 0);

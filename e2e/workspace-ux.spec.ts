@@ -248,6 +248,54 @@ test("agent panel: canvas selection opens it in place of the chat, explicit chat
   });
 });
 
+test("agent setup accordion state is remembered per card when switching between agents", async () => {
+  await withApp(async ({ start }) => {
+    const { page, errors } = await start();
+    const watcher = await api(page, "POST", "/agents", {
+      name: "Watcher",
+      environment: "codex",
+    });
+    await api(page, "POST", "/agents", {
+      name: "Other agent",
+      environment: "codex",
+    });
+    const panel = page.getByTestId("agent-panel");
+    const selectCard = async (name: string) => {
+      await page
+        .locator(".react-flow__node-agent", { hasText: name })
+        .first()
+        .click();
+      await expect(panel.getByTestId("agent-panel-name")).toHaveText(name);
+    };
+    await selectCard("Watcher");
+    const identity = panel.locator("details").filter({
+      hasText: "Identity & role",
+    });
+    const talksTo = panel.locator("details").filter({ hasText: "Talks to" });
+    await expect(identity).toHaveAttribute("open", "");
+    await identity.locator("summary").click();
+    await talksTo.locator("summary").click();
+    await expect(identity).not.toHaveAttribute("open", "");
+    await expect(talksTo).toHaveAttribute("open", "");
+
+    await selectCard("Other agent");
+    const otherIdentity = panel.locator("details").filter({
+      hasText: "Identity & role",
+    });
+    const otherTalksTo = panel.locator("details").filter({
+      hasText: "Talks to",
+    });
+    await expect(otherIdentity).toHaveAttribute("open", "");
+    await expect(otherTalksTo).not.toHaveAttribute("open", "");
+
+    await selectCard("Watcher");
+    await expect(identity).not.toHaveAttribute("open", "");
+    await expect(talksTo).toHaveAttribute("open", "");
+    expect(errors).toEqual([]);
+    expect(watcher.id).toBeTruthy();
+  });
+});
+
 test("attention inbox lists failed, limit-stopped, validation and ready-review items with a count badge", async () => {
   await withApp(async ({ start }) => {
     const { page, errors } = await start();
