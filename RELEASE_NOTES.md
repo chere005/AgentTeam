@@ -1,9 +1,10 @@
-# AgentTeam 0.2.0
+# AgentTeam 0.2.1
 
 Reliability and workflow update for macOS, Windows and Linux.
 
 ## This release
 
+- Fix unsigned macOS installer generation when signing secrets are unset.
 - Harden repository operations by neutralizing attached-repository clean/smudge filters and repository-local credential helpers.
 - Improve Windows portability in Git configuration, workspace paths and process fixtures; expose provider failures more clearly in conversations.
 - Refine parallel and pipeline workflows, group advanced agent setup options, and add a local-sockets example with a TypeScript server and C++/Python clients.
@@ -58,14 +59,14 @@ This release's installers are unsigned and the macOS app is not notarized. Your 
 
 Choose the archive/installer for your OS and CPU architecture. Execution is on by default: queued work can start as soon as a provider runtime is found, so use Settings Pause first if you do not want that. Existing provider installations are detected automatically. Authenticate your provider tools separately; Settings provides Pause/Resume controls and manual executable overrides. ACP v1 connections are optional and currently validated with protocol fixtures.
 
-This initial release is unsigned and the macOS app is not notarized. Your OS may ask you to approve the application. See README for platform-specific installation and provider configuration.
+These installers are unsigned and the macOS app is not notarized. Your OS may ask you to approve the application. See README for platform-specific installation and provider configuration.
 
 ## Important limitations
 
-The Codex adapter is read-only; Claude is currently tool-free chat. Wolfram uses a new LLMSynthesize bridge requiring local Wolfram LLM configuration. Live subscription-backed execution is not fully validated. The Team Assistant can propose configuration changes; you review and apply them in the Assistant changes pane (it cannot apply them itself). Granted MCP servers are not yet passed to providers. CLI view shows resume commands rather than an embedded terminal. Native provider-app opening is implemented for macOS.
+Direct Claude and Codex CLI runs receive run-scoped AgentTeam teammate tools. Built-in file tools require an attached unrestricted workspace and role-granted access; live provider authentication and subscription compatibility remain unverified. ACP does not yet expose teammate tools or granted provider MCP servers. Provider-native subagents remain outside AgentTeam's limits. Wolfram uses a local LLMSynthesize bridge requiring Wolfram LLM configuration. The Team Assistant can propose configuration changes; you review and apply them in the Assistant changes pane (it cannot apply them itself). CLI view shows resume commands rather than an embedded terminal. Native provider-app opening is implemented for macOS.
 
 Attached-folder access rules and resource locks govern AgentTeam operations. They do not sandbox external editors, native apps or independently launched CLI sessions. The Access pane distinguishes provider access from AgentTeam access.
 
 Restart recovery is fixture- and crash-simulation-tested; resuming a provider session has not been verified against live providers. Worktree and development-server handling is verified on macOS only, and servers that daemonize themselves are not stopped. The validation gate and the Wolfram-validated team's projects were tested with a fake kernel; the opt-in real-kernel smoke test has not been run, and nothing has run against live providers. None of the example teams (pipeline, Wolfram-validated, product feature) or their projects has run against live providers; the pipeline team's default model ids and Codex's "max" effort are unconfirmed. Token usage appears only when providers report it, and cost is shown as unavailable. Windows command-shim launching is fixture-tested only. There are no versioned database migrations or backup/restore tools yet.
 
-Provider runtimes, accounts and subscriptions are not included. Pull is fast-forward only by default; merges/rebases need an explicit confirmation and are never forced; pull-request status is recorded manually. Teammate-invocation tools are defined but not yet exposed to provider runs. See the repository README for all current limits and test instructions.
+Provider runtimes, accounts and subscriptions are not included. Pull is fast-forward only by default; merges/rebases need an explicit confirmation and are never forced; pull-request status is recorded manually. See the repository README for all current limits and test instructions.
