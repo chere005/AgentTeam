@@ -84,6 +84,10 @@ test("first run shows only the canvas and the chat: no long navigation, getting-
     ).toBeVisible();
     // Top bar: team switcher, execution state, More and Settings; nothing that needs no action.
     const bar = page.getByRole("banner");
+    // The chip appears once the backend reports ready; on a slow runner that is after first paint.
+    await expect(
+      bar.getByRole("button", { name: "Execution paused" }),
+    ).toBeVisible();
     const labels = await bar
       .getByRole("button")
       .evaluateAll((els) =>

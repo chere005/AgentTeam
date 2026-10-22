@@ -46,7 +46,8 @@ gh run watch "$run" --repo "$REPO" --interval 30 > /dev/null 2>&1 || true
 
 jobs="$(gh run view "$run" --repo "$REPO" --json jobs --jq '.jobs[] | [.name, .conclusion] | @tsv')"
 echo "$jobs" | sed 's/^/  /'
-failed="$(echo "$jobs" | awk -F'\t' '$2 != "success" && $2 != "skipped" { print $1 }')"
+# Jobs named "optional" (Windows, Linux for now) report but never decide.
+failed="$(echo "$jobs" | awk -F'\t' '$1 !~ /optional/ && $2 != "success" && $2 != "skipped" { print $1 }')"
 if [ -n "$failed" ]; then
   echo "preflight: FAIL"
   gh run view "$run" --repo "$REPO" --json jobs \

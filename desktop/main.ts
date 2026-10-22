@@ -235,6 +235,9 @@ async function start() {
       backgroundColor: windowBackground(),
       show: !hiddenWindow,
       paintWhenInitiallyHidden: true,
+      // Keep the test window at its full size on a small screen (a hosted macOS runner),
+      // so width-dependent layouts match a desktop.
+      enableLargerThanScreen: hiddenWindow,
       webPreferences: {
         // A hidden test window must keep timers and animation frames running.
         backgroundThrottling: !hiddenWindow,
