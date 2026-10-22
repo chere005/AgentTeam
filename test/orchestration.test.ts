@@ -945,6 +945,108 @@ test("HTTP: role catalog, rule validation, preview and invoke", async (t) => {
   assert.equal((await call("/orchestration/tools")).json.length, 2);
 });
 
+test("HTTP MCP: a run token exposes policy-checked delegation and records its handoff", async (t) => {
+  const { RunManager } = await import("../src/runtime.ts");
+  const { createApi } = await import("../src/http.ts");
+  const { service, agent, store } = setup();
+  const manager = await agent("Manager", { roleType: "coordinator" });
+  const builder = await agent("Builder", { roleType: "implementer" });
+  service.saveEdge({ from: manager.id, to: builder.id, kind: "delegate" });
+  const workflow = service.workflow({
+    name: "Chat test",
+    goal: "Delegate one task",
+    ownerId: manager.id,
+    completionCriteria: "Return the result",
+  });
+  const session = service.session(manager.id);
+  session.state = "running";
+  store.put("session", session);
+  const parent = service.task({
+    workflowId: workflow.id,
+    agentId: manager.id,
+    title: "Delegate one task",
+    completionCriteria: "Return the result",
+  });
+  service.startConversationTask(parent.id, session.id);
+
+  const runs = new RunManager(service, false, process.cwd());
+  const server = createApi(service, "desktop-token", runs);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+  });
+  const base =
+    "http://127.0.0.1:" + (server.address() as { port: number }).port;
+  const token = runs.toolSessions.issue({
+    agentId: manager.id,
+    taskId: parent.id,
+  });
+  const rpc = (message: unknown, bearer = token) =>
+    fetch(base + "/mcp", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearer}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(message),
+    });
+
+  const listed = await rpc({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/list",
+  });
+  assert.equal(listed.status, 200);
+  assert.deepEqual(
+    ((await listed.json()) as any).result.tools.map((tool: any) => tool.name),
+    ["invoke_teammate", "teammate_result"],
+  );
+
+  const denied = await rpc(
+    {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: {
+        name: "invoke_teammate",
+        arguments: {
+          recipient: builder.id,
+          title: "Write the Python client",
+          instructions: "Create client.py and return the path.",
+        },
+      },
+    },
+    "wrong-token",
+  );
+  assert.equal(denied.status, 401);
+
+  const invoked = await rpc({
+    jsonrpc: "2.0",
+    id: 3,
+    method: "tools/call",
+    params: {
+      name: "invoke_teammate",
+      arguments: {
+        recipient: builder.id,
+        title: "Write the Python client",
+        instructions: "Create client.py and return the path.",
+      },
+    },
+  });
+  const envelope = (await invoked.json()) as any;
+  assert.equal(invoked.status, 200);
+  const handoff = JSON.parse(envelope.result.content[0].text);
+  const record = service.orchestration.invocations(parent.id)[0];
+  assert.equal(record.id, handoff.childTaskId);
+  assert.equal(
+    record.request.instructions,
+    "Create client.py and return the path.",
+  );
+  assert.equal(store.get<Task>("task", handoff.childTaskId).status, "queued");
+});
+
 test("verdict comes only from the single object satisfying the review contract (quoted approve cannot open the gate)", async () => {
   const { parseVerdict } = await import("../src/orchestration.ts");
   const x = await mandatoryFixture();
