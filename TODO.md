@@ -223,7 +223,7 @@ Implemented and verified on macOS with temp repos/local bare remotes (see `src/g
 
 ## 18 Packaging, release, and maintenance — P0 then P1
 
-- [ ] Make Windows and Linux CI deciding again (`optional` in `.github/workflows/ci.yml`, continue-on-error test steps in `release.yml`): fix the Windows `npm test` failures (`os.devNull` as Git config, URL-pathname paths, knowledge index; see docs/CONTINUATION.md) and the slow/timing-out Linux Playwright run.
+- [ ] Make Windows and Linux CI deciding again (`optional` in `.github/workflows/ci.yml`, continue-on-error test steps in `release.yml`): Windows fixes for Git config paths, URL-pathname paths and knowledge-index path comparison are on `fix-windows-tests`, awaiting a Windows CI run; Linux Playwright remains slow and has a contrast-test timeout (see docs/CONTINUATION.md).
 - [ ] `e2e/workflow-graph.spec.ts` is intermittent (`flow-node-check` not visible, about 1 run in 4 locally).
 
 - [ ] Finish and test the current local changes before including them in release claims.

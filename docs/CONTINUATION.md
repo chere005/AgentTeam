@@ -2,6 +2,17 @@
 
 Updated October 21, 2026 (CI/test stabilization on top of the October 18 state below). Read with `AGENTS.md` (rules), `CLAUDE.md` (commands and architecture map) and `TODO.md` (remaining work). This file is the current state, not a history; completed history lives in `RELEASE_NOTES.md` and `docs/durable-execution.md`.
 
+## Windows CI fixes in progress (October 21, 2026)
+
+Branch `fix-windows-tests`, based on `main` at `4af14d4`. `main` already contains the local-test stabilization commits (`6711dd2`, `f5de99d`, `990433b`, `a913454`, `4af14d4`); the UI redesign step below is historical and has no uncommitted changes. I did not push `main`; GitHub showed it advanced to `4af14d4` and started a new workflow.
+
+- Replaced null-device `core.hooksPath` values in `git-workflow.ts`, `worktrees.ts` and `workspaces.ts` with an empty per-process temp directory. Git for Windows expects a directory there.
+- Git tests now set `GIT_CONFIG_GLOBAL` to a real empty temp config file (including access, Git workflow/integration and workspace extras tests); this avoids Git for Windows trying to open `\\.\nul` as a config file.
+- `test/team-packs.test.ts` converts its `file:` URL with `fileURLToPath`, avoiding the doubled drive prefix on Windows.
+- `src/knowledge.ts` compares canonical paths in a Windows case-insensitive way and strips the extended-length path prefix, addressing the 0/400-file indexing failure.
+- Local checks: typecheck passed; all 431 backend tests passed (430, 1 opt-in Wolfram smoke test skipped); build passed; 77 targeted affected tests passed. Windows CI has not yet verified these changes. Linux Playwright timing/contrast failures are still open.
+- Next: commit this branch and run `npm run preflight`; inspect the optional Windows job's conclusion and fix any remaining failures before treating Windows as green. Keep Windows/Linux informational until their full workflows pass. Do not push `main` without the user's instruction.
+
 ## CI, failure mail and test stabilization (October 21, 2026, second Mac `/Users/s/GIT/AgentTeam`)
 
 Branch `stabilize-local` (two commits on `091e9dc`: `6711dd2`, `f5de99d`), **not on main yet**. Every push to main since October 18 had a red "Desktop checks" run, and each one mailed the owner.

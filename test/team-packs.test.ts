@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Store } from "../src/store.ts";
 import { SkillCatalog } from "../src/skills.ts";
 import { TeamService } from "../src/service.ts";
@@ -18,7 +19,7 @@ import { auditTeamPacks } from "../src/team-pack-audit.ts";
 import { threeWay } from "../src/team-pack-diff.ts";
 import type { Agent } from "../src/model.ts";
 
-const assets = new URL("../assets/", import.meta.url).pathname;
+const assets = fileURLToPath(new URL("../assets/", import.meta.url));
 const swiftFile = join(assets, "team-packs/swift-development/pack.json");
 const readSwift = async () => JSON.parse(await readFile(swiftFile, "utf8"));
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v));

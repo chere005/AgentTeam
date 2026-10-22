@@ -8,7 +8,6 @@ import {
   realpath,
   stat,
 } from "node:fs/promises";
-import { devNull } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -29,13 +28,14 @@ const exec = promisify(execFile);
 export { withRepoLock } from "./repo-lock.ts";
 import { withRepoLock } from "./repo-lock.ts";
 import { restoreSourceWrite } from "./project-worktrees.ts";
+import { NO_GIT_HOOKS_DIR } from "./git-config.ts";
 
 type GitResult = { ok: boolean; out: string; err: string };
 async function run(cwd: string, args: string[]): Promise<GitResult> {
   try {
     const r = await exec(
       "git",
-      ["-C", cwd, "-c", "core.hooksPath=" + devNull, ...args],
+      ["-C", cwd, "-c", "core.hooksPath=" + NO_GIT_HOOKS_DIR, ...args],
       {
         timeout: 120000,
         maxBuffer: 8_000_000,

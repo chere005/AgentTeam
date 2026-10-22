@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import { access, readFile, realpath, stat } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
-import { devNull } from "node:os";
 import { relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
@@ -32,12 +31,13 @@ import {
   type GitFailure,
 } from "./git-remote.ts";
 import { parseStatus } from "./workspaces.ts";
+import { NO_GIT_HOOKS_DIR } from "./git-config.ts";
 
 /**
  * Branch, remote, history, pull-request-link and conflict workflows.
  *
  * Safety rules that this module enforces (callers cannot opt out):
- * - every Git invocation runs with hooks disabled (`core.hooksPath` = null device), signing off,
+ * - every Git invocation runs with hooks disabled (`core.hooksPath` = an empty temp directory), signing off,
  *   fsmonitor off and no askpass/interactive credential prompts; network operations use the
  *   user's own SSH command (environment, global or system config), never a repository-local
  *   `core.sshCommand`;
@@ -114,7 +114,7 @@ export const SAFE_GIT_CONFIG = [
   "-c",
   "protocol.ext.allow=never",
   "-c",
-  `core.hooksPath=${devNull}`,
+  `core.hooksPath=${NO_GIT_HOOKS_DIR}`,
   "-c",
   "commit.gpgsign=false",
   "-c",

@@ -12,6 +12,7 @@ import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { openCommand } from "./native.ts";
+import { NO_GIT_HOOKS_DIR } from "./git-config.ts";
 import { applyStaging } from "./git-stage.ts";
 import { randomUUID } from "node:crypto";
 import { ResourceCoordinator } from "./resources.ts";
@@ -736,7 +737,7 @@ export class WorkspaceService {
         );
         await this.git(repo, [
           "-c",
-          "core.hooksPath=/dev/null",
+          "core.hooksPath=" + NO_GIT_HOOKS_DIR,
           "-c",
           "commit.gpgsign=false",
           "commit",

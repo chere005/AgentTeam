@@ -9,10 +9,12 @@ import {
   symlink,
   realpath,
 } from "node:fs/promises";
-import { devNull, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
+import { emptyGitConfig } from "./fixtures/git-config.ts";
+import { NO_GIT_HOOKS_DIR } from "../src/git-config.ts";
 import { chmod, access } from "node:fs/promises";
 import { Store } from "../src/store.ts";
 import { SkillCatalog } from "../src/skills.ts";
@@ -31,7 +33,7 @@ import {
 } from "../src/git-remote.ts";
 
 // Isolate from the developer's global Git configuration (credential helpers, signing, hooks).
-process.env.GIT_CONFIG_GLOBAL = devNull;
+process.env.GIT_CONFIG_GLOBAL = emptyGitConfig;
 process.env.GIT_CONFIG_NOSYSTEM = "1";
 process.env.GIT_AUTHOR_NAME = process.env.GIT_COMMITTER_NAME = "Test";
 process.env.GIT_AUTHOR_EMAIL = process.env.GIT_COMMITTER_EMAIL =
@@ -904,7 +906,7 @@ test(
     await writeFile(join(root, "l.txt"), "l\n");
     const quiet = [
       "-c",
-      "core.hooksPath=" + devNull,
+      "core.hooksPath=" + NO_GIT_HOOKS_DIR,
       "-c",
       "core.fsmonitor=false",
     ];
@@ -944,7 +946,7 @@ test(
     assert.equal(get("core.askPass"), "");
     assert.equal(get("core.fsmonitor"), "false");
     assert.equal(get("credential.interactive"), "never");
-    assert.equal(get("core.hooksPath"), devNull);
+    assert.equal(get("core.hooksPath"), NO_GIT_HOOKS_DIR);
     const env = await gitEnvironment(root, false);
     assert.equal(env.GIT_ASKPASS, "");
     assert.equal(env.SSH_ASKPASS_REQUIRE, "never");
@@ -988,7 +990,7 @@ test(
     assert.equal(await exists(userMarker), true);
     assert.equal(await exists(repoMarker), false);
     // 3. Nothing configured: plain ssh in BatchMode (checked without running it).
-    process.env.GIT_CONFIG_GLOBAL = devNull;
+    process.env.GIT_CONFIG_GLOBAL = emptyGitConfig;
     assert.equal(
       (await gitEnvironment(root, true)).GIT_SSH_COMMAND,
       "ssh -o BatchMode=yes",

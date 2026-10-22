@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open, readdir, realpath, stat } from "node:fs/promises";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { decide, traversable } from "./access.ts";
 import { AppError, assert, type Agent } from "./model.ts";
@@ -113,6 +113,15 @@ const patchSchema = z
 const inside = (root: string, path: string) => {
   const rel = relative(root, path);
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+};
+const samePath = (a: string, b: string) => {
+  const key = (value: string) => {
+    let normalized = resolve(value);
+    if (process.platform === "win32")
+      normalized = normalized.replace(/^\\\\\?\\/, "").toLowerCase();
+    return normalized;
+  };
+  return key(a) === key(b);
 };
 /**
  * Whether one of `agent`'s attachments containing `abs` (canonical) grants it under the attachment's
@@ -522,7 +531,7 @@ export async function buildIndex(
     let entries;
     try {
       // A directory swapped for a symlink after it was listed must not lead outside the folder.
-      if ((await realpath(directory)) !== directory) {
+      if (!samePath(await realpath(directory), directory)) {
         skip("symlink");
         return;
       }

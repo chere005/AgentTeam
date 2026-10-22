@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
+import { emptyGitConfig } from "./fixtures/git-config.ts";
 import { existsSync } from "node:fs";
 import { Store } from "../src/store.ts";
 import { SkillCatalog } from "../src/skills.ts";
@@ -30,7 +31,7 @@ import { sharedResources } from "../src/sharing.ts";
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", ["-C", cwd, ...args], {
     encoding: "utf8",
-    env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" },
+    env: { ...process.env, GIT_CONFIG_GLOBAL: emptyGitConfig },
   });
 
 // ---- precedence (pure) ------------------------------------------------------------------------

@@ -10,16 +10,17 @@ import {
   chmod,
   access,
 } from "node:fs/promises";
-import { devNull, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
+import { emptyGitConfig } from "./fixtures/git-config.ts";
 import { Store } from "../src/store.ts";
 import { SkillCatalog } from "../src/skills.ts";
 import { TeamService } from "../src/service.ts";
 import { WorkspaceService } from "../src/workspaces.ts";
 import { GitWorkflow } from "../src/git-workflow.ts";
 
-process.env.GIT_CONFIG_GLOBAL = devNull;
+process.env.GIT_CONFIG_GLOBAL = emptyGitConfig;
 process.env.GIT_CONFIG_NOSYSTEM = "1";
 process.env.GIT_AUTHOR_NAME = process.env.GIT_COMMITTER_NAME = "Test";
 process.env.GIT_AUTHOR_EMAIL = process.env.GIT_COMMITTER_EMAIL =

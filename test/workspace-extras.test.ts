@@ -10,9 +10,10 @@ import {
   chmod,
   readFile,
 } from "node:fs/promises";
-import { devNull, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { execFileSync } from "node:child_process";
+import { emptyGitConfig } from "./fixtures/git-config.ts";
 import { Store } from "../src/store.ts";
 import { SkillCatalog } from "../src/skills.ts";
 import { TeamService } from "../src/service.ts";
@@ -39,7 +40,7 @@ import {
   parseDelimited,
 } from "../src/previews.ts";
 
-process.env.GIT_CONFIG_GLOBAL = devNull;
+process.env.GIT_CONFIG_GLOBAL = emptyGitConfig;
 process.env.GIT_CONFIG_NOSYSTEM = "1";
 const codeOf = (code: string) => (e: any) => e.code === code;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
