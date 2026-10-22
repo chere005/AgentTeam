@@ -1,7 +1,7 @@
 // MCP-style JSON-RPC handler for the teammate tools, authenticated by a per-run token.
-// Transport wiring (an HTTP mount plus injecting URL/token into a provider's MCP configuration)
-// is deliberately not done here: see TODO.md. The token is random, kept only as a SHA-256 digest in
-// memory, bound to one agent/task, revoked when the run ends and never written to events or logs.
+// The HTTP route and provider MCP configuration are wired by the runtime. The token is random, kept
+// only as a SHA-256 digest in memory, bound to one agent/task, revoked when the run ends and never
+// written to events or logs.
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import { AppError } from "./model.ts";

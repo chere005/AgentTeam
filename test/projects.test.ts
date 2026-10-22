@@ -85,7 +85,12 @@ test("example teams are listed with their shape and insert as teams only: no goa
   const list = (await w.call("GET", "/teams/examples")).body;
   assert.deepEqual(
     list.map((e: any) => e.id),
-    ["pipeline-review-team", "wolfram-validated-team", "product-feature-team"],
+    [
+      "quickstart-code-team",
+      "pipeline-review-team",
+      "wolfram-validated-team",
+      "product-feature-team",
+    ],
   );
   for (const e of list) {
     assert.ok(e.shape.length > 20 && e.description.length > 20, e.id);
