@@ -223,6 +223,9 @@ Implemented and verified on macOS with temp repos/local bare remotes (see `src/g
 
 ## 18 Packaging, release, and maintenance — P0 then P1
 
+- [ ] Make Windows and Linux CI deciding again (`optional` in `.github/workflows/ci.yml`, continue-on-error test steps in `release.yml`): fix the Windows `npm test` failures (`os.devNull` as Git config, URL-pathname paths, knowledge index; see docs/CONTINUATION.md) and the slow/timing-out Linux Playwright run.
+- [ ] `e2e/workflow-graph.spec.ts` is intermittent (`flow-node-check` not visible, about 1 run in 4 locally).
+
 - [ ] Finish and test the current local changes before including them in release claims.
 - [ ] Push the completed source changes to the public chere005/AgentTeam repository.
 - [ ] Verify the v0.1.0 tag and GitHub Release, including actual downloadable artifacts rather than only workflow configuration.
