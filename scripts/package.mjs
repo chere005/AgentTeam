@@ -1,5 +1,18 @@
 import { spawnSync } from "node:child_process";
 const env = { ...process.env };
+// GitHub Actions passes unset secrets as empty strings. electron-builder treats
+// an empty CSC_LINK as a path, which resolves to the repository directory and
+// makes an intentionally unsigned macOS build fail with "not a file".
+for (const key of [
+  "CSC_LINK",
+  "CSC_NAME",
+  "CSC_KEY_PASSWORD",
+  "APPLE_ID",
+  "APPLE_APP_SPECIFIC_PASSWORD",
+  "APPLE_TEAM_ID",
+]) {
+  if (!env[key]?.trim()) delete env[key];
+}
 const signed =
   process.platform === "darwin" && (!!env.CSC_LINK || !!env.CSC_NAME);
 const notarize =
