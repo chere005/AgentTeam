@@ -248,6 +248,9 @@ async function start() {
         sandbox: true,
       },
     });
+    // macOS clamps a new window to the screen; resize after creation (allowed by
+    // enableLargerThanScreen) so a 1024 px runner display still gets the desktop size.
+    if (hiddenWindow) win.setBounds({ x: 0, y: 0, width: 1500, height: 960 });
     // Links in the embedded preview (target=_blank) open in the system browser,
     // only for the configured development-server origin. Nothing else may open.
     win.webContents.setWindowOpenHandler((details) => {
