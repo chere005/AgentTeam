@@ -7,4 +7,6 @@ import { join } from "node:path";
 const directory = mkdtempSync(join(tmpdir(), "agentteam-git-config-"));
 export const emptyGitConfig = join(directory, "config");
 writeFileSync(emptyGitConfig, "");
+process.env.GIT_CONFIG_GLOBAL = emptyGitConfig;
+process.env.GIT_CONFIG_NOSYSTEM = "1";
 process.once("exit", () => rmSync(directory, { recursive: true, force: true }));

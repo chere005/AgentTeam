@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import "./fixtures/git-config.ts";
 import assert from "node:assert/strict";
 import {
   mkdtemp,
@@ -203,13 +204,8 @@ test("deleted directory trees list every file; untracked trees are expanded", as
 
 test("unusual file names (spaces, quotes, unicode, leading dash, newline) review correctly", async (t) => {
   const { root, agent, ws } = await fixture(t);
-  const names = [
-    "sp ace.txt",
-    'quo"te.txt',
-    "ünï-ço∂e.txt",
-    "-dash.txt",
-    "[glob]*.txt",
-  ];
+  const names = ["sp ace.txt", "ünï-ço∂e.txt", "-dash.txt", "[glob]*.txt"];
+  if (process.platform !== "win32") names.push('quo"te.txt');
   if (process.platform !== "win32") names.push("new\nline.txt");
   for (const n of names) await writeFile(join(root, n), "v1\n");
   commitAll(root, "names");

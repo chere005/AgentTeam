@@ -181,7 +181,7 @@ test("audit fails a pack whose skill lacks license text, notice or matching pins
   );
   // The release audit script fails on it (exit 1) while the rest of the repo is fine.
   const run = spawnSync(process.execPath, ["scripts/audit-release.mjs"], {
-    cwd: new URL("..", import.meta.url).pathname,
+    cwd: fileURLToPath(new URL("..", import.meta.url)),
     env: { ...process.env, AGENTTEAM_AUDIT_ASSETS: copy },
     encoding: "utf8",
   });

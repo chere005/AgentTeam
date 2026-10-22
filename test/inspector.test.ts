@@ -353,7 +353,12 @@ test("waiting explainer: workflow limit trips, invocation capacity, lease owner 
     assert.ok(codes(e).includes("resource-busy"));
     const r = e.reasons.find((x) => x.code === "resource-busy")!;
     assert.match(r.detail, /Owner holds the lease/);
-    assert.ok(r.detail.includes(sub), "names the overlapping path");
+    const normalizePath = (path: string) =>
+      path.replaceAll("\\", "/").toLowerCase();
+    assert.ok(
+      normalizePath(r.detail).includes(normalizePath(sub)),
+      "names the overlapping path",
+    );
     assert.equal((r.refs as any).leases[0].agentId, owner.id);
     assert.equal(
       (r.refs as any).leases[0].paths[0],

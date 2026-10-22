@@ -116,10 +116,13 @@ const inside = (root: string, path: string) => {
 };
 const samePath = (a: string, b: string) => {
   const key = (value: string) => {
-    let normalized = resolve(value);
     if (process.platform === "win32")
-      normalized = normalized.replace(/^\\\\\?\\/, "").toLowerCase();
-    return normalized;
+      return value
+        .replace(/^\\\\\?\\/, "")
+        .replaceAll("/", "\\")
+        .replace(/\\+$/, "")
+        .toLowerCase();
+    return resolve(value);
   };
   return key(a) === key(b);
 };

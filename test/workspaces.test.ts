@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import "./fixtures/git-config.ts";
 import assert from "node:assert/strict";
 import {
   mkdtemp,

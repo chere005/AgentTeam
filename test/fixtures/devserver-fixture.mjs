@@ -2,6 +2,7 @@
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { writeFileSync, appendFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 const mode = process.env.FIXTURE_MODE ?? "serve";
 const port = Number(process.env.PORT);
 const host = process.env.HOST ?? "127.0.0.1";
@@ -29,7 +30,7 @@ if (mode === "child") {
   if (process.env.FIXTURE_PIDFILE) {
     appendFileSync(process.env.FIXTURE_PIDFILE, process.pid + "\n");
     for (let i = 0; i < 2; i++)
-      spawn(process.execPath, [new URL(import.meta.url).pathname], {
+      spawn(process.execPath, [fileURLToPath(import.meta.url)], {
         env: { ...process.env, FIXTURE_MODE: "child" },
         stdio: "ignore",
       }).unref();

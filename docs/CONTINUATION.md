@@ -13,6 +13,17 @@ Branch `fix-windows-tests`, based on `main` at `4af14d4`. `main` already contain
 - Local checks: typecheck passed; all 431 backend tests passed (430, 1 opt-in Wolfram smoke test skipped); build passed; 77 targeted affected tests passed. Windows CI has not yet verified these changes. Linux Playwright timing/contrast failures are still open.
 - Next: commit this branch and run `npm run preflight`; inspect the optional Windows job's conclusion and fix any remaining failures before treating Windows as green. Keep Windows/Linux informational until their full workflows pass. Do not push `main` without the user's instruction.
 
+### Windows CI follow-up (after commit `42d1345`)
+
+Preflight `39719281307`: macOS passed; Windows `npm test` still failed in eight tests; Linux UI was cancelled after macOS passed to make Windows logs available. Further fixes are now on this branch but not yet committed:
+
+- Knowledge index path equality no longer resolves extended Windows paths before stripping their `\\?\` prefix.
+- Git test fixture imports now also disable system Git config; workspaces/worktrees/review-diffs tests were inheriting Windows `core.autocrlf=true`, causing CRLF assertion failures.
+- Windows tests omit a filename containing `"` (invalid on Windows); inspector path assertions normalize case and separators.
+- `devserver-fixture.mjs` and the team-pack audit test use `fileURLToPath` for child script paths and `cwd`.
+- The two devserver process-tree tests failed because the fixture's grandchild path used `URL.pathname`, which produced an invalid Windows path.
+- Targeted local verification: 83 tests passed across capabilities, devserver, inspector, review-diffs, team-packs, workspaces and worktrees. Full `npm test`: 431 (430 passed, 1 skipped); build and formatting pass. Next: commit the follow-up and rerun preflight; inspect Windows logs again. Linux remains optional and slow.
+
 ## CI, failure mail and test stabilization (October 21, 2026, second Mac `/Users/s/GIT/AgentTeam`)
 
 Branch `stabilize-local` (two commits on `091e9dc`: `6711dd2`, `f5de99d`), **not on main yet**. Every push to main since October 18 had a red "Desktop checks" run, and each one mailed the owner.
