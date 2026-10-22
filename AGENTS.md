@@ -90,6 +90,7 @@ npm run test:ui        # Playwright Electron tests; build first
 
 ## Git, releases, and documentation
 
+- **No red runs on GitHub (each one emails the owner).** Commit on a work branch and run `npm run preflight` (`scripts/preflight.sh`: CI on a `preflight/*` branch that cannot fail the run); push `main` or a `v*` tag only after it passes. The pre-push hook (`.githooks`, installed by `npm ci`) enforces it; never push a branch just to see what CI says.
 - Keep diffs scoped and inspect them before committing. Do not force-push, discard unrelated edits, or create a release tag as incidental cleanup.
 - Follow current user authorization for commits, pushes, and release publication. A package version or configured release workflow is not evidence of a published release.
 - Follow `SIGNING.md` for macOS signing; preserve credential boundaries and never expose signing secrets in logs or the repository.

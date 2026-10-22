@@ -33,6 +33,15 @@ if (process.env.AGENTTEAM_DATA_DIR)
   app.setPath("userData", process.env.AGENTTEAM_DATA_DIR);
 const here = dirname(fileURLToPath(import.meta.url));
 if (!app.requestSingleInstanceLock()) app.quit();
+// Desktop tests (AGENTTEAM_TEST=1) run with a hidden window and, on macOS, no Dock icon,
+// so a run never takes over the screen or the keyboard focus. Playwright drives the page
+// through the DevTools protocol, which works on a hidden window. AGENTTEAM_SHOW_WINDOW=1
+// shows it again for watching or debugging a spec.
+const hiddenWindow =
+  process.env.AGENTTEAM_TEST === "1" &&
+  process.env.AGENTTEAM_SHOW_WINDOW !== "1";
+if (hiddenWindow && process.platform === "darwin")
+  app.setActivationPolicy("accessory");
 async function start() {
   const project = app.isPackaged ? process.resourcesPath : join(here, "../..");
   setProjectRoot(project);
@@ -224,7 +233,11 @@ async function start() {
       minHeight: 600,
       title: "AgentTeam",
       backgroundColor: windowBackground(),
+      show: !hiddenWindow,
+      paintWhenInitiallyHidden: true,
       webPreferences: {
+        // A hidden test window must keep timers and animation frames running.
+        backgroundThrottling: !hiddenWindow,
         additionalArguments: [`--agentteam-theme=${theme}`],
         preload: join(here, "preload.cjs"),
         contextIsolation: true,

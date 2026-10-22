@@ -1,7 +1,12 @@
 name: Desktop checks
+# A failed run mails the repository owner, so nothing is checked here that has not passed a
+# preflight first (scripts/preflight.sh): CI runs on main pushes and on preflight/** branches
+# only. On a preflight branch a failing job does not fail the run (job-level continue-on-error),
+# so no mail goes out; the script reads each job's own conclusion and says pass or fail.
+# .githooks/pre-push refuses main or a v* tag whose commit has not passed preflight.
 on:
   push:
-  pull_request:
+    branches: [main, "preflight/**"]
 permissions:
   contents: read
 concurrency:
@@ -15,6 +20,7 @@ jobs:
         os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    continue-on-error: ${{ startsWith(github.ref, 'refs/heads/preflight/') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

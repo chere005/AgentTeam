@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Nothing reaches main or a release tag without a passed preflight (scripts/preflight.sh): a red
+# run on main or a release mails the repository owner. A commit may go when it passed preflight
+# itself, or when all it changed since a commit that passed is the version numbers and the docs
+# (a release's own bump and notes). AGENTTEAM_SKIP_PREFLIGHT=1 lets a push through; say why in
+# the commit. Installed by `npm ci`/`npm install` (scripts/install-hooks.mjs).
+set -uo pipefail
+
+[ "${AGENTTEAM_SKIP_PREFLIGHT:-}" = "1" ] && exit 0
+mark="$(git rev-parse --git-common-dir)/preflight"
+zero="0000000000000000000000000000000000000000"
+
+trivial() {
+  local from="$1" to="$2" file
+  while IFS= read -r file; do
+    case "$file" in
+      package.json|package-lock.json|docs/*|*.md) ;;
+      *) return 1 ;;
+    esac
+  done < <(git diff --name-only "$from" "$to")
+  return 0
+}
+
+passed() {
+  local commit="$1" base
+  [ -f "${mark}/${commit}" ] && return 0
+  [ -d "$mark" ] || return 1
+  for base in "$mark"/*; do
+    base="$(basename "$base")"
+    git merge-base --is-ancestor "$base" "$commit" 2> /dev/null || continue
+    trivial "$base" "$commit" && return 0
+  done
+  return 1
+}
+
+status=0
+while read -r _local_ref local_sha remote_ref _remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue
+  case "$remote_ref" in
+    refs/heads/main|refs/tags/v*) ;;
+    *) continue ;;
+  esac
+  commit="$(git rev-parse "${local_sha}^{commit}" 2> /dev/null)" || continue
+  if ! passed "$commit"; then
+    echo "pre-push: ${remote_ref#refs/*/} <- ${commit:0:7} has not passed preflight." >&2
+    echo "  Run scripts/preflight.sh on its branch first (CI on GitHub that never mails a failure)." >&2
+    echo "  Only a version bump and docs may follow a passed commit. AGENTTEAM_SKIP_PREFLIGHT=1 overrides." >&2
+    status=1
+  fi
+done
+exit $status

@@ -16,10 +16,12 @@
     "backend": "node src/server.ts",
     "dev:ui": "vite",
     "build": "vite build && node scripts/build.mjs",
+    "prepare": "node scripts/install-hooks.mjs",
     "package": "npm run build && node scripts/package.mjs",
     "test:ui": "playwright test",
     "desktop": "electron .",
-    "format": "prettier --write src desktop ui test e2e scripts/*.mjs *.json *.ts .github/workflows/*.yml"
+    "format": "prettier --write src desktop ui test e2e scripts/*.mjs *.json *.ts .github/workflows/*.yml",
+    "preflight": "bash scripts/preflight.sh"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.9.0",

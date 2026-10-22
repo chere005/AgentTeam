@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { Store } from "../src/store.ts";
 import { SkillCatalog } from "../src/skills.ts";
 import { TeamService } from "../src/service.ts";
@@ -214,7 +215,11 @@ test("exclusions block browse, preview, symlink and traversal paths; .git rules 
     await code(ws.browse(agent.id, { workspace: root, path: "secrets" })),
     "access_denied",
   );
-  assert.equal(await code(at("SECRETS/key.txt")), "access_denied");
+  // Another spelling of the excluded folder only reaches it on a case-insensitive
+  // file system (macOS, Windows); on Linux it is simply a different, missing path.
+  if (existsSync(join(root, "SECRETS")))
+    assert.equal(await code(at("SECRETS/key.txt")), "access_denied");
+  else assert.notEqual(await code(at("SECRETS/key.txt")), "ok");
   assert.equal(await code(at("src/../secrets/key.txt")), "access_denied");
   assert.equal(await code(at("link-to-secret")), "access_denied"); // symlink into an excluded path
   assert.equal(await code(at("link-outside")), "path_escape"); // symlink escape unchanged

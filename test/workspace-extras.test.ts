@@ -11,7 +11,7 @@ import {
   readFile,
 } from "node:fs/promises";
 import { devNull, tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { Store } from "../src/store.ts";
 import { SkillCatalog } from "../src/skills.ts";
@@ -842,7 +842,9 @@ test("AGENTTEAM_TEST=1: editor, reveal and PR-open clicks are recorded, never la
     .launches;
   assert.equal(recorded.length, 2);
   assert.equal(recorded[0].kind, "editor");
-  assert.ok(recorded[0].args.some((a: string) => a.endsWith("n.txt")));
+  // Reveal selects the file, except on Linux, where xdg-open opens its folder.
+  const revealed = process.platform === "linux" ? basename(root) : "n.txt";
+  assert.ok(recorded[0].args.some((a: string) => a.endsWith(revealed)));
   assert.deepEqual(recorded[1], {
     kind: "url",
     url: "https://github.com/acme/widgets/compare/main...feature?expand=1",

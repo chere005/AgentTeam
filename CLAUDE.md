@@ -23,8 +23,10 @@ npm run backend                   # standalone API (src/server.ts); `npm run dev
 npm run dev:ui                    # Vite dev server; then launch Electron with AGENTTEAM_DEV=1
 npm run package -- --publish never   # installers for current platform
 npm run format                    # prettier (no lint script exists)
+npm run preflight                 # CI on GitHub for HEAD without failure mail; required before main/v* (pre-push hook)
 ```
 
+- Desktop tests run with a hidden window and no Dock icon (`AGENTTEAM_TEST=1`); `AGENTTEAM_SHOW_WINDOW=1` shows it to watch a spec.
 - Backend/main-process changes need an Electron restart, not just a renderer refresh.
 - Tests must use temp databases/workspaces; `AGENTTEAM_DATA_DIR` sets the data dir. Never point at the user's live store. Standalone backend live execution is on by default unless `AGENTTEAM_ENABLE_LIVE=0`.
 - Desktop/UI tests use fixtures and never call live providers.

@@ -1,0 +1,7 @@
+# LF everywhere, on every platform: the curated skills are pinned by their SHA-256
+# (assets/skills catalog, scripts/audit-release.mjs), and a CRLF checkout on Windows
+# changes every hash.
+* text=auto eol=lf
+*.png binary
+*.icns binary
+*.ico binary
