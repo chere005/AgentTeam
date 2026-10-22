@@ -258,6 +258,7 @@ export type Invocation = {
   };
   request: {
     title: string;
+    instructions: string;
     tags: string[];
     changedFiles: string[];
     context: unknown;
@@ -612,6 +613,7 @@ export class Orchestration {
       },
       request: {
         title: args.title,
+        instructions: args.instructions,
         tags: args.tags,
         changedFiles: args.changedFiles,
         context: args.context ?? null,

@@ -39,6 +39,7 @@ import { projectRoute } from "./projects.ts";
 import { projectLifecycleRoute } from "./project-lifecycle.ts";
 import { teamSettingsRoute } from "./team-settings.ts";
 import { ExampleTeams } from "./example-teams.ts";
+import { handleToolRpc } from "./tool-endpoint.ts";
 import {
   AppError,
   type Agent,
@@ -167,6 +168,41 @@ export function createApi(
           "origin_denied",
           "Use a trusted desktop bridge or same-origin proxy",
         );
+      const url = new URL(req.url ?? "/", "http://127.0.0.1"),
+        path = url.pathname,
+        method = req.method;
+      // Provider MCP clients get only the short-lived per-run token's two orchestration tools.
+      // The endpoint shares the loopback listener but bypasses the desktop API token.
+      if (path === "/mcp") {
+        if (method !== "POST") {
+          res.writeHead(405, {
+            Allow: "POST",
+            "Content-Type": "application/json",
+          });
+          res.end(JSON.stringify({ error: "method_not_allowed" }));
+          return;
+        }
+        const authorization = req.headers.authorization ?? "";
+        const runToken = authorization.startsWith("Bearer ")
+          ? authorization.slice("Bearer ".length)
+          : undefined;
+        const result = handleToolRpc(
+          service.orchestration,
+          runs.toolSessions,
+          runToken,
+          await body(req),
+        );
+        if (result === null) {
+          res.writeHead(202);
+          res.end();
+        } else {
+          res.writeHead(200, {
+            "Content-Type": "application/json; charset=utf-8",
+          });
+          res.end(JSON.stringify(result));
+        }
+        return;
+      }
       const auth = Buffer.from(req.headers.authorization ?? ""),
         expected = Buffer.from("Bearer " + token);
       if (auth.length !== expected.length || !timingSafeEqual(auth, expected))
@@ -175,9 +211,6 @@ export function createApi(
           "unauthorized",
           "Local API bearer token required",
         );
-      const url = new URL(req.url ?? "/", "http://127.0.0.1"),
-        path = url.pathname,
-        method = req.method;
       let match: RegExpMatchArray | null;
       if (
         path === "/worktrees/settings" &&
@@ -999,6 +1032,12 @@ export function createApi(
       );
     }
   });
+  runs.teammateToolsUrl = () => {
+    const address = server.address();
+    return address && typeof address !== "string"
+      ? `http://127.0.0.1:${address.port}/mcp`
+      : null;
+  };
   server.on("close", () => {
     void development.close();
     void devservers.close();

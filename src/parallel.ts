@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { z } from "zod";
 import { decideBoth } from "./access.ts";
 import { canonicalDeclaredPaths } from "./declared-paths.ts";
-import { SAFE_GIT_CONFIG } from "./git-workflow.ts";
+import { attachedRepoGitConfig, SAFE_GIT_CONFIG } from "./git-config.ts";
 import { AppError, assert, type Agent, type Task } from "./model.ts";
 import { repoLockKey } from "./repo-lock.ts";
 import {
@@ -117,12 +117,26 @@ export const assignSchema = z
 export const PARALLEL_MARK = "[Parallel assignment]";
 const MARK = PARALLEL_MARK;
 async function git(cwd: string, args: string[]) {
-  const r = await exec("git", ["-C", cwd, ...SAFE_GIT_CONFIG, ...args], {
-    encoding: "utf8",
-    maxBuffer: 16_000_000,
-    timeout: 30_000,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" },
-  });
+  const r = await exec(
+    "git",
+    [
+      "-C",
+      cwd,
+      ...SAFE_GIT_CONFIG,
+      ...(await attachedRepoGitConfig(cwd)),
+      ...args,
+    ],
+    {
+      encoding: "utf8",
+      maxBuffer: 16_000_000,
+      timeout: 30_000,
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: "0",
+        GIT_OPTIONAL_LOCKS: "0",
+      },
+    },
+  );
   return r.stdout;
 }
 async function fingerprint(path: string) {

@@ -1,6 +1,17 @@
-# AgentTeam 0.1.0
+# AgentTeam 0.2.0
 
-First functional desktop release for macOS, Windows and Linux.
+Reliability and workflow update for macOS, Windows and Linux.
+
+## This release
+
+- Harden repository operations by neutralizing attached-repository clean/smudge filters and repository-local credential helpers.
+- Improve Windows portability in Git configuration, workspace paths and process fixtures; expose provider failures more clearly in conversations.
+- Refine parallel and pipeline workflows, group advanced agent setup options, and add a local-sockets example with a TypeScript server and C++/Python clients.
+- Preserve the existing orchestration, access-control and durable-execution limits described below; examples remain fixture-tested and are not evidence of live-provider compatibility.
+
+This release's installers are unsigned and the macOS app is not notarized. Your OS may ask you to approve the application.
+
+## Product capabilities
 
 ## Highlights
 

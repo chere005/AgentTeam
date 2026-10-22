@@ -149,9 +149,10 @@ Results of this session (macOS, Darwin 25, Node 26 only), after the team/project
 
 ## Known limitations
 
-- Enforcement is cooperative: rules, leases and confinement govern AgentTeam's own file, Git, knowledge and command paths. Provider CLIs, native subagents, external editors and the programs a command step runs keep the user's OS permissions. Repo-local Git filters/credential helpers still run.
+- Enforcement is cooperative: rules, leases and confinement govern AgentTeam's own file, Git, knowledge and command paths. Provider CLIs, native subagents, external editors and the programs a command step runs keep the user's OS permissions.
 - Codex adapter is read-only, Claude adapter is tool-free; granted MCP servers and the teammate tools are not exposed to providers.
 - Assistant proposals are read only from fenced blocks in assistant replies or typed by the user; no provider tool applies them. Direct form edits are not audited with an actor.
+- Attached-repository Git calls now ignore repo credential helpers while retaining system/user helpers, and dynamically disable repo-local clean, smudge and process filter drivers. macOS/Node 26 verification: Git/workspace tests 34/34, parallel/pipeline tests 30/30, typecheck and Prettier passed; Windows behavior remains unverified.
 - Lock draining tracks only the backend pid and direct-CLI/ACP adapter processes; a recycled pid keeps a lease draining until force-released. Parallel conflict detection is after the fact and Git-based.
 - A limit trip does not abort a running graph command; graph steps cannot write shared state.
 - Team packs: no export/authoring UI, remote sources or signed feed; updates do not diff folders, layout or groups and never delete agents. The Swift pack is a skeleton. Pipeline: the integrator is one extra Sonnet agent beyond the caps; the e2e drives stages by hand (with an override for the adjudication). Teams/projects: a team's profile cannot be edited after insert; project workspaces stay attached to the team's agents.

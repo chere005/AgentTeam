@@ -24,6 +24,7 @@ export type RuntimeHooks = {
     signal: AbortSignal,
   ) => Promise<RequestPermissionResponse>;
 };
+export type TeammateTools = { url: string; token: string };
 export type AcpRequest = {
   sessionId: string | null;
   prompt: string;
@@ -37,6 +38,8 @@ export type Command = {
   cwd: string;
   request?: unknown;
   acp?: AcpRequest;
+  /** Per-run authenticated AgentTeam HTTP MCP tools; never persisted or logged. */
+  teammateTools?: TeammateTools;
 };
 export interface RuntimeAdapter {
   execute(

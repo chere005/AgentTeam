@@ -160,36 +160,55 @@ export class Scheduler {
         if (!run.sessionId) throw e;
         command = commandFor(plan, null, prompt, this.runs.cwd);
       }
+      const toolsUrl = this.runs.teammateToolsUrl?.();
+      let toolToken: string | undefined;
+      if (
+        toolsUrl &&
+        run.replay === null &&
+        !command.acp &&
+        (plan.environment === "claude" || plan.environment === "codex")
+      ) {
+        toolToken = this.runs.toolSessions.issue({
+          agentId: task.agentId,
+          taskId: task.id,
+        });
+        command.teammateTools = { url: toolsUrl, token: toolToken };
+      }
       if (run.replay !== null) result = run.replay;
-      else
-        await this.executeProvider(
-          command,
-          plan.environment,
-          (event) => {
-            recovery.observe(task, event);
-            if (event.type === "usage")
-              this.service.limits.recordUsage(task, event.data);
-            if (event.type === "text")
-              result += String(event.data) + (command.acp ? "" : "\n");
-            this.service.store.emit("task.runtime", task.id, {
-              agentId: task.agentId,
-              ...event,
-            });
-          },
-          controller.signal,
-          {
-            profile: "task",
-            onSpawn: (pid) =>
-              this.service.resources.attachProcess(task.id, pid),
-            permission: (request, signal) =>
-              this.service.approvals.request(
-                task.agentId,
-                request,
-                signal,
-                task.id,
-              ),
-          },
-        );
+      else {
+        try {
+          await this.executeProvider(
+            command,
+            plan.environment,
+            (event) => {
+              recovery.observe(task, event);
+              if (event.type === "usage")
+                this.service.limits.recordUsage(task, event.data);
+              if (event.type === "text")
+                result += String(event.data) + (command.acp ? "" : "\n");
+              this.service.store.emit("task.runtime", task.id, {
+                agentId: task.agentId,
+                ...event,
+              });
+            },
+            controller.signal,
+            {
+              profile: "task",
+              onSpawn: (pid) =>
+                this.service.resources.attachProcess(task.id, pid),
+              permission: (request, signal) =>
+                this.service.approvals.request(
+                  task.agentId,
+                  request,
+                  signal,
+                  task.id,
+                ),
+            },
+          );
+        } finally {
+          if (toolToken) this.runs.toolSessions.revoke(toolToken);
+        }
+      }
       if (!result.trim()) throw new Error("Provider returned no text");
       if (run.replay === null) recovery.finishRun(task, run.effectId, result);
       // Detect writes outside the assignment / overlapping another worker and route them to the coordinator.

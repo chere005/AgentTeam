@@ -185,7 +185,6 @@ Workflow graphs are implemented and fixture-tested (`src/workflow-graph*.ts`, `u
 Implemented and verified on macOS with temp repos/local bare remotes (see `src/git-workflow.ts`, `git-remote.ts`, `git-stage.ts`, `editors.ts`, `previews.ts`, `fs-watch.ts`, `workspace-routes.ts`): branch switch/create with safety confirmations, fetch/pull(ff-only)/push, bounded history, compare-URL PR links with manually recorded PR status, conflict visibility/resolution/abort/continue, deleted-tree/rename/unborn staging, typed previews, editor executable paths, debounced `fs.watch` refresh with poll fallback.
 
 - [ ] Fetch live PR status (checks, merged/closed) from hosting APIs; today PR status is only what the user records manually (no tokens or API calls by design).
-- [ ] Repository-local Git configuration that runs commands is only partly neutralized: hooks, fsmonitor, askpass and `core.sshCommand` are blocked, but clean/smudge filter drivers and repo-local credential helpers in an attached repository still run during status/pull/switch/fetch.
 - [ ] Verify Open file, Open project, Reveal and Open with on real Windows and Linux machines, and `fs.watch` recursion there (those paths are fixture-tested only; macOS launch is verified through stub executables, not by opening GUI apps).
 
 ## 15 Layout and interaction quality — P1

@@ -54,6 +54,44 @@
   margin: 0 0 12px;
   color: var(--text);
 }
+.setup-group > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-height: 18px;
+}
+.setup-group > summary::-webkit-details-marker {
+  display: none;
+}
+.setup-group > summary::before {
+  content: "▸";
+  color: var(--faint);
+  flex: 0 0 10px;
+}
+.setup-group[open] > summary::before {
+  content: "▾";
+}
+.setup-group > summary h3 {
+  margin: 0;
+}
+.setup-group > summary small {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  text-align: right;
+}
+.setup-group[open] > summary {
+  margin-bottom: 12px;
+}
+.setup-group:not([open]) {
+  padding-bottom: 12px;
+}
+.setup-group > .section-head {
+  justify-content: flex-end;
+}
 .agent-section .section-head {
   display: flex;
   align-items: center;

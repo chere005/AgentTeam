@@ -342,6 +342,23 @@ test("provider events decode results and surface failures", () => {
       }),
     code("provider_error"),
   );
+  assert.throws(
+    () =>
+      decodeEvent("claude", {
+        type: "assistant",
+        message: {
+          content: [
+            {
+              type: "text",
+              text: "Failed to authenticate: OAuth session expired and could not be refreshed",
+            },
+          ],
+        },
+      }),
+    (error: any) =>
+      error.code === "authentication_required" &&
+      /claude auth login/.test(error.message),
+  );
 });
 test("process adapter parses streamed JSON and reports nonzero exits", async () => {
   const events: unknown[] = [];

@@ -22,6 +22,7 @@ import type { RuntimeEvent, Command, RuntimeHooks } from "./runtime-types.ts";
 import { acpAdapter, acpSessionPrefix } from "./acp.ts";
 import { prepareRunContext } from "./run-context.ts";
 import { assistantContext } from "./assistant-context.ts";
+import { ToolSessions } from "./tool-endpoint.ts";
 export function commandFor(
   plan: LaunchPlan,
   sessionId: string | null,
@@ -158,16 +159,49 @@ export function decodeEvent(environment: string, event: any): RuntimeEvent[] {
       events.push({ type: "session", data: event.session_id });
     if (event.type === "assistant")
       for (const content of event.message?.content ?? [])
-        if (content.type === "text")
+        if (content.type === "text") {
+          // Claude can emit an auth refresh failure as assistant text and then exit with a
+          // misleading `success` result. Catch the provider diagnostic before it is shown as a
+          // normal answer so the conversation can give the user a useful sign-in instruction.
+          if (
+            /failed to authenticate:.*oauth session expired|oauth session expired.*could not be refreshed/i.test(
+              content.text,
+            )
+          )
+            throw new AppError(
+              401,
+              "authentication_required",
+              "Claude Code needs you to sign in again. Run `claude auth login` in Terminal, then retry this message.",
+            );
           events.push({ type: "text", data: content.text });
+        }
     if (event.type === "result") {
-      if (event.is_error || event.subtype !== "success")
+      if (event.is_error || event.subtype !== "success") {
+        const detail = [
+          event.error?.message,
+          typeof event.error === "string" ? event.error : undefined,
+          typeof event.message === "string" ? event.message : undefined,
+          Array.isArray(event.errors)
+            ? event.errors
+                .map((item: unknown) =>
+                  typeof item === "string"
+                    ? item
+                    : (item as { message?: unknown })?.message,
+                )
+                .filter(
+                  (item: unknown): item is string => typeof item === "string",
+                )
+                .join("; ")
+            : typeof event.errors === "string"
+              ? event.errors
+              : undefined,
+        ].find((value) => typeof value === "string" && value.length);
         throw new AppError(
           502,
           "provider_error",
-          "Claude request failed: " +
-            (event.errors ?? [event.subtype]).join("; "),
+          `Claude request failed: ${detail ?? (event.subtype === "success" ? "the CLI reported an error without details" : (event.subtype ?? "unknown error"))}`,
         );
+      }
       events.push({ type: "usage", data: event.usage ?? {} });
     }
   }
@@ -199,13 +233,47 @@ async function executeCommandRaw(
   signal.throwIfAborted();
   let temporary: string | undefined;
   try {
-    if (command.request) {
+    let args = [...command.args];
+    if (command.request || command.teammateTools) {
       temporary = await mkdtemp(join(tmpdir(), "agentteam-request-"));
-      const path = join(temporary, "input.json");
-      await writeFile(path, JSON.stringify(command.request), { mode: 0o600 });
-      command = { ...command, args: [...command.args, path] };
     }
-    const plan = await planSpawn(command.executable, command.args);
+    if (command.request) {
+      const path = join(temporary!, "input.json");
+      await writeFile(path, JSON.stringify(command.request), { mode: 0o600 });
+      args.push(path);
+    }
+    if (command.teammateTools && environment === "claude") {
+      const path = join(temporary!, "mcp.json");
+      await writeFile(
+        path,
+        JSON.stringify({
+          mcpServers: {
+            agentteam: {
+              type: "http",
+              url: command.teammateTools.url,
+              headers: {
+                Authorization: "Bearer ${AGENTTEAM_TOOL_TOKEN}",
+              },
+            },
+          },
+        }),
+        { mode: 0o600 },
+      );
+      args.push(
+        "--mcp-config",
+        path,
+        "--allowedTools",
+        "mcp__agentteam__invoke_teammate",
+        "mcp__agentteam__teammate_result",
+      );
+    } else if (command.teammateTools && environment === "codex") {
+      const settings = [
+        `mcp_servers.agentteam.url=${JSON.stringify(command.teammateTools.url)}`,
+        'mcp_servers.agentteam.bearer_token_env_var="AGENTTEAM_TOOL_TOKEN"',
+      ];
+      args.splice(1, 0, ...settings.flatMap((setting) => ["-c", setting]));
+    }
+    const plan = await planSpawn(command.executable, args);
     signal.throwIfAborted();
     await new Promise<void>((resolve, reject) => {
       const child = spawn(plan.command, plan.args, {
@@ -213,6 +281,14 @@ async function executeCommandRaw(
         stdio: ["pipe", "pipe", "pipe"],
         shell: false,
         windowsHide: true,
+        ...(command.teammateTools
+          ? {
+              env: {
+                ...process.env,
+                AGENTTEAM_TOOL_TOKEN: command.teammateTools.token,
+              },
+            }
+          : {}),
         ...plan.options,
       });
       if (child.pid) hooks?.onSpawn?.(child.pid);
@@ -331,6 +407,9 @@ export class RunManager {
   enabled: boolean;
   cwd: string;
   active = new Map<string, AbortController>();
+  readonly toolSessions = new ToolSessions();
+  /** Resolved from the bound loopback HTTP server only while building a provider run. */
+  teammateToolsUrl?: () => string | null;
   /**
    * Reports whether the provider runtime for an environment is resolved. When set, direct-CLI work
    * stays queued while resolving and fails with a clear message when the runtime is unavailable.
@@ -448,12 +527,7 @@ export class RunManager {
         "\n\nuser: " +
         prompt;
     }
-    const command = commandFor(
-      plan,
-      session.providerSessionId,
-      prompt,
-      this.cwd,
-    );
+    let command = commandFor(plan, session.providerSessionId, prompt, this.cwd);
     store.transaction(() => {
       const current = store.get<Session>("session", sessionId);
       assert(
@@ -485,11 +559,62 @@ export class RunManager {
         effort: plan.effort,
       });
     });
+    let conversationTask: Task | undefined;
+    const toolsUrl = this.teammateToolsUrl?.();
+    if (
+      toolsUrl &&
+      plan.connection?.transport !== "acp" &&
+      (plan.environment === "claude" || plan.environment === "codex") &&
+      this.service.store
+        .list<Agent>("agent")
+        .some(
+          (other) =>
+            other.id !== agent.id &&
+            this.service.permitted(agent.id, other.id, "delegate"),
+        )
+    ) {
+      try {
+        const title = request.trim().slice(0, 300) || "Agent conversation";
+        const workflow = this.service.workflow({
+          name: `Chat: ${title}`.slice(0, 300),
+          goal: request.slice(0, 5000) || "Respond to the user's message",
+          ownerId: agent.id,
+          completionCriteria:
+            "Respond to the user and return any delegated results.",
+        });
+        conversationTask = this.service.task({
+          workflowId: workflow.id,
+          agentId: agent.id,
+          title: request.slice(0, 1000) || "Respond to the user",
+          instructions: request.slice(0, 50000),
+          dependsOn: [],
+          completionCriteria: "Return a direct response to the user.",
+        });
+        this.service.startConversationTask(conversationTask.id, sessionId);
+        const toolToken = this.toolSessions.issue({
+          agentId: agent.id,
+          taskId: conversationTask.id,
+        });
+        command.teammateTools = { url: toolsUrl, token: toolToken };
+      } catch (error) {
+        if (conversationTask?.status === "queued")
+          this.service.transitionTask(conversationTask.id, {
+            status: "cancelled",
+          });
+        conversationTask = undefined;
+        console.warn("Could not create a delegated chat context:", error);
+      }
+    }
     const controller = new AbortController();
     this.active.set(sessionId, controller);
-    void this.run(sessionId, pending, command, plan, controller).finally(() =>
-      this.active.delete(sessionId),
-    );
+    void this.run(
+      sessionId,
+      pending,
+      command,
+      plan,
+      controller,
+      conversationTask,
+    ).finally(() => this.active.delete(sessionId));
     return { sessionId, messageId: message.id, status: "running" };
   }
   /** Throws `runtime_resolving` (retryable) or `runtime_unavailable` for direct-CLI plans. */
@@ -515,6 +640,7 @@ export class RunManager {
     command: Command,
     plan: LaunchPlan,
     controller: AbortController,
+    conversationTask?: Task,
   ) {
     const store = this.service.store;
     const message = messages[messages.length - 1];
@@ -577,8 +703,24 @@ export class RunManager {
         });
         store.emit("session.completed", id);
       });
+      if (conversationTask)
+        this.service.transitionTask(conversationTask.id, {
+          status: "completed",
+          result: text.slice(0, 100000),
+        });
     } catch (e) {
       if (effectId) this.service.recovery.failEffect(effectId, e);
+      if (conversationTask) {
+        try {
+          this.service.transitionTask(conversationTask.id, {
+            status: controller.signal.aborted ? "cancelled" : "failed",
+            result:
+              e instanceof Error
+                ? e.message.slice(0, 100000)
+                : "Runtime failed",
+          });
+        } catch {}
+      }
       store.transaction(() => {
         setStatus("failed");
         store.emit(
@@ -591,6 +733,8 @@ export class RunManager {
         );
       });
     } finally {
+      if (command.teammateTools)
+        this.toolSessions.revoke(command.teammateTools.token);
       this.service.approvals.cancelAgent(plan.agentId);
       const session = store.get<Session>("session", id);
       this.service.resources.release(id);

@@ -42,6 +42,7 @@ import {
   hasProposalBlock,
   messageStatusLabel,
   processingMessageIds,
+  sessionFailureMessage,
   splitProposalBlocks,
   unreadLabel,
 } from "../conversation";
@@ -196,6 +197,9 @@ export function Chat(p: PaneProps) {
   const processingIds = session
     ? processingMessageIds(p.events, session.id)
     : [];
+  const failureMessage = session
+    ? sessionFailureMessage(p.events, session.id)
+    : null;
   const isAssistant = agent?.kind === "team-assistant";
   if (!agent)
     return (
@@ -435,6 +439,15 @@ export function Chat(p: PaneProps) {
                 sessionId={session.id}
                 name={agent.name}
               />
+            )}
+            {failureMessage && (
+              <div
+                className="notice"
+                role="alert"
+                data-testid="session-failure"
+              >
+                {failureMessage}
+              </div>
             )}
             <NewBelow n={scroll.below} jump={scroll.toBottom} />
           </div>

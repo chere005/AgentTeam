@@ -12,7 +12,7 @@ import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { openCommand } from "./native.ts";
-import { NO_GIT_HOOKS_DIR } from "./git-config.ts";
+import { attachedRepoGitConfig, SAFE_GIT_CONFIG } from "./git-config.ts";
 import { applyStaging } from "./git-stage.ts";
 import { randomUUID } from "node:crypto";
 import { ResourceCoordinator } from "./resources.ts";
@@ -230,17 +230,27 @@ export class WorkspaceService {
   private async git(root: string, args: string[]) {
     try {
       return (
-        await exec("git", ["-C", root, ...args], {
-          encoding: "utf8",
-          maxBuffer: 2_000_000,
-          timeout: 15_000,
-          env: {
-            ...process.env,
-            GIT_TERMINAL_PROMPT: "0",
-            GIT_LITERAL_PATHSPECS: "1",
-            GIT_OPTIONAL_LOCKS: "0",
+        await exec(
+          "git",
+          [
+            "-C",
+            root,
+            ...SAFE_GIT_CONFIG,
+            ...(await attachedRepoGitConfig(root)),
+            ...args,
+          ],
+          {
+            encoding: "utf8",
+            maxBuffer: 2_000_000,
+            timeout: 15_000,
+            env: {
+              ...process.env,
+              GIT_TERMINAL_PROMPT: "0",
+              GIT_LITERAL_PATHSPECS: "1",
+              GIT_OPTIONAL_LOCKS: "0",
+            },
           },
-        })
+        )
       ).stdout;
     } catch (e) {
       throw new AppError(
@@ -260,12 +270,17 @@ export class WorkspaceService {
     };
   }
   /** Run Git but stop reading (and kill it) once `cap` bytes were produced. */
-  private gitCapped(root: string, args: string[], cap: number) {
+  private async gitCapped(root: string, args: string[], cap: number) {
+    const repoConfig = await attachedRepoGitConfig(root);
     return new Promise<{ text: string; capped: boolean }>((done, fail) => {
-      const child = spawn("git", ["-C", root, ...args], {
-        env: this.gitEnv(),
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      const child = spawn(
+        "git",
+        ["-C", root, ...SAFE_GIT_CONFIG, ...repoConfig, ...args],
+        {
+          env: this.gitEnv(),
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
       const chunks: Buffer[] = [];
       let size = 0,
         capped = false,
@@ -735,15 +750,7 @@ export class WorkspaceService {
           "Commit message required",
           400,
         );
-        await this.git(repo, [
-          "-c",
-          "core.hooksPath=" + NO_GIT_HOOKS_DIR,
-          "-c",
-          "commit.gpgsign=false",
-          "commit",
-          "-m",
-          data.message,
-        ]);
+        await this.git(repo, ["commit", "-m", data.message]);
       } else {
         await applyStaging((args) => this.git(repo, args), repo, {
           action: data.action,

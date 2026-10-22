@@ -5,6 +5,7 @@ import {
   liveActivity,
   markSeen,
   nearBottom,
+  sessionFailureMessage,
   unreadCounts,
 } from "../ui/conversation.ts";
 
@@ -55,6 +56,25 @@ test("live activity folds the runtime events that exist and ends with the run", 
     "",
   );
   assert.equal(liveActivity([], s).active, false);
+});
+
+test("conversation shows the latest run failure until retry starts", () => {
+  const session = "session-a";
+  const failure = ev(1, "session.failed", session, {
+    message: "Claude Code needs you to sign in again.",
+  });
+  assert.equal(
+    sessionFailureMessage([failure], session),
+    "Claude Code needs you to sign in again.",
+  );
+  assert.equal(
+    sessionFailureMessage(
+      [failure, ev(2, "session.started", session)],
+      session,
+    ),
+    null,
+  );
+  assert.equal(sessionFailureMessage([failure], "other-session"), null);
 });
 
 test("unread counts, first-sight baseline, divider position and scroll rule", () => {

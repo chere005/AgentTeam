@@ -361,6 +361,20 @@ test("a scan that throws settles discovery as unavailable instead of leaving wor
   assert.match((codex as { message: string }).message, /disk exploded/);
 });
 
+test("runtime readiness blocks an installed provider that explicitly needs sign-in", async () => {
+  const discovery = new RuntimeDiscovery(
+    undefined,
+    deps({
+      find: async (name) => (name === "claude" ? "/bin/claude" : null),
+      claudeAuth: async () => false,
+    }),
+  );
+  await discovery.refresh();
+  const readiness = discovery.readiness("claude");
+  assert.equal(readiness.state, "unavailable");
+  assert.match((readiness as { message: string }).message, /claude auth login/);
+});
+
 test("queued work waits until its runtime is resolved and fails clearly when unavailable", async () => {
   const store = new Store(":memory:"),
     service = new TeamService(store, new SkillCatalog([])),

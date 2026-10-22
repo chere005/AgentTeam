@@ -299,6 +299,13 @@ export class RuntimeDiscovery {
     if (!this.settled) return { state: "resolving" };
     const runtime = this.runtimes.find((r) => r.id === environment);
     if (!runtime) return { state: "ready" };
+    if (runtime.installed && runtime.authenticated === false)
+      return {
+        state: "unavailable",
+        message:
+          runtime.diagnostics?.find((d) => d.code === "signed_out")?.message ??
+          `${environment} is installed but needs you to sign in again.`,
+      };
     if (runtime.installed) return { state: "ready" };
     return {
       state: "unavailable",

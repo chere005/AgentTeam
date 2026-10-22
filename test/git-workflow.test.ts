@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 import { emptyGitConfig } from "./fixtures/git-config.ts";
-import { NO_GIT_HOOKS_DIR } from "../src/git-config.ts";
+import { attachedRepoGitConfig, NO_GIT_HOOKS_DIR } from "../src/git-config.ts";
 import { chmod, access } from "node:fs/promises";
 import { Store } from "../src/store.ts";
 import { SkillCatalog } from "../src/skills.ts";
@@ -922,6 +922,112 @@ test(
     sh(other, "push", "-q", "origin", "HEAD:main");
     sh(root, "-c", "core.fsmonitor=false", "fetch", "-q");
     assert.equal(await exists(marker), true);
+  },
+);
+
+test(
+  "attached-repository filter drivers cannot run during status, diff, stage or branch switch",
+  { skip: posixOnly },
+  async (t) => {
+    const { root, base, agent, gw, ws } = await fixture(t, { remote: false });
+    await writeFile(join(root, ".gitattributes"), "*.txt filter=hostile\n");
+    await writeFile(join(root, "file.txt"), "base\n");
+    sh(root, "add", ".gitattributes", "file.txt");
+    sh(root, "commit", "-qm", "base");
+    sh(root, "switch", "-qc", "other");
+    await writeFile(join(root, "file.txt"), "other\n");
+    sh(root, "add", "file.txt");
+    sh(root, "commit", "-qm", "other content");
+    sh(root, "switch", "-q", "main");
+
+    const marker = join(base, "filter-ran");
+    await markerScript(join(base, "filter.sh"), marker);
+    for (const kind of ["clean", "smudge", "process"])
+      sh(
+        root,
+        "config",
+        `filter.hostile.${kind}`,
+        `sh ${join(base, "filter.sh")}`,
+      );
+
+    await gw.state(agent.id, w(root));
+    await ws.diff(agent.id, { workspace: root, path: "file.txt" });
+    await gw.switchBranch(agent.id, {
+      ...w(root),
+      branch: "other",
+      confirmDirty: true,
+    });
+    assert.equal(
+      await exists(marker),
+      false,
+      "the smudge filter ran on checkout",
+    );
+    await writeFile(join(root, "file.txt"), "edited\n");
+    await ws.mutateGit(agent.id, {
+      workspace: root,
+      action: "stage",
+      paths: ["file.txt"],
+    });
+    assert.equal(
+      await exists(marker),
+      false,
+      "the clean filter ran while staging",
+    );
+  },
+);
+
+test(
+  "a credential helper configured by an attached repository cannot execute",
+  { skip: posixOnly },
+  async (t) => {
+    const { root, base } = await fixture(t, { remote: false });
+    const repoMarker = join(base, "repo-credential-helper-ran");
+    const userMarker = join(base, "user-credential-helper-ran");
+    await markerScript(join(base, "repo-credential-helper.sh"), repoMarker);
+    await markerScript(join(base, "user-credential-helper.sh"), userMarker);
+    const globalConfig = join(base, "global.gitconfig");
+    await writeFile(
+      globalConfig,
+      `[credential]\n\thelper = !sh ${join(base, "user-credential-helper.sh")}\n`,
+    );
+    const savedGlobal = process.env.GIT_CONFIG_GLOBAL;
+    process.env.GIT_CONFIG_GLOBAL = globalConfig;
+    t.after(() => {
+      if (savedGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = savedGlobal;
+    });
+    sh(
+      root,
+      "config",
+      "credential.helper",
+      `!sh ${join(base, "repo-credential-helper.sh")}`,
+    );
+    try {
+      execFileSync(
+        "git",
+        [
+          "-C",
+          root,
+          ...SAFE_GIT_CONFIG,
+          ...(await attachedRepoGitConfig(root)),
+          "credential",
+          "fill",
+        ],
+        {
+          input: "protocol=https\nhost=example.invalid\n\n",
+          encoding: "utf8",
+          stdio: ["pipe", "ignore", "ignore"],
+        },
+      );
+    } catch {
+      // No configured helper means Git cannot produce credentials; prompts are disabled.
+    }
+    assert.equal(await exists(repoMarker), false, "the repository helper ran");
+    assert.equal(
+      await exists(userMarker),
+      true,
+      "the user helper was suppressed",
+    );
   },
 );
 

@@ -767,6 +767,90 @@ export class TeamService {
       return task;
     });
   }
+  /** Start a conversational manager task alongside its own provider session.
+   * It has no workspace lease: the session lock is the manager's lock, while delegated workers
+   * acquire their own declared resources through the normal scheduler path.
+   */
+  startConversationTask(id: string, sessionId: string) {
+    const task = this.store.get<Task>("task", id),
+      session = this.store.get<Session>("session", sessionId);
+    assert(
+      task.agentId === session.agentId && session.state === "running",
+      "invalid_conversation_task",
+      "A conversation task must belong to its active agent session",
+      403,
+    );
+    assert(
+      task.status === "queued" && !task.parentTaskId,
+      "invalid_transition",
+      "A conversation root task must be queued and have no parent",
+    );
+    this.assertNotRetired(this.store.get<Agent>("agent", task.agentId));
+    this.limits.enforceStart(task);
+    this.recovery.beforeTransition(task, "running");
+    return this.store.transaction(() => {
+      const current = this.store.get<Task>("task", id),
+        workflow = this.store.get<Workflow>("workflow", current.workflowId),
+        agent = this.store.get<Agent>("agent", current.agentId);
+      assert(
+        agent.control === "team",
+        "human_control",
+        "Agent is under human control",
+      );
+      assert(!workflow.paused, "workflow_paused", "Workflow is paused");
+      assert(
+        current.dependsOn.every(
+          (dependency) =>
+            this.store.get<Task>("task", dependency).status === "completed",
+        ),
+        "dependency_pending",
+        "Dependencies must complete first",
+      );
+      assert(
+        !this.orchestration.blockingReviews(current).length,
+        "review_required",
+        "A required review is still pending",
+      );
+      assert(
+        this.validation.gate(current).open,
+        "validation_required",
+        "Required validation has not passed",
+      );
+      assert(
+        !this.store
+          .list<Task>("task")
+          .some(
+            (other) => other.agentId === agent.id && other.status === "running",
+          ),
+        "agent_busy",
+        "Agent already owns running work",
+      );
+      this.pipelines.assertStart(current);
+      current.status = "running";
+      this.store.put("task", current);
+      this.limits.recordTurn(current);
+      this.store.emit("task.status", id, {
+        agentId: agent.id,
+        status: "running",
+      });
+      this.store.emit("task.settings", id, {
+        agentId: agent.id,
+        environment: agent.environment,
+        model: agent.model,
+        effort: agent.effort,
+        priority: this.resources.priority(agent.id),
+        access: agent.workspaces.map((w) => ({
+          path: w.path,
+          access: w.access,
+          active: w.active,
+        })),
+      });
+      this.limits.onTransition(current);
+      this.recovery.onTransition(current, "queued");
+      this.handoffs.onTransition(current);
+      return current;
+    });
+  }
   private flow(task: Task, kind: "request" | "result" | "failure") {
     const edge = this.store
       .list<Edge>("edge")

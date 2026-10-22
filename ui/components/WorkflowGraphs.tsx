@@ -94,6 +94,123 @@ const TRIGGERS = [
   "iterate",
   "done",
 ];
+
+function localSocketsGraph(agents: Snapshot["agents"]) {
+  const manager = agents.find(
+    (a) => a.environment === "claude" && a.model === "opus",
+  );
+  const isSonnet = (a: Snapshot["agents"][number]) =>
+    a.environment === "claude" && a.model === "sonnet";
+  const cppBuilder = agents.find(
+    (a) => isSonnet(a) && a.name.startsWith("C++ Builder"),
+  );
+  const pythonBuilder = agents.find(
+    (a) => isSonnet(a) && a.name.startsWith("Python Builder"),
+  );
+  const tsDeveloper = agents.find(
+    (a) => isSonnet(a) && a.name.startsWith("TypeScript Developer"),
+  );
+  const reviewer = agents.find((a) => a.environment === "codex");
+  if (!manager || !cppBuilder || !pythonBuilder || !tsDeveloper || !reviewer) {
+    throw new Error(
+      "Select the Quickstart local sockets team first; it includes a Claude Opus manager, three Claude Sonnet developers and a Codex reviewer.",
+    );
+  }
+  return {
+    name: "Quickstart: local sockets (C++ + Python + TypeScript)",
+    description:
+      "Creates a TypeScript TCP server and C++/Python clients that communicate over loopback using newline-delimited JSON, then gets a Codex review and Opus summary.",
+    nodes: [
+      {
+        id: "plan-demo",
+        type: "task",
+        agentId: manager.id,
+        title: "Plan the local socket protocol",
+        instructions:
+          "Define a minimal local TCP protocol for C++ and Python clients to talk to a TypeScript server. Use loopback address 127.0.0.1, port 43123, one newline-delimited JSON request and response per connection, and a tiny operation that doubles a numeric value. Specify message shapes, invalid-input behavior, and platform notes for C++ sockets. Do not edit files or run commands.",
+        completionCriteria:
+          "A concise protocol both clients and the server can implement consistently.",
+      },
+      {
+        id: "write-server",
+        type: "task",
+        agentId: tsDeveloper.id,
+        title: "Create the TypeScript socket server",
+        instructions:
+          "Create agentteam-demo/ if needed. Write agentteam-demo/server.ts and agentteam-demo/README.md. Use Node's net module to implement the planned TCP server. Bind only to 127.0.0.1:43123, accept one newline-delimited JSON request per connection, respond with one newline-delimited JSON response, handle malformed input, and close each connection cleanly. README must explain how to start the server and run both clients. Do not run commands.",
+        completionCriteria:
+          "server.ts and README.md describe and implement the agreed loopback protocol.",
+        inputs: { plan: { from: "plan-demo.result", type: "string" } },
+      },
+      {
+        id: "write-cpp",
+        type: "task",
+        agentId: cppBuilder.id,
+        title: "Create the C++ socket client",
+        instructions:
+          "Write agentteam-demo/client.cpp as a small TCP client for the TypeScript server. Connect only to 127.0.0.1:43123, send one newline-delimited JSON request, read through the response newline (handling partial reads), print the result, and clean up the socket. Include portable Winsock setup/cleanup on Windows and POSIX socket handling on macOS/Linux; no third-party libraries. Do not run commands.",
+        completionCriteria: "client.cpp implements the documented protocol.",
+        inputs: {
+          plan: { from: "plan-demo.result", type: "string" },
+          serverProtocol: { from: "write-server.result", type: "string" },
+        },
+      },
+      {
+        id: "write-python",
+        type: "task",
+        agentId: pythonBuilder.id,
+        title: "Create the Python socket client",
+        instructions:
+          "Write agentteam-demo/client.py as a small Python socket client for the TypeScript server. Connect to 127.0.0.1:43123 with a timeout, send one newline-delimited JSON request, read through the response newline (handling partial reads), print the result, and close the socket cleanly. Match server.ts and client.cpp. Do not run commands.",
+        completionCriteria:
+          "client.py implements the same documented protocol.",
+        inputs: {
+          plan: { from: "plan-demo.result", type: "string" },
+          serverProtocol: { from: "write-server.result", type: "string" },
+          cppProtocol: { from: "write-cpp.result", type: "string" },
+        },
+      },
+      {
+        id: "review-files",
+        type: "task",
+        agentId: reviewer.id,
+        title: "Review socket behavior across all three languages",
+        instructions:
+          "Review server.ts, client.cpp, client.py and README.md read-only. You are expected to understand C++ and Python TCP sockets and how they communicate with a local TypeScript program. Check loopback-only binding, common port and newline-delimited JSON framing, JSON compatibility, partial reads, timeouts/errors, connection cleanup, and C++ Winsock/POSIX portability. Verify the README's start/run instructions match the code. Give concise evidence-based findings. Do not edit files or run commands.",
+        completionCriteria:
+          "A concise evidence-based review of all three languages and their socket protocol.",
+        inputs: {
+          server: { from: "write-server.result", type: "string" },
+          cppClient: { from: "write-cpp.result", type: "string" },
+          pythonClient: { from: "write-python.result", type: "string" },
+        },
+      },
+      {
+        id: "manager-report",
+        type: "task",
+        agentId: manager.id,
+        title: "Report the socket demo and review",
+        instructions:
+          "Summarize the files created, how to start the local TypeScript server and run both clients, Codex's findings, and checks that were not run. Do not claim tests passed without evidence.",
+        completionCriteria:
+          "A short accurate summary of files, local usage, review, and unrun checks.",
+        inputs: {
+          serverResult: { from: "write-server.result", type: "string" },
+          cppResult: { from: "write-cpp.result", type: "string" },
+          pythonResult: { from: "write-python.result", type: "string" },
+          review: { from: "review-files.result", type: "string" },
+        },
+      },
+    ],
+    edges: [
+      { from: "plan-demo", to: "write-server", on: "success" },
+      { from: "write-server", to: "write-cpp", on: "success" },
+      { from: "write-cpp", to: "write-python", on: "success" },
+      { from: "write-python", to: "review-files", on: "success" },
+      { from: "review-files", to: "manager-report", on: "success" },
+    ],
+  };
+}
 /**
  * Node and edge colours per theme (inline styles get no derived light twin, docs/ui-design.md).
  * Run states: tinted backgrounds; `idle` = a definition shown without a run.
@@ -518,6 +635,20 @@ export function WorkflowGraphs({
       setError(e instanceof Error ? e.message : String(e));
     }
   };
+  const addLocalSocketsExample = async () => {
+    setError("");
+    try {
+      const definition = localSocketsGraph(agents);
+      const saved: Graph = await api("/graphs", "POST", {
+        workflowId: wfId,
+        ...definition,
+      });
+      await loadGraphs();
+      open(saved);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
   const addNode = () => {
     if (!form || !draft) return;
     setError("");
@@ -639,7 +770,17 @@ export function WorkflowGraphs({
             >
               New graph
             </button>
+            <button onClick={() => void addLocalSocketsExample()}>
+              Add local sockets example
+            </button>
           </div>
+          <p className="quiet">
+            Choose the Quickstart local sockets team first, then assign this
+            project a workspace where the Sonnet developers can write. The graph
+            creates a TypeScript server plus C++ and Python clients, has Codex
+            review their shared socket protocol, and returns the review to the
+            Opus manager.
+          </p>
           <ul className="wg-list" data-testid="graph-list">
             {graphs.map((g) => (
               <li key={g.id}>

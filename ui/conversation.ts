@@ -71,6 +71,24 @@ export function liveActivity(events: EventLike[], sessionId: string): Live {
   return live;
 }
 
+/** Latest provider failure for a session, cleared when the next run starts. */
+export function sessionFailureMessage(
+  events: EventLike[],
+  sessionId: string,
+): string | null {
+  const latest = events
+    .filter(
+      (event) =>
+        event.entityId === sessionId &&
+        (event.type === "session.started" || event.type === "session.failed"),
+    )
+    .at(-1);
+  return latest?.type === "session.failed" &&
+    typeof latest.data?.message === "string"
+    ? latest.data.message
+    : null;
+}
+
 export type SummaryRow = { agentId: string; assistantCount: number };
 /** Assistant replies not yet seen. An agent never seen before starts at zero (no flood on first run). */
 export function unreadCounts(

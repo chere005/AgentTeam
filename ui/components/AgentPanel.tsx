@@ -25,6 +25,7 @@ import {
 } from "../api";
 import { resolveModelState } from "../../src/model-choices";
 import { InvocationPanel } from "./InvocationPanel";
+import { usePersistedDetails } from "./persisted-details";
 import { RoleTypeSelect } from "./RoleType";
 import { RulesEditor } from "./AccessUi";
 import type { AccessRule } from "../access-view";
@@ -111,9 +112,8 @@ function useRuntimes() {
 }
 
 /**
- * The agent setup sections shared by the side panel (existing agent) and the New agent dialog:
- * Identity & role, Model, Folders, Skills, (Talks to), and a collapsed Advanced section holding
- * priority, concurrency, effort, invocation limits, instructions, tool identifiers and access rules.
+ * Shared by the side panel and New agent dialog. Keep identity visible; fold secondary setup
+ * groups so the panel stays compact and each can be opened independently.
  */
 export function AgentFormSections({
   form,
@@ -135,6 +135,31 @@ export function AgentFormSections({
 }) {
   const update = (key: string, value: unknown) =>
     setForm((f) => ({ ...f, [key]: value }));
+  const [identityOpen, onIdentityToggle] = usePersistedDetails(
+    agent?.id,
+    "identity",
+    true,
+  );
+  const [modelOpen, onModelToggle] = usePersistedDetails(
+    agent?.id,
+    "model",
+    true,
+  );
+  const [foldersOpen, onFoldersToggle] = usePersistedDetails(
+    agent?.id,
+    "folders",
+    false,
+  );
+  const [skillsOpen, onSkillsToggle] = usePersistedDetails(
+    agent?.id,
+    "skills",
+    false,
+  );
+  const [advancedOpen, onAdvancedToggle] = usePersistedDetails(
+    agent?.id,
+    "advanced",
+    false,
+  );
   const runtimes = useRuntimes();
   const [catalog, setCatalog] = useState<any>(null),
     [customModel, setCustomModel] = useState(false),
@@ -186,8 +211,14 @@ export function AgentFormSections({
     );
   return (
     <>
-      <section className="agent-section">
-        <h3>Identity & role</h3>
+      <details
+        className="agent-section setup-group"
+        open={identityOpen}
+        onToggle={onIdentityToggle}
+      >
+        <summary>
+          <h3>Identity & role</h3>
+        </summary>
         <div className="form-grid">
           <RoleTypeSelect
             kind={form.kind}
@@ -230,10 +261,19 @@ export function AgentFormSections({
               ))}
           </select>
         </label>
-      </section>
+      </details>
 
-      <section className="agent-section">
-        <h3>Model</h3>
+      <details
+        className="agent-section setup-group"
+        open={modelOpen}
+        onToggle={onModelToggle}
+      >
+        <summary>
+          <h3>Model</h3>
+          <small>
+            {form.environment} · {form.model}
+          </small>
+        </summary>
         <div className="form-grid">
           <label>
             Environment
@@ -309,11 +349,22 @@ export function AgentFormSections({
               ? "Not installed · choose a path in Settings."
               : "Detecting installation…"}
         </small>
-      </section>
+      </details>
 
-      <section className="agent-section">
-        <div className="section-head">
+      <details
+        className="agent-section setup-group"
+        open={foldersOpen}
+        onToggle={onFoldersToggle}
+      >
+        <summary>
           <h3>Folders</h3>
+          <small>
+            {form.workspaces.length
+              ? `${form.workspaces.length} attached`
+              : "None"}
+          </small>
+        </summary>
+        <div className="section-head">
           <button onClick={() => void addFolder()}>
             <Plus size={14} />
             Add folder
@@ -379,11 +430,20 @@ export function AgentFormSections({
             ))}
           </ul>
         )}
-      </section>
+      </details>
 
-      <section className="agent-section">
-        <div className="section-head">
+      <details
+        className="agent-section setup-group"
+        open={skillsOpen}
+        onToggle={onSkillsToggle}
+      >
+        <summary>
           <h3>Skills</h3>
+          <small>
+            {form.skills.length ? `${form.skills.length} assigned` : "None"}
+          </small>
+        </summary>
+        <div className="section-head">
           <button aria-expanded={picking} onClick={() => setPicking(!picking)}>
             <Plus size={14} />
             Add skill
@@ -506,11 +566,24 @@ export function AgentFormSections({
             </small>
           </div>
         )}
-      </section>
+      </details>
 
       {talksTo}
 
-      <details className="agent-section advanced" data-testid="agent-advanced">
+      {agent && (
+        <InvocationPanel
+          agent={agent}
+          limit={form.maxConcurrentInvocations}
+          data={data}
+        />
+      )}
+
+      <details
+        className="agent-section advanced"
+        data-testid="agent-advanced"
+        open={advancedOpen}
+        onToggle={onAdvancedToggle}
+      >
         <summary>
           Advanced
           <small className="quiet">
@@ -595,13 +668,6 @@ export function AgentFormSections({
             </select>
           </label>
         </div>
-        {agent && (
-          <InvocationPanel
-            agent={agent}
-            limit={form.maxConcurrentInvocations}
-            data={data}
-          />
-        )}
         <label>
           Always-loaded instructions
           <textarea
@@ -687,6 +753,7 @@ function TalksTo({
   act: (fn: () => Promise<unknown>) => Promise<void>;
   openConnection: (edgeId: string) => void;
 }) {
+  const [open, onToggle] = usePersistedDetails(agent.id, "talks-to", false);
   const [to, setTo] = useState(""),
     [kind, setKind] = useState<Edge["kind"]>("delegate");
   const all = data.teamView?.allAgents ?? data.agents;
@@ -695,8 +762,15 @@ function TalksTo({
     (e) => e.from === agent.id || e.to === agent.id,
   );
   return (
-    <section className="agent-section">
-      <h3>Talks to</h3>
+    <details
+      className="agent-section setup-group"
+      open={open}
+      onToggle={onToggle}
+    >
+      <summary>
+        <h3>Talks to</h3>
+        <small>{links.length ? `${links.length} connections` : "None"}</small>
+      </summary>
       {!links.length && (
         <p className="section-empty">
           Not connected yet. Connect agents so they can hand off work, ask for
@@ -777,7 +851,7 @@ function TalksTo({
           Connect
         </button>
       </div>
-    </section>
+    </details>
   );
 }
 

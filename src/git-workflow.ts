@@ -31,7 +31,7 @@ import {
   type GitFailure,
 } from "./git-remote.ts";
 import { parseStatus } from "./workspaces.ts";
-import { NO_GIT_HOOKS_DIR } from "./git-config.ts";
+import { attachedRepoGitConfig, SAFE_GIT_CONFIG } from "./git-config.ts";
 
 /**
  * Branch, remote, history, pull-request-link and conflict workflows.
@@ -110,26 +110,18 @@ export async function gitEnvironment(cwd: string, network: boolean) {
   return env;
 }
 /** Options every invocation carries: no hooks, signing, fsmonitor or interactive credentials. */
-export const SAFE_GIT_CONFIG = [
-  "-c",
-  "protocol.ext.allow=never",
-  "-c",
-  `core.hooksPath=${NO_GIT_HOOKS_DIR}`,
-  "-c",
-  "commit.gpgsign=false",
-  "-c",
-  "core.fsmonitor=false",
-  "-c",
-  "core.askPass=",
-  "-c",
-  "credential.interactive=never",
-];
+export { SAFE_GIT_CONFIG };
 async function git(
   cwd: string,
   args: string[],
   o: { network?: boolean; timeout?: number } = {},
 ): Promise<Result> {
-  const prefix = ["-C", cwd, ...SAFE_GIT_CONFIG];
+  const prefix = [
+    "-C",
+    cwd,
+    ...SAFE_GIT_CONFIG,
+    ...(await attachedRepoGitConfig(cwd)),
+  ];
   try {
     const r = await exec("git", [...prefix, ...args], {
       encoding: "utf8",

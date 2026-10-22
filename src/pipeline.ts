@@ -14,7 +14,7 @@ import { stat, realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
-import { SAFE_GIT_CONFIG } from "./git-workflow.ts";
+import { attachedRepoGitConfig, SAFE_GIT_CONFIG } from "./git-config.ts";
 import { contractObjects } from "./limits.ts";
 import { limitsPatchSchema } from "./limits-schema.ts";
 import {
@@ -204,11 +204,25 @@ const READ_ONLY_TOOLS = ["read", "grep", "glob"];
 const WRITE_TOOLS = ["edit", "write", "shell"];
 
 async function git(cwd: string, args: string[]) {
-  const r = await exec("git", ["-C", cwd, ...SAFE_GIT_CONFIG, ...args], {
-    encoding: "utf8",
-    timeout: 30_000,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" },
-  });
+  const r = await exec(
+    "git",
+    [
+      "-C",
+      cwd,
+      ...SAFE_GIT_CONFIG,
+      ...(await attachedRepoGitConfig(cwd)),
+      ...args,
+    ],
+    {
+      encoding: "utf8",
+      timeout: 30_000,
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: "0",
+        GIT_OPTIONAL_LOCKS: "0",
+      },
+    },
+  );
   return r.stdout;
 }
 /** Write access through the folder grant or through any access rule that grants write. */
