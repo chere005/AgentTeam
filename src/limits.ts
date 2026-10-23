@@ -472,9 +472,14 @@ export class LimitsService {
       state.counters.clockStartedAt = new Date().toISOString();
     this.save(state);
   }
-  beforeRetry(taskId: string) {
+  beforeRetry(taskId: string, completedButInvalid = false) {
     const task = this.store.get<Task>("task", taskId);
-    if (task.status !== "failed" || this.meta(taskId).stoppedByLimit) return;
+    if (
+      (task.status !== "failed" &&
+        !(completedButInvalid && task.status === "completed")) ||
+      this.meta(taskId).stoppedByLimit
+    )
+      return;
     const state = this.state(task.workflowId);
     const max = state.limits.maxRetries;
     if (max !== null && state.counters.retries + 1 > max)

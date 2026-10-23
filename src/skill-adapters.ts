@@ -42,7 +42,7 @@ const rows: Record<AdapterId, SkillAdapterInfo> = {
       "Implemented in AgentTeam: injected for a run only when the request matches the skill; otherwise only name and description are listed.",
     modelRead: "unsupported",
     modelReadNote:
-      'The adapter starts Claude with tools disabled (--tools ""), so the model cannot open skill files. Model-initiated on-demand loading is not supported.',
+      "AgentTeam selects and injects skills; Claude cannot load skill files on demand through its own file tools.",
   },
   "wolfram-wolframscript": {
     id: "wolfram-wolframscript",
@@ -84,8 +84,8 @@ export function toolExposure(adapter: AdapterId) {
   return adapter === "acp"
     ? "Tool use is up to the connected agent; AgentTeam does not pass tools or MCP servers to it."
     : adapter === "claude-cli"
-      ? 'Tools are disabled for this adapter (--tools "" and --strict-mcp-config).'
+      ? "Claude tools require explicit agent grants and an attached workspace; shell access also requires a writable workspace."
       : adapter === "codex-cli"
-        ? "Codex runs read-only with approvals off; AgentTeam does not pass tools or MCP servers."
+        ? "Codex tools are limited by workspace grants and its read-only or workspace-write sandbox."
         : "No tools are available through LLMSynthesize.";
 }

@@ -121,6 +121,13 @@ test("canvas fit: fits the team, re-fits when the side panel opens/closes, offer
   await withApp(async ({ start }) => {
     const { page, errors } = await start();
     await smallTeam(page);
+    // A stale manual zoom from an older build used to reopen the canvas nearly unreadable.
+    await page.evaluate(() => {
+      localStorage.setItem(
+        "agentteam.viewport",
+        JSON.stringify({ x: 200, y: 200, zoom: 0.15, manual: true }),
+      );
+    });
     await page.reload();
     await expect(page.locator(".agent-card")).toHaveCount(4);
     const first = await settled(page);

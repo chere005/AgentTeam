@@ -103,7 +103,7 @@ test("validation gate: Wolfram team project, model verification, panel, cancel, 
     const task = wf.locator("details.task", {
       has: page.locator("summary", { hasText: "Derive and validate claim" }),
     });
-    await task.locator("summary").click();
+    await task.locator(":scope > summary").click();
     const panel = task.getByLabel("Validation panel");
     await expect(panel.getByTestId("gate-reason")).toContainText(
       "no validation record",

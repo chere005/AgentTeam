@@ -1164,7 +1164,7 @@ test("chat coordinator delegates to four teammates, waits for their task results
         assert.equal(command.cwd, workspace);
         assert.ok(command.args.includes("--restricted"));
         assert.ok(
-          command.args.includes("Read,Glob,Grep,Edit,Write"),
+          command.args.includes("Read,Glob,Grep,Edit,Write,Bash"),
           "builder gets only assigned workspace file tools",
         );
         const relativePath = command.stdin.includes("cpp/client.cpp")

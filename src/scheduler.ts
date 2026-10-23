@@ -5,6 +5,11 @@ import { prepareRunContext } from "./run-context.ts";
 import type { Agent, Task } from "./model.ts";
 import { ensureWorkspaceBaseline } from "./workspace-changes.ts";
 import { prepareTaskResourceFolders } from "./project-worktrees.ts";
+import {
+  explicitlyReportsIncompleteExecution,
+  explicitlyReportsNoWork,
+  explicitlyReportsUnapprovedReview,
+} from "./task-results.ts";
 export class Scheduler {
   executeProvider: typeof executeCommand;
   service: TeamService;
@@ -230,6 +235,17 @@ export class Scheduler {
       }
       if (!result.trim()) throw new Error("Provider returned no text");
       if (run.replay === null) recovery.finishRun(task, run.effectId, result);
+      if (
+        explicitlyReportsNoWork(result) ||
+        explicitlyReportsIncompleteExecution(task, result) ||
+        explicitlyReportsUnapprovedReview(task, result)
+      ) {
+        this.service.transitionTask(task.id, {
+          status: "failed",
+          result: result.slice(0, 100000),
+        });
+        return;
+      }
       // Detect writes outside the assignment / overlapping another worker and route them to the coordinator.
       if (this.service.parallel.isAssigned(task.id))
         await this.service.parallel.check(task);

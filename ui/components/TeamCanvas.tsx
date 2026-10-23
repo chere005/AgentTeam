@@ -463,7 +463,8 @@ export function TeamCanvas(p: Props) {
       [v.x, v.y, v.zoom].every(
         (n) => typeof n === "number" && Number.isFinite(n),
       ) &&
-      v.zoom >= 0.15 &&
+      // Persisted canvases below the readable fit floor make a reopened team look empty.
+      v.zoom >= MIN_FIT_ZOOM &&
       v.zoom <= 2
       ? { x: v.x, y: v.y, zoom: v.zoom }
       : null;

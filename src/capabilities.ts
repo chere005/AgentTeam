@@ -45,8 +45,8 @@ const rows: RuntimeCapabilityRow[] = [
       streaming: partial(
         "JSON events are read as they arrive, but only completed agent messages become text; no token deltas.",
       ),
-      tools: no(
-        "Runs `codex exec` in a read-only sandbox with approvals disabled; no AgentTeam-controlled tools.",
+      tools: partial(
+        "File and shell tools are confined by Codex's sandbox to the assigned workspace; writes require explicit workspace and tool grants.",
       ),
       effort: yes(
         "Passed as model_reasoning_effort. Choices come from the installed Codex model list.",
@@ -70,7 +70,9 @@ const rows: RuntimeCapabilityRow[] = [
       streaming: partial(
         "stream-json messages are read as they arrive; whole assistant messages, no token deltas.",
       ),
-      tools: no('Launched with tools disabled (--tools ""); chat-only.'),
+      tools: partial(
+        "File tools require an attached workspace; Bash is enabled only when shell is explicitly granted on a writable workspace.",
+      ),
       effort: yes("Passed with --effort. Choices are the static alias list."),
       modelDiscovery: partial(
         "Static aliases (sonnet, opus, haiku); the CLI is not asked for its model list. Other IDs go in as custom models.",

@@ -415,38 +415,69 @@ export function SampleSetup({
   return (
     <div className="gate-summary" aria-label="Model mapping">
       <div className="row between">
-        <b>Model mapping ({setup.intendedLead} lead)</b>
+        <b>Model mapping</b>
         <span
           className={"badge gate-badge " + (c.verified ? "open" : "closed")}
         >
           {c.verified ? "verified" : "not verified"}
         </span>
+        <span className="quiet">
+          {setup.intendedLead} lead · {c.resolved.length}{" "}
+          {c.resolved.length === 1 ? "agent" : "agents"}
+        </span>
       </div>
-      {c.resolved.map((r) => (
-        <span className="quiet" key={r.name}>
-          {r.name}: {r.model}
-          {r.modelName ? ` (${r.modelName})` : ""}
-        </span>
-      ))}
-      {c.issues.map((i) => (
-        <span className="blocker" key={i}>
-          {i}
-        </span>
-      ))}
-      {(c.warnings ?? []).map((w) => (
-        <span className="hint" key={w}>
-          Note: {w}
-        </span>
-      ))}
-      <button
-        onClick={() =>
-          void act(() =>
-            api("/samples/workflows/" + workflow.id + "/verify-models", "POST"),
-          )
-        }
-      >
-        Verify models
-      </button>
+      {!c.verified &&
+        c.issues.map((i) => (
+          <span className="blocker" key={i}>
+            {i}
+          </span>
+        ))}
+      {!c.verified && (
+        <button
+          onClick={() =>
+            void act(() =>
+              api(
+                "/samples/workflows/" + workflow.id + "/verify-models",
+                "POST",
+              ),
+            )
+          }
+        >
+          Verify models
+        </button>
+      )}
+      <details className="model-mapping-details" open={!c.verified}>
+        <summary>
+          Model details
+          {(c.warnings ?? []).length > 0 &&
+            ` · ${(c.warnings ?? []).length} note${(c.warnings ?? []).length === 1 ? "" : "s"}`}
+        </summary>
+        {c.resolved.map((r) => (
+          <span className="quiet" key={r.name}>
+            {r.name}: {r.model}
+            {r.modelName ? ` (${r.modelName})` : ""}
+          </span>
+        ))}
+        {(c.warnings ?? []).map((w) => (
+          <span className="hint" key={w}>
+            Note: {w}
+          </span>
+        ))}
+        {c.verified && (
+          <button
+            onClick={() =>
+              void act(() =>
+                api(
+                  "/samples/workflows/" + workflow.id + "/verify-models",
+                  "POST",
+                ),
+              )
+            }
+          >
+            Verify models again
+          </button>
+        )}
+      </details>
     </div>
   );
 }

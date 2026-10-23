@@ -242,7 +242,15 @@ test("example teams: listed with shape and org preview, inserted as teams (no pr
       await page.screenshot({ path: join(shots, `canvas-${ex.file}.png`) });
 
       if (ex.file === "quickstart") {
-        await page.getByRole("button", { name: "Assign project" }).click();
+        const managerId = agents.find((a) => a.name.startsWith("Manager"))!.id;
+        await page.getByLabel("Agent", { exact: true }).selectOption(managerId);
+        await page.getByRole("button", { name: "Pi demo" }).click();
+        const assignForm = page.getByRole("form", { name: "Assign project" });
+        await expect(assignForm).toBeVisible();
+        await expect(assignForm.getByLabel("Project workspace")).toBeVisible();
+        await assignForm.getByRole("button", { name: "Cancel" }).click();
+
+        await page.locator(".topbar-assign").click();
         const form = page.getByRole("form", { name: "Assign project" });
         await expect(form.getByTestId("assign-project-type")).toContainText(
           "existing 5 agents",
@@ -277,6 +285,14 @@ test("example teams: listed with shape and org preview, inserted as teams (no pr
           "TypeScript Developer (Claude Sonnet)",
         ])
           expect(assigned.get(name)[0].access).toBe("write");
+        for (const name of [
+          "C++ Builder (Claude Sonnet)",
+          "Python Builder (Claude Sonnet)",
+          "TypeScript Developer (Claude Sonnet)",
+        ])
+          expect(
+            quickstartAgents.find((a: any) => a.name === name).tools,
+          ).toContain("shell");
         expect(assigned.get("Code Reviewer (Codex)")[0].access).toBe("read");
       }
     }

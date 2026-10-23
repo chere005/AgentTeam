@@ -14,7 +14,7 @@ import {
   WorkflowGateSummary,
 } from "./Validation";
 import { PipelineHistory, PIPELINE_SAMPLE_ID } from "./Pipeline";
-import { AssignProject, useAssignRequest } from "./Projects";
+import { AssignProject, openAssignProject, useAssignRequest } from "./Projects";
 import { ProjectLifecycle } from "./ProjectLifecycle";
 import { WorkflowRecovery } from "./Recovery";
 import { WorkflowSharedState } from "./SharedState";
@@ -52,6 +52,11 @@ import { ProposalCards } from "./ProposalCard";
 import { InvocationPanel } from "./InvocationPanel";
 import { MessageMarkdown } from "./Markdown";
 import { canLeaveFileEditor } from "../file-editor-guard";
+import {
+  explicitlyReportsIncompleteExecution,
+  explicitlyReportsNoWork,
+  explicitlyReportsUnapprovedReview,
+} from "../../src/task-results";
 import { useWorkspaceWatch } from "./useWorkspaceWatch";
 import { EffectiveAccess, LaunchReview, ExternalNotice } from "./AccessUi";
 import { accessLabel } from "../access-view";
@@ -93,6 +98,71 @@ import { AgentAvatar } from "./AgentAvatar";
 import { isProjectWorkflow } from "../project-kind";
 import type { FeatureId } from "../features";
 import { GitRenamePair } from "./GitRenamePair";
+const taskResultProblem = (task: {
+  title: string;
+  instructions: string;
+  completionCriteria: string;
+  result?: string | null;
+}) =>
+  explicitlyReportsNoWork(task.result)
+    ? "didn’t complete"
+    : explicitlyReportsIncompleteExecution(task, task.result)
+      ? "didn’t run"
+      : explicitlyReportsUnapprovedReview(task, task.result)
+        ? "review inconclusive"
+        : null;
+const taskViewStatus = (task: {
+  status: string;
+  title: string;
+  instructions: string;
+  completionCriteria: string;
+  result?: string | null;
+}) => (taskResultProblem(task) ? "failed" : task.status);
+const taskNeedsAttention = (task: {
+  status: string;
+  title: string;
+  instructions: string;
+  completionCriteria: string;
+  result?: string | null;
+}) => ["failed", "blocked", "interrupted"].includes(taskViewStatus(task));
+const taskIsComplete = (task: {
+  status: string;
+  title: string;
+  instructions: string;
+  completionCriteria: string;
+  result?: string | null;
+}) => taskViewStatus(task) === "completed";
+const taskDisplayTitle = (title: string) => {
+  const normalized = title.replace(/\s+/g, " ").trim();
+  if (normalized.length <= 96) return normalized;
+  const beforeInspect = normalized.split(/\s+Inspect\b/i, 1)[0];
+  if (/^Run and verify\b/i.test(normalized) && beforeInspect.length <= 64)
+    return beforeInspect;
+  const sentence = normalized.match(/^.{1,96}?[.!?](?=\s|$)/)?.[0];
+  if (sentence) return sentence;
+  const short = normalized.slice(0, 92).replace(/\s+\S*$/, "");
+  return `${short}…`;
+};
+const taskResultPreview = (task: {
+  status: string;
+  title: string;
+  instructions: string;
+  completionCriteria: string;
+  result?: string | null;
+}) => {
+  const problem = taskResultProblem(task);
+  if (problem === "didn’t run") return "The requested run was skipped.";
+  if (problem === "review inconclusive")
+    return "The reviewer could not verify the result.";
+  if (problem)
+    return "The agent reported that it could not complete this task.";
+  const result = (task.result ?? "").replace(/[*`_]/g, "");
+  if (/\bverdict\s*:\s*\*{0,2}approve\b/i.test(result))
+    return "Reviewer approved the current files and matching outputs.";
+  if (/\bexit\s*(?:status|code)\s*:?\s*0\b/i.test(result))
+    return "Run succeeded · exit 0 · output recorded.";
+  return "";
+};
 /** Comma-separated declared task paths from the task form. */
 const declaredPaths = (text: string) =>
   text
@@ -100,7 +170,7 @@ const declaredPaths = (text: string) =>
     .map((v) => v.trim())
     .filter(Boolean);
 const PI_DEMO_PROMPT =
-  "Start a fresh demo in agentteam-demo/pi-300/; ignore earlier chat work and leave it untouched. Define 300 significant decimal digits of Pi (the leading 3 counts as digit one). Assign these files to the matching builders: cpp/pi.cpp, python/pi.py, and typescript/pi.ts. Have each builder create its subfolder, implement the program, and report how to run it. Then ask the Codex reviewer to check correctness and request focused fixes until it approves. Run the programs only if a command tool is available; report clearly if they were not run. Give me the files, review rounds, and final report.";
+  "Start a fresh demo in agentteam-demo/pi-300/; leave earlier work untouched. Define Pi as 300 significant digits, with the leading 3 counting as digit one. Assign cpp/pi.cpp, python/pi.py, and typescript/pi.ts to their matching builders. Require each builder to create, compile/run, and report the exact command and literal output. Ask the Codex reviewer to inspect all three files and compare outputs; fix issues until it approves. Give me the files and a concise report of what ran, what matched, and what remains unverified.";
 export type PaneProps = {
   data: Snapshot;
   selected: string;
@@ -259,10 +329,18 @@ export function Chat(p: PaneProps) {
             agent.name.startsWith("Manager") && (
               <button
                 className="secondary pi-demo-shortcut"
-                title="Fill in a fresh, multi-agent Pi demo prompt"
+                title={
+                  p.currentProjectId
+                    ? "Fill in a fresh, multi-agent Pi demo prompt"
+                    : "Choose a project folder first so agents can create and run files"
+                }
                 onClick={() => {
                   setDraft(PI_DEMO_PROMPT);
                   persist("draft." + agent.id, PI_DEMO_PROMPT);
+                  if (!p.currentProjectId) {
+                    p.openFeature?.("projects");
+                    openAssignProject();
+                  }
                 }}
               >
                 <Play size={14} /> Pi demo
@@ -790,19 +868,19 @@ export function Workflows(p: PaneProps) {
               aria-label={`${w.name} task progress`}
               aria-valuemin={0}
               aria-valuemax={w.tasks.length}
-              aria-valuenow={
-                w.tasks.filter((t) => t.status === "completed").length
-              }
+              aria-valuenow={w.tasks.filter(taskIsComplete).length}
             >
               <span
                 style={{
-                  width: `${w.tasks.length ? (100 * w.tasks.filter((t) => t.status === "completed").length) / w.tasks.length : 0}%`,
+                  width: `${w.tasks.length ? (100 * w.tasks.filter(taskIsComplete).length) / w.tasks.length : 0}%`,
                 }}
               />
             </div>
             <small>
-              {w.tasks.filter((t) => t.status === "completed").length} of{" "}
-              {w.tasks.length} tasks complete
+              {w.tasks.filter(taskIsComplete).length} of {w.tasks.length}{" "}
+              complete
+              {w.tasks.some(taskNeedsAttention) &&
+                ` · ${w.tasks.filter(taskNeedsAttention).length} need attention`}
             </small>
             <button
               className="icon"
@@ -829,30 +907,35 @@ export function Workflows(p: PaneProps) {
                     (t) => t.status === "queued" || t.status === "running",
                   ).length
                 }{" "}
-                active ·{" "}
-                {
-                  w.tasks.filter((t) =>
-                    ["failed", "blocked", "interrupted"].includes(t.status),
-                  ).length
-                }{" "}
-                need attention
+                active · {w.tasks.filter(taskNeedsAttention).length} need
+                attention
               </span>
             </summary>
             {w.tasks.map((t) => (
               <details className="task" key={t.id}>
                 <summary>
-                  <span className={"task-dot " + t.status} />
-                  <span>
-                    {t.title}
+                  <span className={"task-dot " + taskViewStatus(t)} />
+                  <span className="task-title" title={t.title}>
+                    <b>{taskDisplayTitle(t.title)}</b>
                     <small>
                       {p.data.agents.find((a) => a.id === t.agentId)?.name}
                     </small>
+                    {taskResultPreview(t) && (
+                      <small className="task-result-preview">
+                        {taskResultPreview(t)}
+                      </small>
+                    )}
                   </span>
                   <GateBadge task={t} />
-                  <span className="badge">{t.status}</span>
+                  <span className="badge">
+                    {taskResultProblem(t) ?? t.status}
+                  </span>
                 </summary>
-                <p>{t.instructions}</p>
-                <small>Done when: {t.completionCriteria}</small>
+                <details className="task-brief">
+                  <summary>Full task brief</summary>
+                  <p>{t.instructions}</p>
+                  <small>Done when: {t.completionCriteria}</small>
+                </details>
                 {t.dependsOn.length > 0 && (
                   <p className="hint">
                     Depends on{" "}
@@ -861,7 +944,17 @@ export function Workflows(p: PaneProps) {
                       .join(", ")}
                   </p>
                 )}
-                {t.result && <pre>{t.result}</pre>}
+                {t.result && (
+                  <details className="task-report">
+                    <summary>
+                      Agent report
+                      {taskResultPreview(t) && (
+                        <small>{taskResultPreview(t)}</small>
+                      )}
+                    </summary>
+                    <MessageMarkdown text={t.result} />
+                  </details>
+                )}
                 {p.openChat && (
                   <ConversationLink
                     taskId={t.id}
@@ -876,7 +969,7 @@ export function Workflows(p: PaneProps) {
                 />
                 <TaskSettings task={t} tasks={w.tasks} act={p.act} />
                 <div className="row">
-                  {t.status === "failed" && (
+                  {taskViewStatus(t) === "failed" && (
                     <button
                       onClick={() =>
                         void p.act(() =>
@@ -889,9 +982,10 @@ export function Workflows(p: PaneProps) {
                       Retry
                     </button>
                   )}
-                  {["queued", "failed", "interrupted", "blocked"].includes(
+                  {(["queued", "failed", "interrupted", "blocked"].includes(
                     t.status,
-                  ) && (
+                  ) ||
+                    taskViewStatus(t) === "failed") && (
                     <button
                       onClick={() =>
                         void p.act(() =>

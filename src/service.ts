@@ -22,6 +22,11 @@ import { TeamSpaces } from "./team-spaces.ts";
 import { taskFilesystem } from "./provider-filesystem.ts";
 import { filesystemPolicy } from "./filesystem-policy.ts";
 import { withRoleDefaults } from "./roles.ts";
+import {
+  explicitlyReportsIncompleteExecution,
+  explicitlyReportsNoWork,
+  explicitlyReportsUnapprovedReview,
+} from "./task-results.ts";
 import { Store } from "./store.ts";
 import { SkillCatalog } from "./skills.ts";
 import { adapterFor } from "./skill-adapters.ts";
@@ -512,15 +517,24 @@ export class TeamService {
   workflowStatus(id: string) {
     const workflow = this.store.get<Workflow>("workflow", id),
       tasks = this.store.list<Task>("task").filter((t) => t.workflowId === id);
+    const effectiveStatus = (task: Task) =>
+      task.status === "completed" &&
+      (explicitlyReportsNoWork(task.result) ||
+        explicitlyReportsIncompleteExecution(task, task.result) ||
+        explicitlyReportsUnapprovedReview(task, task.result))
+        ? "failed"
+        : task.status;
     return {
       ...workflow,
       tasks,
       status: workflow.paused
         ? "paused"
-        : tasks.length && tasks.every((t) => t.status === "completed")
+        : tasks.length && tasks.every((t) => effectiveStatus(t) === "completed")
           ? "completed"
           : tasks.some((t) =>
-                ["failed", "interrupted", "blocked"].includes(t.status),
+                ["failed", "interrupted", "blocked"].includes(
+                  effectiveStatus(t),
+                ),
               )
             ? "needs-attention"
             : tasks.some((t) => t.status === "running")
@@ -706,6 +720,12 @@ export class TeamService {
       })
       .strict()
       .parse(input);
+    const existing = this.store.get<Task>("task", id);
+    const completedButInvalid =
+      existing.status === "completed" &&
+      (explicitlyReportsNoWork(existing.result) ||
+        explicitlyReportsIncompleteExecution(existing, existing.result) ||
+        explicitlyReportsUnapprovedReview(existing, existing.result));
     // A retired worker (Team settings) takes no new work: no start, no retry.
     if (data.status === "running" || data.status === "queued")
       this.assertNotRetired(
@@ -714,10 +734,27 @@ export class TeamService {
           this.store.get<Task>("task", id).agentId,
         ),
       );
+    if (
+      data.status === "completed" &&
+      (explicitlyReportsIncompleteExecution(
+        this.store.get<Task>("task", id),
+        data.result,
+      ) ||
+        explicitlyReportsUnapprovedReview(
+          this.store.get<Task>("task", id),
+          data.result,
+        ))
+    )
+      assert(
+        false,
+        "execution_not_reported",
+        "The task result does not satisfy its acceptance criteria: required execution or review approval is missing.",
+      );
     // Limit checks record their trip in their own transaction, so run them before ours.
     if (data.status === "running")
       this.limits.enforceStart(this.store.get<Task>("task", id));
-    if (data.status === "queued") this.limits.beforeRetry(id);
+    if (data.status === "queued")
+      this.limits.beforeRetry(id, completedButInvalid);
     this.recovery.beforeTransition(
       this.store.get<Task>("task", id),
       data.status,
@@ -730,7 +767,7 @@ export class TeamService {
         failed: ["queued", "cancelled"],
         interrupted: ["queued", "cancelled", "blocked"],
         blocked: ["queued", "cancelled", "interrupted"],
-        completed: [],
+        completed: completedButInvalid ? ["queued", "cancelled"] : [],
         cancelled: [],
       };
       assert(
@@ -819,7 +856,11 @@ export class TeamService {
       if (data.status === "queued") {
         // Resuming an interrupted/blocked task is not a retry, but a limit stop recorded before the
         // restart is cleared either way (recordRetry only clears it in that case).
-        if (from === "failed" || this.limits.meta(task.id).stoppedByLimit)
+        if (
+          from === "failed" ||
+          completedButInvalid ||
+          this.limits.meta(task.id).stoppedByLimit
+        )
           this.limits.recordRetry(task);
         delete task.result;
         task.queuedAt = new Date().toISOString();

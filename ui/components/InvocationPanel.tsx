@@ -6,6 +6,7 @@ import { usePersistedDetails } from "./persisted-details";
 import { MessageMarkdown } from "./Markdown";
 import { AgentAvatar } from "./AgentAvatar";
 import { agentDisplayName, agentSelectorLabel } from "../agent-identity";
+import { explicitlyReportsNoWork } from "../../src/task-results";
 import "./runtime-ui.css";
 
 type InvocationRecord = {
@@ -28,6 +29,15 @@ type GroupChatState = {
     createdAt: string;
   }[];
 };
+
+function instructionPreview(text: string) {
+  const preview = text
+    .replace(/```[\s\S]*?```/g, "[code]")
+    .replace(/[`*_#>-]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return preview.length > 180 ? `${preview.slice(0, 177)}…` : preview;
+}
 
 export function GroupChatPanel({
   chatId,
@@ -309,28 +319,57 @@ export function InvocationPanel({
         )}
         {related.map((record) => {
           const task = byTask.get(record.id);
+          const noWork = explicitlyReportsNoWork(task?.result);
+          const displayedStatus = noWork
+            ? "failed"
+            : (task?.status ?? "queued");
           return (
             <article className="invocation-exchange" key={record.id}>
               <b>
                 {names[record.fromAgentId] ?? "Agent"} →{" "}
                 {names[record.toAgentId] ?? "Teammate"}: {record.request.title}
               </b>
-              <small className="quiet">{task?.status ?? "queued"}</small>
-              {record.request.instructions && (
-                <p>
-                  <b>Manager’s instructions</b>
-                  <br />
-                  {record.request.instructions}
+              <small className={`invocation-status ${displayedStatus}`}>
+                {noWork ? "didn’t complete" : displayedStatus}
+              </small>
+              {task?.result && (
+                <div className="invocation-result">
+                  <b>
+                    {noWork
+                      ? "Agent says no work was done"
+                      : task.status === "completed"
+                        ? "Agent result"
+                        : "Latest update"}
+                  </b>
+                  <MessageMarkdown text={task.result} collapsible />
+                </div>
+              )}
+              {task?.status === "running" && !task.result && (
+                <p className="quiet invocation-waiting">
+                  Agent is running · waiting for its first result.
                 </p>
               )}
-              {task?.result && (
-                <p>
-                  <b>
-                    {task.status === "completed" ? "Reply" : "Latest result"}
-                  </b>
-                  <br />
-                  {task.result}
+              {task?.status === "completed" && !task.result && (
+                <p className="quiet invocation-waiting">
+                  Completed without a reported result.
                 </p>
+              )}
+              {record.request.instructions && (
+                <details
+                  className="invocation-instructions"
+                  data-testid="manager-instructions"
+                >
+                  <summary>
+                    <b>Manager’s instructions</b>
+                    <span>
+                      {instructionPreview(record.request.instructions)}
+                    </span>
+                  </summary>
+                  <MessageMarkdown
+                    text={record.request.instructions}
+                    collapsible
+                  />
+                </details>
               )}
               {groupChats[record.id] ? (
                 <GroupChatPanel
@@ -350,33 +389,44 @@ export function InvocationPanel({
         })}
         {assigned
           .filter((task) => !represented.has(task.id))
-          .map((task) => (
-            <article className="invocation-exchange" key={task.id}>
-              <b>
-                {task.invokedBy
-                  ? `${names[task.invokedBy] ?? "Teammate"} → ${agentDisplayName(agent)}`
-                  : "Assigned work"}
-                : {task.title}
-              </b>
-              <small className="quiet">{task.status}</small>
-              {task.instructions && (
-                <p>
-                  <b>Instructions</b>
-                  <br />
-                  {task.instructions}
-                </p>
-              )}
-              {task.result && (
-                <p>
-                  <b>
-                    {task.status === "completed" ? "Result" : "Latest result"}
-                  </b>
-                  <br />
-                  {task.result}
-                </p>
-              )}
-            </article>
-          ))}
+          .map((task) => {
+            const noWork = explicitlyReportsNoWork(task.result);
+            const displayedStatus = noWork ? "failed" : task.status;
+            return (
+              <article className="invocation-exchange" key={task.id}>
+                <b>
+                  {task.invokedBy
+                    ? `${names[task.invokedBy] ?? "Teammate"} → ${agentDisplayName(agent)}`
+                    : "Assigned work"}
+                  : {task.title}
+                </b>
+                <small className={`invocation-status ${displayedStatus}`}>
+                  {noWork ? "didn’t complete" : displayedStatus}
+                </small>
+                {task.result && (
+                  <div className="invocation-result">
+                    <b>
+                      {noWork
+                        ? "Agent says no work was done"
+                        : task.status === "completed"
+                          ? "Agent result"
+                          : "Latest update"}
+                    </b>
+                    <MessageMarkdown text={task.result} collapsible />
+                  </div>
+                )}
+                {task.instructions && (
+                  <details className="invocation-instructions">
+                    <summary>
+                      <b>Instructions</b>
+                      <span>{instructionPreview(task.instructions)}</span>
+                    </summary>
+                    <MessageMarkdown text={task.instructions} collapsible />
+                  </details>
+                )}
+              </article>
+            );
+          })}
         {!assigned.length && !related.length && (
           <p className="quiet">
             No team work has been assigned to this agent yet.

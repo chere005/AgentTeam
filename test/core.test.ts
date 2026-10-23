@@ -387,6 +387,78 @@ test("provider file tools are limited to the attached workspace and assigned acc
     "acceptEdits",
   );
   assert.equal(claude.cwd, root);
+  assert.equal(claude.allowedTools, undefined);
+
+  const claudeShellBuilder = await service.saveAgent({
+    name: "Claude Shell Builder",
+    environment: "claude",
+    model: "sonnet",
+    roleType: "implementer",
+    tools: ["read", "grep", "glob", "edit", "write", "shell"],
+    workspaces: [{ path: root, access: "write", active: true }],
+  });
+  const claudeShell = commandFor(
+    await service.launchPlan(claudeShellBuilder.id),
+    null,
+    "Build and run a program",
+    process.cwd(),
+  );
+  assert.equal(
+    claudeShell.args[claudeShell.args.indexOf("--tools") + 1],
+    "Read,Glob,Grep,Edit,Write,Bash",
+  );
+  const claudeSettings = JSON.parse(
+    claudeShell.args[claudeShell.args.indexOf("--settings") + 1],
+  );
+  assert.deepEqual(claudeSettings.sandbox, {
+    enabled: true,
+    failIfUnavailable: true,
+    allowUnsandboxedCommands: false,
+    autoAllowBashIfSandboxed: true,
+  });
+  assert.equal(
+    claudeSettings.permissions.blockReadsOutsideWorkingDirectories,
+    true,
+  );
+  assert.deepEqual(claudeShell.allowedTools, ["Bash"]);
+
+  const noWorkspace = await service.saveAgent({
+    name: "Claude Without Workspace",
+    environment: "claude",
+    model: "sonnet",
+    roleType: "implementer",
+    tools: ["read", "grep", "glob", "edit", "write", "shell"],
+  });
+  const noWorkspaceCommand = commandFor(
+    await service.launchPlan(noWorkspace.id),
+    null,
+    "Build and run a program",
+    process.cwd(),
+  );
+  assert.deepEqual(noWorkspaceCommand.allowedTools, undefined);
+  assert.equal(
+    noWorkspaceCommand.args[noWorkspaceCommand.args.indexOf("--tools") + 1],
+    "",
+  );
+
+  const shellReviewer = await service.saveAgent({
+    name: "Read-only reviewer with shell grant",
+    environment: "claude",
+    roleType: "reviewer",
+    tools: ["read", "grep", "glob", "shell"],
+    workspaces: [{ path: root, access: "read", active: true }],
+  });
+  const shellReviewerCommand = commandFor(
+    await service.launchPlan(shellReviewer.id),
+    null,
+    "Review",
+    process.cwd(),
+  );
+  assert.equal(shellReviewerCommand.allowedTools, undefined);
+  assert.equal(
+    shellReviewerCommand.args[shellReviewerCommand.args.indexOf("--tools") + 1],
+    "Read,Glob,Grep",
+  );
 
   const codexBuilder = await service.saveAgent({
     name: "Codex Builder",
@@ -557,6 +629,7 @@ if (args.includes("--json")) {
     url: "http://127.0.0.1:4317/mcp",
     token: "run-scoped-test-token",
   };
+  command.allowedTools = ["Bash"];
   let output = "";
   await executeCommand(
     command,
@@ -579,6 +652,12 @@ if (args.includes("--json")) {
   assert.ok(payload.args.includes("--restricted"));
   assert.ok(payload.args.includes("mcp__agentteam__invoke_teammate"));
   assert.ok(!payload.args.includes(command.teammateTools.token));
+  const allowedIndex = payload.args.indexOf("--allowedTools");
+  assert.deepEqual(payload.args.slice(allowedIndex + 1), [
+    "Bash",
+    "mcp__agentteam__invoke_teammate",
+    "mcp__agentteam__teammate_result",
+  ]);
   await assert.rejects(stat(payload.configPath), { code: "ENOENT" });
 
   const builder = await service.saveAgent({

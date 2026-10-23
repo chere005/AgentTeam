@@ -194,7 +194,7 @@ test("Claude adapter: model-initiated loading is unsupported and disclosed; no f
     prompt: "documentation",
   });
   assert.equal(preview.adapter.modelRead, "unsupported");
-  assert.match(preview.adapter.modelReadNote, /tools disabled/);
+  assert.match(preview.adapter.modelReadNote, /cannot load skill files/);
 });
 
 test("changed skills are not loaded until the user accepts the update; first use pins", async () => {

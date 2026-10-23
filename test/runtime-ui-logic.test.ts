@@ -163,10 +163,10 @@ test("capability table claims match what the adapters build", () => {
   );
   assert.deepEqual(fresh("wolfram", "high").args, fresh("wolfram", null).args);
   assert.equal(rows["wolfram-wolframscript"].capabilities.effort.level, "no");
-  // tools: claude launched with tools disabled, codex read-only sandbox
+  // Without an attached workspace, both CLI adapters expose no filesystem tools.
   const claudeArgs = fresh("claude", null).args;
   assert.equal(claudeArgs[claudeArgs.indexOf("--tools") + 1], "");
   assert.ok(fresh("codex", null).args.includes('sandbox_mode="read-only"'));
-  assert.equal(rows["claude-cli"].capabilities.tools.level, "no");
-  assert.equal(rows["codex-cli"].capabilities.tools.level, "no");
+  assert.equal(rows["claude-cli"].capabilities.tools.level, "partial");
+  assert.equal(rows["codex-cli"].capabilities.tools.level, "partial");
 });

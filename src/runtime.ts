@@ -80,6 +80,7 @@ function claudeFileTools(plan: LaunchPlan) {
     ...(plan.tools.includes("grep") ? ["Grep"] : []),
     ...(access.write && plan.tools.includes("edit") ? ["Edit"] : []),
     ...(access.write && plan.tools.includes("write") ? ["Write"] : []),
+    ...(access.write && plan.tools.includes("shell") ? ["Bash"] : []),
   ];
 }
 
@@ -155,9 +156,9 @@ export function commandFor(
       },
     };
   if (plan.environment === "claude") {
-    // On-demand skills are selected by AgentTeam. Restricted mode confines built-in file tools to
-    // this working directory; per-file rules cannot be represented by Claude's filesystem tools,
-    // so attachments with rules remain unavailable to those tools.
+    // On-demand skills are selected by AgentTeam. Restricted mode confines built-in tools to the
+    // assigned directories; Bash is named only for an explicit shell grant on writable access.
+    // Per-file rules cannot be represented by Claude's filesystem tools, so those roots stay off.
     const capabilities = workspaceCapabilities(plan);
     const fileTools = claudeFileTools(plan);
     if (plan.taskScoped)
@@ -185,14 +186,32 @@ export function commandFor(
       "--append-system-prompt",
       plan.instructions,
     ];
-    if (plan.taskScoped) {
+    if (
+      plan.taskScoped ||
+      (capabilities.write && plan.tools.includes("shell"))
+    ) {
       args.push(
         "--settings",
         JSON.stringify({
-          permissions: {
-            additionalDirectories: [],
-            blockReadsOutsideWorkingDirectories: true,
-          },
+          ...(capabilities.write && plan.tools.includes("shell")
+            ? {
+                sandbox: {
+                  enabled: true,
+                  failIfUnavailable: true,
+                  allowUnsandboxedCommands: false,
+                  autoAllowBashIfSandboxed: true,
+                },
+              }
+            : {}),
+          ...(plan.taskScoped ||
+          (capabilities.write && plan.tools.includes("shell"))
+            ? {
+                permissions: {
+                  ...(plan.taskScoped ? { additionalDirectories: [] } : {}),
+                  blockReadsOutsideWorkingDirectories: true,
+                },
+              }
+            : {}),
         }),
       );
     }
@@ -208,6 +227,9 @@ export function commandFor(
       args,
       stdin: prompt,
       cwd,
+      ...(capabilities.write && plan.tools.includes("shell")
+        ? { allowedTools: ["Bash"] }
+        : {}),
     };
   }
   const writable = workspaceCapabilities(plan).write;
@@ -381,19 +403,25 @@ async function executeCommandRaw(
         }),
         { mode: 0o600 },
       );
-      args.push(
-        "--mcp-config",
-        path,
-        "--allowedTools",
-        "mcp__agentteam__invoke_teammate",
-        "mcp__agentteam__teammate_result",
-      );
+      args.push("--mcp-config", path);
     } else if (command.teammateTools && environment === "codex") {
       const settings = [
         `mcp_servers.agentteam.url=${JSON.stringify(command.teammateTools.url)}`,
         'mcp_servers.agentteam.bearer_token_env_var="AGENTTEAM_TOOL_TOKEN"',
       ];
       args.splice(1, 0, ...settings.flatMap((setting) => ["-c", setting]));
+    }
+    if (environment === "claude") {
+      const allowedTools = [
+        ...(command.allowedTools ?? []),
+        ...(command.teammateTools
+          ? [
+              "mcp__agentteam__invoke_teammate",
+              "mcp__agentteam__teammate_result",
+            ]
+          : []),
+      ];
+      if (allowedTools.length) args.push("--allowedTools", ...allowedTools);
     }
     const plan = await planSpawn(command.executable, args);
     signal.throwIfAborted();

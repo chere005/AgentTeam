@@ -28,6 +28,59 @@
 .invocation-panel li {
   line-height: 1.6;
 }
+.invocation-exchange {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.invocation-status {
+  width: fit-content;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: capitalize;
+}
+.invocation-status.running {
+  color: var(--accent);
+}
+.invocation-status.completed {
+  color: var(--success, #8bd5bd);
+}
+.invocation-status.failed {
+  color: #f18d8d;
+}
+.invocation-result,
+.invocation-instructions {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.invocation-result > b,
+.invocation-instructions summary > b {
+  display: block;
+  margin-bottom: 3px;
+}
+.invocation-result .markdown > :first-child,
+.invocation-instructions .markdown > :first-child {
+  margin-top: 3px;
+}
+.invocation-instructions summary {
+  cursor: pointer;
+  color: var(--text);
+}
+.invocation-instructions summary span {
+  display: block;
+  margin: 3px 0 0 16px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.invocation-waiting {
+  margin: 0;
+}
 .group-chat {
   display: grid;
   gap: 8px;

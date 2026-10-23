@@ -38,6 +38,8 @@ export type Command = {
   cwd: string;
   request?: unknown;
   acp?: AcpRequest;
+  /** Claude Code tools granted by an explicit tool and writable workspace assignment. */
+  allowedTools?: string[];
   /** Per-run authenticated AgentTeam HTTP MCP tools; never persisted or logged. */
   teammateTools?: TeammateTools;
 };

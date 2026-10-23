@@ -81,6 +81,15 @@
   font-size: 11px;
   margin: 6px 0;
 }
+.model-mapping-details > summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+.model-mapping-details > span {
+  display: block;
+  margin: 4px 0;
+}
 .status-pass {
   background: #224539;
   color: #9bdfc1;

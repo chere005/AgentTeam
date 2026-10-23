@@ -721,6 +721,51 @@ summary:focus-visible {
 }
 .task summary > span:nth-child(2) {
   flex: 1;
+  min-width: 0;
+}
+.task-title > b {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-title > small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-result-preview {
+  color: var(--muted);
+  font-size: 11px;
+}
+.task-brief,
+.task-report {
+  margin: 3px 0 8px 18px;
+}
+.task-brief > summary,
+.task-report > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  list-style-position: inside;
+}
+.task-report > summary > small {
+  display: inline;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-brief > p {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.task-report .markdown {
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 .task small {
   display: block;

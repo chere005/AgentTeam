@@ -221,11 +221,12 @@ test("example teams are listed with their shape and insert as teams only: no goa
       assert.deepEqual(r.profile.expectations, {});
       assert.equal(r.profile.intendedLead, undefined);
       assert.match(manager.instructions, /queued\/running is not a result/);
+      assert.match(manager.instructions, /create, compile\/run/);
+      assert.match(manager.instructions, /character-for-character/);
       assert.match(
         manager.instructions,
-        /regenerate them after the last source edit/,
+        /each line has exactly 300 significant digits/,
       );
-      assert.match(manager.instructions, /inconclusive, never approve/);
       const reference = manager.instructions.match(
         /independent reference: ([0-9]+\.[0-9]+)/,
       )?.[1];
@@ -271,7 +272,7 @@ test("example teams are listed with their shape and insert as teams only: no goa
   assert.ok(!/"status":"denied"/.test(text), text);
 });
 
-test("quickstart Pi review fails closed without fresh execution evidence", async (t) => {
+test("quickstart Pi builders run their programs and reviewer checks literal outputs", async (t) => {
   const w = await api(t);
   const examples = (await w.call("GET", "/teams/examples")).body;
   const quickstart = examples.find(
@@ -288,37 +289,26 @@ test("quickstart Pi review fails closed without fresh execution evidence", async
 
   assert.match(
     manager.instructions,
-    /read-only.*commands such as cat, sed, grep, cmp, wc, and sha256sum\/shasum inside that scope/i,
+    /Require each builder to create, compile\/run, and return the exact command and literal stdout/i,
   );
-  assert.match(
-    manager.instructions,
-    /do not ask the reviewer to build or run programs, install dependencies, or modify files/i,
-  );
-  assert.match(manager.instructions, /dedicated safe verification setup/);
-  assert.match(manager.instructions, /stale \.out files do not count/);
+  assert.match(manager.instructions, /reviewer stays read-only/i);
+  assert.match(manager.instructions, /character-for-character/);
   assert.match(
     reviewer.instructions,
-    /read-only commands such as cat, sed, grep, cmp, wc, and sha256sum\/shasum within your resourcePaths/i,
+    /Use read\/search tools or read-only shell commands/i,
   );
   assert.match(
     reviewer.instructions,
-    /Do not build or run programs, install dependencies, or modify files/i,
+    /Never execute source programs or tests, install dependencies, modify files, or use the network/i,
   );
   assert.match(
     reviewer.instructions,
-    /fresh execution evidence is provided for all three current source files/,
+    /each report includes a successful run after its last edit with matching before\/after source hashes/,
   );
+  assert.ok(reviewer.tools.includes("shell"));
   assert.match(
     reviewer.instructions,
-    /exact byte-for-byte comparison against this independent reference:/,
-  );
-  assert.match(
-    reviewer.instructions,
-    /report Pi output verification as inconclusive/,
-  );
-  assert.match(
-    reviewer.instructions,
-    /request a dedicated safe verification setup/,
+    /compare each builder's successful run output character-for-character against this independent reference:/,
   );
   const reference = reviewer.instructions.match(
     /independent reference: ([0-9]+\.[0-9]+)\./,

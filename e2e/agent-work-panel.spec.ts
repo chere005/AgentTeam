@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-test("an agent's Chat pane shows who assigned its work and the exact instructions", async () => {
+test("an agent's Chat pane leads with its result and tucks full instructions behind a disclosure", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentteam-e2e-agent-work-"));
   const app = await electron.launch({
     args: [".", ...(process.platform === "linux" ? ["--no-sandbox"] : [])],
@@ -68,6 +68,10 @@ test("an agent's Chat pane shows who assigned its work and the exact instruction
       await request("POST", `/tasks/${handoff.childTaskId}/status`, {
         status: "running",
       });
+      await request("POST", `/tasks/${handoff.childTaskId}/status`, {
+        status: "completed",
+        result: "Created python/pi.py and verified the 300 digit output.",
+      });
       return { builderId: builder.id, reviewerId: reviewer.id };
     });
     await page
@@ -78,7 +82,14 @@ test("an agent's Chat pane shows who assigned its work and the exact instruction
     await expect(panel).toContainText("Manager → Python Builder");
     await expect(panel).toContainText("Manager’s instructions");
     await expect(panel).toContainText("Create python/pi.py");
-    await expect(panel).toContainText("running");
+    await expect(panel).toContainText("completed");
+    await expect(panel).toContainText(
+      "Created python/pi.py and verified the 300 digit output.",
+    );
+    await expect(panel.getByTestId("manager-instructions")).not.toHaveAttribute(
+      "open",
+      "",
+    );
     await panel.getByRole("button", { name: "Open group chat" }).click();
     const groupChat = page.getByRole("region", { name: "Agent group chat" });
     await expect(groupChat).toBeVisible();
@@ -142,9 +153,7 @@ test("an agent's Chat pane shows who assigned its work and the exact instruction
     const trace = page.getByTestId("project-trace");
     await expect(trace).toBeVisible();
     await expect(trace.getByLabel("Project timeline")).toBeVisible();
-    const eventSummary = trace
-      .getByRole("button", { name: /Quick Look:/ })
-      .first();
+    const eventSummary = trace.locator(".trace-event-info").first();
     await eventSummary.click();
     await expect(
       page.getByRole("dialog", { name: "Quick Look summary" }),
