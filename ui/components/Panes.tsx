@@ -52,11 +52,7 @@ import { ProposalCards } from "./ProposalCard";
 import { InvocationPanel } from "./InvocationPanel";
 import { MessageMarkdown } from "./Markdown";
 import { canLeaveFileEditor } from "../file-editor-guard";
-import {
-  explicitlyReportsIncompleteExecution,
-  explicitlyReportsNoWork,
-  explicitlyReportsUnapprovedReview,
-} from "../../src/task-results";
+import { taskCompletionProblem } from "../../src/task-results";
 import { useWorkspaceWatch } from "./useWorkspaceWatch";
 import { EffectiveAccess, LaunchReview, ExternalNotice } from "./AccessUi";
 import { accessLabel } from "../access-view";
@@ -103,21 +99,20 @@ const taskResultProblem = (task: {
   instructions: string;
   completionCriteria: string;
   result?: string | null;
-}) =>
-  explicitlyReportsNoWork(task.result)
-    ? "didn’t complete"
-    : explicitlyReportsIncompleteExecution(task, task.result)
-      ? "didn’t run"
-      : explicitlyReportsUnapprovedReview(task, task.result)
-        ? "review inconclusive"
-        : null;
+}) => taskCompletionProblem(task);
 const taskViewStatus = (task: {
   status: string;
+  supersededBy?: string;
   title: string;
   instructions: string;
   completionCriteria: string;
   result?: string | null;
-}) => (taskResultProblem(task) ? "failed" : task.status);
+}) =>
+  task.supersededBy
+    ? "superseded"
+    : taskResultProblem(task)
+      ? "failed"
+      : task.status;
 const taskNeedsAttention = (task: {
   status: string;
   title: string;
@@ -132,6 +127,14 @@ const taskIsComplete = (task: {
   completionCriteria: string;
   result?: string | null;
 }) => taskViewStatus(task) === "completed";
+const taskIsResolved = (task: {
+  status: string;
+  supersededBy?: string;
+  title: string;
+  instructions: string;
+  completionCriteria: string;
+  result?: string | null;
+}) => ["completed", "superseded"].includes(taskViewStatus(task));
 const taskDisplayTitle = (title: string) => {
   const normalized = title.replace(/\s+/g, " ").trim();
   if (normalized.length <= 96) return normalized;
@@ -702,6 +705,9 @@ export function Workflows(p: PaneProps) {
     [files, setFiles] = useState(""),
     [target, setTarget] = useState(""),
     [match, setMatch] = useState("");
+  const [supersedeChoices, setSupersedeChoices] = useState<
+    Record<string, string>
+  >({});
   const [assigning, setAssigning] = useState(false);
   // Archived projects are hidden unless asked for (src/project-lifecycle.ts).
   const [showArchived, setShowArchived] = useState(false);
@@ -865,20 +871,22 @@ export function Workflows(p: PaneProps) {
             <div
               className="progress project-progress"
               role="progressbar"
-              aria-label={`${w.name} task progress`}
+              aria-label={`${w.name} resolved task progress`}
               aria-valuemin={0}
               aria-valuemax={w.tasks.length}
-              aria-valuenow={w.tasks.filter(taskIsComplete).length}
+              aria-valuenow={w.tasks.filter(taskIsResolved).length}
             >
               <span
                 style={{
-                  width: `${w.tasks.length ? (100 * w.tasks.filter(taskIsComplete).length) / w.tasks.length : 0}%`,
+                  width: `${w.tasks.length ? (100 * w.tasks.filter(taskIsResolved).length) / w.tasks.length : 0}%`,
                 }}
               />
             </div>
             <small>
-              {w.tasks.filter(taskIsComplete).length} of {w.tasks.length}{" "}
-              complete
+              {w.tasks.filter(taskIsResolved).length} of {w.tasks.length}{" "}
+              resolved · {w.tasks.filter(taskIsComplete).length} complete
+              {w.tasks.some((task) => taskViewStatus(task) === "superseded") &&
+                ` · ${w.tasks.filter((task) => taskViewStatus(task) === "superseded").length} superseded`}
               {w.tasks.some(taskNeedsAttention) &&
                 ` · ${w.tasks.filter(taskNeedsAttention).length} need attention`}
             </small>
@@ -909,6 +917,10 @@ export function Workflows(p: PaneProps) {
                 }{" "}
                 active · {w.tasks.filter(taskNeedsAttention).length} need
                 attention
+                {w.tasks.some(
+                  (task) => taskViewStatus(task) === "superseded",
+                ) &&
+                  ` · ${w.tasks.filter((task) => taskViewStatus(task) === "superseded").length} superseded`}
               </span>
             </summary>
             {w.tasks.map((t) => (
@@ -928,7 +940,9 @@ export function Workflows(p: PaneProps) {
                   </span>
                   <GateBadge task={t} />
                   <span className="badge">
-                    {taskResultProblem(t) ?? t.status}
+                    {taskViewStatus(t) === "superseded"
+                      ? "superseded"
+                      : (taskResultProblem(t) ?? t.status)}
                   </span>
                 </summary>
                 <details className="task-brief">
@@ -954,6 +968,29 @@ export function Workflows(p: PaneProps) {
                     </summary>
                     <MessageMarkdown text={t.result} />
                   </details>
+                )}
+                {t.supersededBy && (
+                  <div className="row project-task-resolution">
+                    <small>
+                      Superseded by:{" "}
+                      {taskDisplayTitle(
+                        w.tasks.find(
+                          (candidate) => candidate.id === t.supersededBy,
+                        )?.title ?? "verified task",
+                      )}
+                    </small>
+                    <button
+                      onClick={() =>
+                        void p.act(() =>
+                          api(`/tasks/${t.id}/supersede`, "POST", {
+                            supersededBy: null,
+                          }),
+                        )
+                      }
+                    >
+                      Undo
+                    </button>
+                  </div>
                 )}
                 {p.openChat && (
                   <ConversationLink
@@ -1010,6 +1047,50 @@ export function Workflows(p: PaneProps) {
                     </button>
                   )}
                 </div>
+                {!t.supersededBy &&
+                  ["failed", "interrupted"].includes(taskViewStatus(t)) &&
+                  w.tasks.some(
+                    (candidate) =>
+                      candidate.id !== t.id && taskIsComplete(candidate),
+                  ) && (
+                    <div className="row project-task-resolution">
+                      <select
+                        aria-label={`Supersede ${taskDisplayTitle(t.title)} with successful task`}
+                        value={supersedeChoices[t.id] ?? ""}
+                        onChange={(event) =>
+                          setSupersedeChoices((choices) => ({
+                            ...choices,
+                            [t.id]: event.target.value,
+                          }))
+                        }
+                      >
+                        <option value="">Resolve with successful task…</option>
+                        {w.tasks
+                          .filter(
+                            (candidate) =>
+                              candidate.id !== t.id &&
+                              taskIsComplete(candidate),
+                          )
+                          .map((candidate) => (
+                            <option key={candidate.id} value={candidate.id}>
+                              {taskDisplayTitle(candidate.title)}
+                            </option>
+                          ))}
+                      </select>
+                      <button
+                        disabled={!supersedeChoices[t.id]}
+                        onClick={() =>
+                          void p.act(() =>
+                            api(`/tasks/${t.id}/supersede`, "POST", {
+                              supersededBy: supersedeChoices[t.id],
+                            }),
+                          )
+                        }
+                      >
+                        Mark superseded
+                      </button>
+                    </div>
+                  )}
               </details>
             ))}
           </details>

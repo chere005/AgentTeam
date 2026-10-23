@@ -842,6 +842,16 @@ export function createApi(
         const task = service.task(input);
         return send(auto ? { ...task, autoWorktree: auto } : task, 201);
       }
+      if (
+        method === "POST" &&
+        (match = path.match(/^\/tasks\/([^/]+)\/supersede$/))
+      ) {
+        const data = z
+          .object({ supersededBy: z.string().min(1).nullable() })
+          .strict()
+          .parse(await body(req));
+        return send(service.supersedeTask(id(match[1]), data.supersededBy));
+      }
       if (method === "GET" && (match = path.match(/^\/tasks\/([^/]+)$/)))
         return send(service.taskState(id(match[1])));
       if (

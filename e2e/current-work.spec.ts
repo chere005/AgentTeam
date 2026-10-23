@@ -38,6 +38,86 @@ const api = (page: Page, method: string, path: string, body?: unknown) =>
   );
 const mod = process.platform === "darwin" ? "Meta" : "Control";
 
+test("Projects can resolve a failed attempt against verified work and undo it", async () => {
+  await withApp(async (page) => {
+    const agent = await api(page, "POST", "/agents", {
+      name: "Progress tester",
+      environment: "codex",
+      roleType: "implementer",
+    });
+    const project = await api(page, "POST", "/workflows", {
+      name: "Supersede demo",
+      goal: "Show accurate recovery progress",
+      ownerId: agent.id,
+      completionCriteria: "A verified task replaces the failed attempt",
+    });
+    const failed = await api(page, "POST", "/tasks", {
+      workflowId: project.id,
+      agentId: agent.id,
+      title: "First attempt",
+      completionCriteria: "Finish successfully",
+    });
+    const verified = await api(page, "POST", "/tasks", {
+      workflowId: project.id,
+      agentId: agent.id,
+      title: "Verified retry",
+      completionCriteria: "Finish successfully",
+    });
+    await api(page, "POST", `/tasks/${failed.id}/status`, {
+      status: "running",
+    });
+    await api(page, "POST", `/tasks/${failed.id}/status`, {
+      status: "failed",
+      result: "The first attempt failed before producing output.",
+    });
+    await api(page, "POST", `/tasks/${verified.id}/status`, {
+      status: "running",
+    });
+    await api(page, "POST", `/tasks/${verified.id}/status`, {
+      status: "completed",
+      result: "Verified output from the successful retry.",
+    });
+    await page.reload();
+    await expect(
+      page.getByText("Workspace connected", { exact: true }),
+    ).toBeVisible();
+    await openFeature(page, "Projects");
+
+    const card = page
+      .locator(".project-card")
+      .filter({ has: page.getByRole("heading", { name: "Supersede demo" }) });
+    await card.getByText("needs attention", { exact: true }).waitFor();
+    await card.locator(".project-tasks > summary").click();
+    await card
+      .locator(".task > summary")
+      .filter({ hasText: "First attempt" })
+      .click();
+    const replacement = card.getByLabel(
+      "Supersede First attempt with successful task",
+    );
+    await replacement.selectOption(verified.id);
+    await card.getByRole("button", { name: "Mark superseded" }).click();
+
+    await expect(card.locator(".project-heading .badge")).toHaveText(
+      "completed",
+    );
+    await expect(card.getByRole("progressbar")).toHaveAttribute(
+      "aria-valuenow",
+      "2",
+    );
+    await expect(card).toContainText(
+      "2 of 2 resolved · 1 complete · 1 superseded",
+    );
+    await expect(card).toContainText(
+      "The first attempt failed before producing output.",
+    );
+    await card.getByRole("button", { name: "Undo" }).click();
+    await expect(card.locator(".project-heading .badge")).toHaveText(
+      "needs attention",
+    );
+  });
+});
+
 test("editor supports Sublime-style multiple selections, duplicate line, undo after save, find/replace and wrapping", async () => {
   await withApp(async (page, directory) => {
     const root = join(directory, "workspace");

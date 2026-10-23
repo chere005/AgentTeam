@@ -1,8 +1,23 @@
-# AgentTeam 0.2.1
+# AgentTeam 0.2.2
+
+Project workspace and workflow reliability release.
+
+## What's new in 0.2.2
+
+- Keep work in the selected project across the four main views: Layout, Chat, Files and Diff. Switch with `Cmd/Ctrl+1–4`; `Cmd/Ctrl+Shift+P` opens the command palette, and quick search can narrow to files or chats.
+- Use the Chat view as a team conversation list: personal chats appear first, followed by agent roots and their agent-to-agent subchats. Add your own comments to group conversations and invite more agents.
+- Open and edit project files in the Files view, including plain folders that are not Git repositories. Review pending edits and suggested changes in Diff without requiring Git.
+- Review project communication and results through the project trace, with a conversation graph, event timeline, task reports and produced files.
+- See task progress based on actual evidence. A failed attempt can be explicitly linked to a successful replacement while keeping its report; undoing the link restores its attention state and dependency gate.
+- See reported token usage and configured execution limits by project. Provider subscription quotas remain unavailable when the provider does not report them.
+
+Installers are unsigned and the macOS app is not notarized. Your OS may ask you to approve the application.
+
+## Earlier release notes: 0.2.1
 
 Reliability and workflow update for macOS, Windows and Linux.
 
-## This release
+## 0.2.1 changes
 
 - Fix unsigned macOS installer generation when signing secrets are unset.
 - Harden repository operations by neutralizing attached-repository clean/smudge filters and repository-local credential helpers.

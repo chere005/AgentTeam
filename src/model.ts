@@ -262,6 +262,8 @@ export type Task = z.infer<typeof taskSchema> & {
     | "blocked";
   result?: string;
   queuedAt?: string;
+  /** A failed attempt explicitly replaced by another verified task in this project. */
+  supersededBy?: string;
   /** Routing rules that matched a delegated task at creation (src/routing-decision.ts). */
   routing?: RoutingDecision;
 };

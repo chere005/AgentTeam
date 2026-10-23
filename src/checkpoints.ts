@@ -862,7 +862,7 @@ export class RecoveryService {
         if (task.requiresValidation && !this.service.validation.gate(task).open)
           next.push("Wait for required validation to pass before executing");
         const blockers = task.dependsOn.filter(
-          (d) => this.store.get<Task>("task", d).status !== "completed",
+          (d) => !this.service.taskDependencySatisfied(d),
         );
         if (blockers.length) next.push("Wait for unfinished dependencies");
       }

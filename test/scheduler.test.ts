@@ -191,6 +191,72 @@ test("a false completed label is surfaced and its task can be retried", async ()
   store.close();
 });
 
+test("a failed project attempt can be superseded by verified work without losing its report", async () => {
+  const store = new Store(":memory:"),
+    service = new TeamService(store, new SkillCatalog([]));
+  const agent = await service.saveAgent({
+    name: "Builder",
+    environment: "codex",
+    roleType: "implementer",
+  });
+  const workflow = service.workflow({
+    name: "Recover project progress",
+    goal: "Run the implementation successfully",
+    ownerId: agent.id,
+    completionCriteria: "A verified attempt succeeds",
+  });
+  const failed = service.task({
+    workflowId: workflow.id,
+    agentId: agent.id,
+    title: "First attempt",
+    completionCriteria: "Run successfully",
+  });
+  const verified = service.task({
+    workflowId: workflow.id,
+    agentId: agent.id,
+    title: "Successful retry",
+    completionCriteria: "Run successfully",
+  });
+  const dependent = service.task({
+    workflowId: workflow.id,
+    agentId: agent.id,
+    title: "Follow-up",
+    completionCriteria: "Continue after successful work",
+    dependsOn: [failed.id],
+  });
+  const originalReport = "The first attempt failed before producing output.";
+  store.put("task", { ...failed, status: "failed", result: originalReport });
+  store.put("task", {
+    ...verified,
+    status: "completed",
+    result: "Process exited with status 0; stdout: verified output",
+  });
+
+  assert.equal(service.workflowStatus(workflow.id).status, "needs-attention");
+  assert.deepEqual(service.taskState(dependent.id).blockers, [failed.id]);
+  assert.throws(
+    () => service.supersedeTask(failed.id, dependent.id),
+    /successfully completed task in the same project/,
+  );
+
+  const resolved = service.supersedeTask(failed.id, verified.id);
+  assert.equal(resolved.result, originalReport);
+  assert.equal(resolved.supersededBy, verified.id);
+  assert.deepEqual(service.taskState(dependent.id).blockers, []);
+  assert.equal(service.taskOutcome(resolved), "superseded");
+  assert.equal(service.workflowStatus(workflow.id).status, "queued");
+  service.transitionTask(dependent.id, { status: "running" });
+  service.transitionTask(dependent.id, { status: "cancelled" });
+
+  service.supersedeTask(failed.id, null);
+  assert.equal(
+    service.taskOutcome(store.get<Task>("task", failed.id)),
+    "failed",
+  );
+  assert.deepEqual(service.taskState(dependent.id).blockers, [failed.id]);
+  store.close();
+});
+
 test("approval reviews remain incomplete when the reviewer reports an inconclusive verdict", async () => {
   const result =
     "Verdict: Inconclusive — I could not inspect the current source files.";

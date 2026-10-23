@@ -738,6 +738,14 @@ summary:focus-visible {
   color: var(--muted);
   font-size: 11px;
 }
+.project-task-resolution {
+  gap: 8px;
+  margin: 4px 0 8px 18px;
+}
+.project-task-resolution select {
+  min-width: 220px;
+  max-width: min(420px, 60%);
+}
 .task-brief,
 .task-report {
   margin: 3px 0 8px 18px;
@@ -783,6 +791,9 @@ summary:focus-visible {
 }
 .task-dot.completed {
   background: #8cddc2;
+}
+.task-dot.superseded {
+  background: #7f91a8;
 }
 .task-dot.failed {
   background: #e68c8c;

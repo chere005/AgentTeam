@@ -73,3 +73,17 @@ export function explicitlyReportsUnapprovedReview(
     value,
   );
 }
+
+/** Short evidence-based reason a task must not count as successfully completed. */
+export function taskCompletionProblem(
+  task: Pick<Task, "title" | "instructions" | "completionCriteria"> & {
+    result?: string | null;
+  },
+) {
+  if (explicitlyReportsNoWork(task.result)) return "didn’t complete";
+  if (explicitlyReportsIncompleteExecution(task, task.result))
+    return "didn’t run";
+  if (explicitlyReportsUnapprovedReview(task, task.result))
+    return "review inconclusive";
+  return null;
+}

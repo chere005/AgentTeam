@@ -26,6 +26,7 @@ import {
   explicitlyReportsIncompleteExecution,
   explicitlyReportsNoWork,
   explicitlyReportsUnapprovedReview,
+  taskCompletionProblem,
 } from "./task-results.ts";
 import { Store } from "./store.ts";
 import { SkillCatalog } from "./skills.ts";
@@ -517,19 +518,16 @@ export class TeamService {
   workflowStatus(id: string) {
     const workflow = this.store.get<Workflow>("workflow", id),
       tasks = this.store.list<Task>("task").filter((t) => t.workflowId === id);
-    const effectiveStatus = (task: Task) =>
-      task.status === "completed" &&
-      (explicitlyReportsNoWork(task.result) ||
-        explicitlyReportsIncompleteExecution(task, task.result) ||
-        explicitlyReportsUnapprovedReview(task, task.result))
-        ? "failed"
-        : task.status;
+    const effectiveStatus = (task: Task) => this.taskOutcome(task);
     return {
       ...workflow,
       tasks,
       status: workflow.paused
         ? "paused"
-        : tasks.length && tasks.every((t) => effectiveStatus(t) === "completed")
+        : tasks.length &&
+            tasks.every((t) =>
+              ["completed", "superseded"].includes(effectiveStatus(t)),
+            )
           ? "completed"
           : tasks.some((t) =>
                 ["failed", "interrupted", "blocked"].includes(
@@ -541,6 +539,72 @@ export class TeamService {
               ? "running"
               : "queued",
     };
+  }
+  private isSuccessfulTask(task: Task) {
+    return task.status === "completed" && !taskCompletionProblem(task);
+  }
+  private isSupersededTask(task: Task) {
+    if (!task.supersededBy) return false;
+    try {
+      const replacement = this.store.get<Task>("task", task.supersededBy);
+      return (
+        replacement.id !== task.id &&
+        replacement.workflowId === task.workflowId &&
+        !replacement.supersededBy &&
+        this.isSuccessfulTask(replacement)
+      );
+    } catch {
+      return false;
+    }
+  }
+  taskOutcome(task: Task): Task["status"] | "superseded" {
+    if (this.isSupersededTask(task)) return "superseded";
+    if (task.status === "completed" && taskCompletionProblem(task))
+      return "failed";
+    return task.status;
+  }
+  /** A dependency is satisfied by a valid completion or its explicitly linked replacement. */
+  taskDependencySatisfied(id: string) {
+    const task = this.store.get<Task>("task", id);
+    return this.isSuccessfulTask(task) || this.isSupersededTask(task);
+  }
+  /** Preserve failed attempt evidence while explicitly resolving it against a verified result. */
+  supersedeTask(id: string, supersededBy: string | null) {
+    return this.store.transaction(() => {
+      const task = this.store.get<Task>("task", id);
+      if (supersededBy === null) {
+        delete task.supersededBy;
+        this.store.put("task", task);
+        this.store.emit("task.superseded", id, { supersededBy: null });
+        return task;
+      }
+      const replaceable =
+        task.status === "failed" ||
+        task.status === "interrupted" ||
+        (task.status === "completed" && !!taskCompletionProblem(task));
+      assert(
+        replaceable,
+        "task_not_supersedable",
+        "Only a failed or explicitly incomplete task can be marked superseded",
+        409,
+      );
+      const replacement = this.store.get<Task>("task", supersededBy);
+      assert(
+        replacement.id !== task.id &&
+          replacement.workflowId === task.workflowId &&
+          !replacement.supersededBy &&
+          this.isSuccessfulTask(replacement),
+        "invalid_superseding_task",
+        "Choose a successfully completed task in the same project",
+        400,
+      );
+      task.supersededBy = replacement.id;
+      this.store.put("task", task);
+      this.store.emit("task.superseded", id, {
+        supersededBy: replacement.id,
+      });
+      return task;
+    });
   }
   pauseWorkflow(id: string, paused: boolean) {
     return this.store.transaction(() => {
@@ -672,7 +736,7 @@ export class TeamService {
     const agent = this.store.get<Agent>("agent", task.agentId),
       wf = this.store.get<Workflow>("workflow", task.workflowId);
     const blockers = task.dependsOn.filter(
-      (d) => this.store.get<Task>("task", d).status !== "completed",
+      (d) => !this.taskDependencySatisfied(d),
     );
     return {
       ...task,
@@ -794,9 +858,7 @@ export class TeamService {
           "Workflow is paused",
         );
         assert(
-          task.dependsOn.every(
-            (d) => this.store.get<Task>("task", d).status === "completed",
-          ),
+          task.dependsOn.every((d) => this.taskDependencySatisfied(d)),
           "dependency_pending",
           "Dependencies must complete first",
         );
@@ -863,6 +925,7 @@ export class TeamService {
         )
           this.limits.recordRetry(task);
         delete task.result;
+        delete task.supersededBy;
         task.queuedAt = new Date().toISOString();
       } else if (data.result) task.result = data.result;
       this.store.put("task", task);
@@ -915,9 +978,8 @@ export class TeamService {
       );
       assert(!workflow.paused, "workflow_paused", "Workflow is paused");
       assert(
-        current.dependsOn.every(
-          (dependency) =>
-            this.store.get<Task>("task", dependency).status === "completed",
+        current.dependsOn.every((dependency) =>
+          this.taskDependencySatisfied(dependency),
         ),
         "dependency_pending",
         "Dependencies must complete first",
