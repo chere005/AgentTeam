@@ -136,6 +136,7 @@ test("pipeline team then project: configure the team, assign a project, verify b
     const wf = page.locator(".workflow").first();
     await expect(wf).toContainText("Add a greeting feature");
     await expect(wf.locator(".badge").first()).toHaveText("paused");
+    await wf.locator("details.project-more > summary").click();
     const pipeline = wf.getByLabel("Pipeline", { exact: true });
     await expect(pipeline).toContainText("not verified");
     await expect(
@@ -171,6 +172,11 @@ test("pipeline team then project: configure the team, assign a project, verify b
     await expect(page.getByTestId("active-team-name")).toHaveText(/ 2$/);
     await assign("Add a farewell feature");
     await expect(page.locator(".workflow")).toHaveCount(1);
+    await page
+      .locator(".workflow")
+      .first()
+      .locator("details.project-more > summary")
+      .click();
     const pipeline2 = page
       .locator(".workflow")
       .first()

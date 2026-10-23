@@ -150,10 +150,22 @@ test("the More menu lists every feature by group with a description, and the pal
     const palette = page.getByRole("dialog", { name: "Command palette" });
     const list = palette.getByRole("listbox", { name: "All views" });
     for (const g of FEATURE_GROUPS) await expect(list).toContainText(g);
-    for (const f of FEATURES.filter((x) => x.group)) {
+    for (const f of FEATURES.filter(
+      (x) => x.group && x.id !== "files" && x.id !== "review",
+    )) {
       const option = list.getByRole("option", { name: f.name, exact: true });
       await expect(option).toContainText(f.description);
     }
+    await expect(
+      list.getByRole("option", { name: "Diff", exact: true }),
+    ).toContainText(
+      "Compare and review changes in the current project workspace.",
+    );
+    await expect(
+      list.getByRole("option", { name: "Files", exact: true }),
+    ).toContainText(
+      "Browse, preview and edit files in the current project workspace.",
+    );
     await page.keyboard.press("Escape");
     await expect(palette).toHaveCount(0);
     await expect(page.getByRole("button", { name: "More" })).toBeFocused();

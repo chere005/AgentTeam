@@ -93,7 +93,7 @@ test("an agent's Chat pane shows who assigned its work and the exact instruction
     await groupChat.getByRole("button", { name: "Invite" }).click();
     await expect(groupChat).toContainText("Code Reviewer");
 
-    await page.getByRole("tab", { name: "Team chat" }).click();
+    await page.locator("#tab-team-chat").click();
     await expect(
       page.getByRole("navigation", { name: "Team conversations" }),
     ).toBeVisible();

@@ -1,6 +1,17 @@
 # AgentTeam continuation handoff
 
-Updated October 21, 2026 (CI/test stabilization on top of the October 18 state below). Read with `AGENTS.md` (rules), `CLAUDE.md` (commands and architecture map) and `TODO.md` (remaining work). This file is the current state, not a history; completed history lives in `RELEASE_NOTES.md` and `docs/durable-execution.md`.
+## Current isolated stability follow-up (October 22, 2026)
+
+This update is being prepared in `/Users/s/GIT/AgentTeam-stabilize` on branch `codex/stability-fixes-2026-10-22`, from `47cf847` (`codex/project-scoped-main-views`). The other machine's `/Users/s/GIT/AgentTeam` checkout is untouched. Keep this follow-up separate; review or cherry-pick it there when ready.
+
+- Task-scoped dispatch now derives provider roots from the task's declared resource folders, starts in the first exact folder, passes additional roots where the direct Claude/Codex CLI supports them, and rejects detached, denied, per-file-restricted, mixed read/write, and ACP assignments that cannot be represented safely. New output folders are created immediately before dispatch; change snapshots and indexed knowledge respect declared roots.
+- Quickstart's manager now gives the reviewer an independent 300-significant-digit Pi reference, requires fresh runs of all three current sources, and requires stale `.out` files to be regenerated after source edits. A failed or unavailable comparison is inconclusive, never an approval.
+- Independently compiled and ran the C++ program and ran the Python and TypeScript programs from `/private/tmp/agentteam-pi-live-final/workspace/agentteam-demo/pi-300/`. All three outputs exactly match each other and a separately generated `mpmath` reference at 300 significant digits. This verifies those source files; it is not a new live AgentTeam/provider workflow run. Previously saved `.out` files in that workspace may be stale.
+- Provider CLIs are not a hostile-code sandbox. In particular, task-level folder declarations do not enforce AgentTeam's per-file rules, so those tasks fail closed. Codex's supported sandbox controls writes; do not promise read isolation beyond the provider's documented behavior.
+
+Validation on macOS, Node 26: `npm test` passed (447 tests: 446 passed, 1 opt-in Wolfram smoke test skipped); `npm run typecheck` passed; `npm run build` passed (Vite's existing large-renderer-chunk warning); `npm run test:ui` passed 60/60; `node scripts/audit-release.mjs` passed. Prettier passes for every changed source and test file. The repository-wide Prettier check still reports the two unchanged files `test/group-chat.test.ts` and `test/orchestration.test.ts`. `git diff --check` passed. The UI suite uses fixture providers; there was no new live provider orchestration run.
+
+The October 21 notes below are historical context. Read this handoff with `AGENTS.md` (rules), `CLAUDE.md` (commands and architecture map) and `TODO.md` (remaining work); completed history lives in `RELEASE_NOTES.md` and `docs/durable-execution.md`.
 
 ## Windows CI fixes in progress (October 21, 2026)
 
@@ -196,7 +207,7 @@ The permanent viewer tabs are Layout, Chat, Files and Diff, in that order. `⌘1
 
 Validation: `npm run typecheck` and `npm run build` passed (Vite reports the existing large renderer chunk warning). `npm test`: 446 tests, 445 passed, 0 failed, 1 opt-in Wolfram smoke test skipped. Focused Playwright workflows (`navigation`, `workspace-ux`, `review`, `workflow-graph`): 17/17 passed, including editing a README, project retention across all four shortcuts, team feature-tab persistence, and side-by-side review. The desktop app was relaunched from this build on branch `codex/project-scoped-main-views`. No live provider was run for this change.
 
-## Handoff checkpoint (2026-10-22)
+## Previous handoff checkpoint (2026-10-22, before this stability follow-up)
 
 - Current checkout: `/Users/s/GIT/AgentTeam`, branch `codex/project-scoped-main-views`, based on `ca161ef` (`v0.2.1`, same as `origin/main`). The current feature set is committed as `9fb9473` (`Add project-aware workspace and team chat views`). Preserve the commit and branch; do not reset or discard it.
 - Latest local checks after the Files/Diff and shortcut changes: typecheck passed; build passed (known Vite large-chunk warning); `test/workspaces.test.ts` passed 12/12; focused Playwright `e2e/review.spec.ts` + `e2e/workspace-ux.spec.ts` passed 12/12. Folder Diff now keeps the complete pending-file list visible while showing the selected file's patch; `Cmd/Ctrl+P` and command-palette selectors are covered.
@@ -205,7 +216,7 @@ Validation: `npm run typecheck` and `npm run build` passed (Vite reports the exi
 - Main UI additions in this commit: project-scoped Layout/Chat/Files/Diff views and shortcuts; file/chat fuzzy search; scratch/new text-file editing and save-to-computer; folder-baseline Diff without Git; project trace, help, usage/limits, group chat and resource sharing. Inspect the committed changes before editing.
 - Suggested handoff prompt: “Continue on `codex/project-scoped-main-views` in `/Users/s/GIT/AgentTeam`. Read `AGENTS.md`, `CLAUDE.md`, and this handoff. Preserve the existing commits. First finish task-scoped provider filesystem access and tests; then independently verify and repair the three-language Pi workflow. Do not claim success until C++, Python, and TypeScript outputs all match a trusted 300-significant-digit reference and the reviewer catches deliberate mismatches. Run relevant tests and update this handoff with exact results.”
 
-### Branch handoff (2026-10-22)
+### Previous branch handoff (2026-10-22, superseded by this branch)
 
 - Commit `9fb9473` contains the 72-file project-aware views, chat, editor, diff, reporting, collaboration, and test changes. It is on `codex/project-scoped-main-views`; push/fetch this branch to continue on another machine. No live provider was run for this commit.
 - `npm run preflight` ran as GitHub Actions run [39889128011](https://github.com/chere005/AgentTeam/actions/runs/39889128011). The overall workflow conclusion is success because preflight jobs are allowed to fail, but the script correctly reported **FAIL**: macOS and Linux `npm test` failed on the narrowed `cwd` assertion in `project-lifecycle.test.ts` and three recovery tests; Linux also failed `log output is bounded`. Windows had those failures plus knowledge indexing, direct CLI spawn, workspace-path, waiting-explainer, and unusual-filename failures. The preflight branch was removed by the script. This branch is intentionally a handoff/WIP; do not merge it or claim full test-suite success.

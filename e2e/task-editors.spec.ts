@@ -82,10 +82,16 @@ async function fixture(page: Page) {
   });
   return { a, b, wf, first, second, third };
 }
-const taskPanel = (page: Page, title: string) =>
-  page.locator("details.task", { hasText: title }).first();
 async function openTaskSettings(page: Page, title: string) {
-  const task = taskPanel(page, title);
+  const project = page.locator(".workflow").filter({ hasText: title }).first();
+  const taskList = project.locator("details.project-tasks").first();
+  if (
+    !(await taskList.evaluate(
+      (element) => (element as HTMLDetailsElement).open,
+    ))
+  )
+    await project.locator("details.project-tasks > summary").click();
+  const task = project.locator("details.task", { hasText: title }).first();
   await task.locator("summary").first().click();
   const settings = task.getByTestId("task-settings");
   await settings.getByRole("button", { name: "Task settings" }).click();

@@ -35,6 +35,8 @@ type Entry =
       run: () => void;
     };
 
+const MAIN_VIEW_FEATURE_IDS = new Set<FeatureId>(["files", "review"]);
+
 /**
  * Search every main view, feature, agent and action from one palette. With an empty query it lists
  * main views first; typing searches across all entries. Arrow keys move, Enter opens,
@@ -65,35 +67,71 @@ export function CommandMenu({
   const input = useRef<HTMLInputElement>(null),
     list = useRef<HTMLUListElement>(null);
   const searching = query.trim().length > 0;
-  const modKey = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform) ? "⌘" : "Ctrl+";
+  const modKey =
+    typeof navigator !== "undefined" && /Mac/i.test(navigator.platform)
+      ? "⌘"
+      : "Ctrl+";
   const mainViews = useMemo<Extract<Entry, { type: "mainView" }>[]>(
     () => [
-      { type: "mainView", id: "canvas", name: "Layout", description: "Team graph and agent setup", shortcut: `${modKey}1` },
-      { type: "mainView", id: "team-chat", name: "Chat", description: "Agent and group conversations", shortcut: `${modKey}2` },
-      { type: "mainView", id: "files", name: "Files", description: "Browse and edit project files", shortcut: `${modKey}3` },
-      { type: "mainView", id: "review", name: "Diff", description: "Review pending file changes", shortcut: `${modKey}4` },
+      {
+        type: "mainView",
+        id: "canvas",
+        name: "Layout",
+        description: "Team graph and agent setup",
+        shortcut: `${modKey}1`,
+      },
+      {
+        type: "mainView",
+        id: "team-chat",
+        name: "Chat",
+        description: "Agent and group conversations",
+        shortcut: `${modKey}2`,
+      },
+      {
+        type: "mainView",
+        id: "files",
+        name: "Files",
+        description:
+          "Browse, preview and edit files in the current project workspace.",
+        shortcut: `${modKey}3`,
+      },
+      {
+        type: "mainView",
+        id: "review",
+        name: "Diff",
+        description:
+          "Compare and review changes in the current project workspace.",
+        shortcut: `${modKey}4`,
+      },
     ],
     [modKey],
   );
   const entries: Entry[] = useMemo(() => {
     if (!searching)
-      return [...mainViews, ...FEATURE_GROUPS.flatMap((g) =>
-        FEATURES.filter((f) => f.group === g).map((f) => ({
-          type: "feature" as const,
-          id: f.id,
-          name: f.name,
-          description: f.description,
-        })),
-      )];
-    const main: Entry[] = mainViews.filter((v) =>
-      matchScore(query, v.name, `${v.description} ${v.shortcut}`) > 0,
+      return [
+        ...mainViews,
+        ...FEATURE_GROUPS.flatMap((g) =>
+          FEATURES.filter(
+            (f) => f.group === g && !MAIN_VIEW_FEATURE_IDS.has(f.id),
+          ).map((f) => ({
+            type: "feature" as const,
+            id: f.id,
+            name: f.name,
+            description: f.description,
+          })),
+        ),
+      ];
+    const main: Entry[] = mainViews.filter(
+      (v) => matchScore(query, v.name, `${v.description} ${v.shortcut}`) > 0,
     );
-    const features: Entry[] = searchFeatures(query).map((f) => ({
-      type: "feature",
-      id: f.id,
-      name: f.name,
-      description: f.description,
-    }));
+    const features: Entry[] = searchFeatures(query)
+      .filter((f) => !MAIN_VIEW_FEATURE_IDS.has(f.id))
+      .map((f) => ({
+        type: "feature",
+        id: f.id,
+        name: f.name,
+        description: f.description,
+      }));
     const people: Entry[] = agents
       .map((a) => ({ a, s: matchScore(query, a.name, a.detail) }))
       .filter((x) => x.s > 0)
@@ -142,9 +180,10 @@ export function CommandMenu({
       if (e.type === "mainView")
         return !prev || prev.type !== "mainView" ? "Main views" : null;
       const g = FEATURES.find((f) => f.id === e.id)?.group;
-      const pg = prev?.type === "feature"
-        ? FEATURES.find((f) => f.id === prev.id)?.group
-        : null;
+      const pg =
+        prev?.type === "feature"
+          ? FEATURES.find((f) => f.id === prev.id)?.group
+          : null;
       return !prev || g !== pg ? g : null;
     }
     if (prev && prev.type === e.type) return null;
