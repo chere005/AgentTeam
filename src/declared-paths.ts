@@ -1,7 +1,8 @@
 import { realpathSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { decideBoth } from "./access.ts";
 import { AppError, type Agent } from "./model.ts";
+import { relativeWithin } from "./path-utils.ts";
 import { contains } from "./resources.ts";
 
 /** Canonicalize a path that may not exist yet: real path of the nearest existing ancestor + the rest. */
@@ -41,26 +42,30 @@ export function canonicalDeclaredPaths(
         `Declared resource path "${p}" must be absolute`,
       );
     assertPath?.(p);
-    const real = canonicalize(p);
-    assertPath?.(real);
+    const target = canonicalize(p);
     const ws = agent.workspaces
-      .map((w) => ({ ...w, path: canonicalize(w.path) }))
-      .filter((w) => contains(w.path, real))
+      .map((workspace) => {
+        const path = canonicalize(workspace.path);
+        return { workspace, path, relative: relativeWithin(path, target) };
+      })
+      .filter((candidate) => candidate.relative !== null)
       .sort((a, b) => b.path.length - a.path.length)[0];
-    if (!ws)
+    if (!ws || ws.relative === null)
       throw new AppError(
         400,
         "resource_path_outside",
         `Declared resource path "${p}" is outside every folder attached to ${agent.name}`,
       );
-    const rel = relative(ws.path, real).replace(/\\/g, "/");
+    const rel = ws.relative;
+    const real = rel ? join(ws.path, ...rel.split("/")) : ws.path;
+    assertPath?.(real);
     if (rel.split("/").some((s) => s.toLowerCase() === ".git"))
       throw new AppError(
         400,
         "git_internal",
         "Git internals cannot be declared as a resource",
       );
-    const d = decideBoth(ws, rel, rel);
+    const d = decideBoth(ws.workspace, rel, rel);
     if (d.access === "none")
       throw new AppError(
         400,

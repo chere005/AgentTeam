@@ -1,13 +1,14 @@
 import { randomUUID, createHash } from "node:crypto";
-import { constants, realpathSync } from "node:fs";
+import { constants } from "node:fs";
 import { lstat, open, readdir, realpath, stat } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { decide, traversable } from "./access.ts";
 import { AppError, assert, type Agent } from "./model.ts";
 import { Redactor } from "./redact.ts";
 import type { Store } from "./store.ts";
 import { filesystemPolicy } from "./filesystem-policy.ts";
+import { relativeWithin, samePath } from "./path-utils.ts";
 
 /**
  * Knowledge sources: reference material (not instructions, not actions) from folders already attached
@@ -111,44 +112,8 @@ const patchSchema = z
     include: z.boolean().optional(),
   })
   .strict();
-function comparablePath(path: string) {
-  if (process.platform !== "win32") return resolve(path);
-  let existing = resolve(path);
-  const rest: string[] = [];
-  for (;;) {
-    try {
-      return join(realpathSync(existing), ...rest.reverse());
-    } catch {
-      const parent = dirname(existing);
-      if (parent === existing) return resolve(path);
-      rest.push(existing.slice(parent.length).replace(/^[\\/]+/, ""));
-      existing = parent;
-    }
-  }
-}
-const inside = (root: string, path: string) => {
-  const rel = relative(comparablePath(root), comparablePath(path));
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-};
-async function samePath(a: string, b: string) {
-  if (process.platform !== "win32") return resolve(a) === resolve(b);
-  const key = (value: string) =>
-    value
-      .replace(/^\\\\\?\\/, "")
-      .replaceAll("/", "\\")
-      .replace(/\\+$/, "")
-      .toLowerCase();
-  try {
-    const [left, right, original] = await Promise.all([
-      realpath(a),
-      realpath(b),
-      lstat(b),
-    ]);
-    return !original.isSymbolicLink() && key(left) === key(right);
-  } catch {
-    return false;
-  }
-}
+const inside = (root: string, path: string) =>
+  relativeWithin(root, path) !== null;
 /**
  * Whether one of `agent`'s attachments containing `abs` (canonical) grants it under the attachment's
  * file rules and exclusions (src/access.ts). Directories also count when they only lead to an
@@ -157,7 +122,8 @@ async function samePath(a: string, b: string) {
 export function visibleToAgent(agent: Agent, abs: string, dir = false) {
   return agent.workspaces.some((w) => {
     if (!inside(w.path, abs)) return false;
-    const rel = relative(w.path, abs).split(sep).join("/");
+    const rel = relativeWithin(w.path, abs);
+    if (rel === null) return false;
     if (rel.split("/").some((p) => p.toLowerCase() === ".git")) return false;
     return decide(w, rel).access !== "none" || (dir && traversable(w, rel));
   });
@@ -223,7 +189,7 @@ export class KnowledgeBase {
     } catch {
       return { ok: false as const, reason: "Folder no longer exists" };
     }
-    if (!(await samePath(folder, source.folder)))
+    if (!samePath(folder, source.folder))
       return {
         ok: false as const,
         reason: "Folder path changed (symlink or move)",
