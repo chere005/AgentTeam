@@ -29,7 +29,15 @@ import { ensureWorkspaceBaseline } from "./workspace-changes.ts";
 /** Provider file access is available only inside the current unrestricted attachment. */
 function workspaceCapabilities(plan: LaunchPlan) {
   if (!plan.cwd) return { read: false, write: false };
-  const workspace = (plan.workspaces ?? [])
+  const roots =
+    plan.providerRoots ??
+    (plan.workspaces ?? []).map((w) => ({
+      path: w.path,
+      access: w.access,
+      active: w.active,
+      restricted: !!w.rules?.length || !!w.explicitOnly,
+    }));
+  const workspace = roots
     .filter((candidate) => {
       const path = relative(candidate.path, plan.cwd!);
       return (
@@ -38,16 +46,28 @@ function workspaceCapabilities(plan: LaunchPlan) {
       );
     })
     .sort((a, b) => b.path.length - a.path.length)[0];
-  if (!workspace || workspace.rules?.length || workspace.explicitOnly)
+  if (!workspace || roots.some((root) => root.restricted))
     return { read: false, write: false };
   const read = plan.tools.includes("read");
   return {
     read,
     write:
       read &&
-      workspace.access === "write" &&
+      roots.every((root) => root.access === "write") &&
       (plan.tools.includes("edit") || plan.tools.includes("write")),
   };
+}
+
+function providerRoots(plan: LaunchPlan) {
+  return (
+    plan.providerRoots ??
+    (plan.workspaces ?? []).map((w) => ({
+      path: w.path,
+      access: w.access,
+      active: w.active,
+      restricted: !!w.rules?.length || !!w.explicitOnly,
+    }))
+  );
 }
 
 function claudeFileTools(plan: LaunchPlan) {
@@ -69,6 +89,21 @@ export function commandFor(
   fallbackCwd: string,
 ): Command {
   const cwd = plan.cwd ?? fallbackCwd;
+  const roots = providerRoots(plan);
+  assert(
+    !plan.taskScoped ||
+      (plan.connection?.transport !== "acp" &&
+        (plan.environment === "claude" || plan.environment === "codex")),
+    "resource_scope_unsupported",
+    "Task resource folders require a direct Claude or Codex CLI run; this connection cannot enforce them.",
+    409,
+  );
+  assert(
+    !plan.taskScoped || !roots.some((root) => root.restricted),
+    "resource_scope_unsupported",
+    "This provider cannot enforce file-level access rules inside a task folder. Remove the rules or use an unrestricted folder attachment.",
+    409,
+  );
   if (plan.connection?.transport === "acp") {
     const prefix = acpSessionPrefix(
       plan.connection.executable,
@@ -138,6 +173,10 @@ export function commandFor(
       "--append-system-prompt",
       plan.instructions,
     ];
+    const extraRoots = roots
+      .map((root) => root.path)
+      .filter((path) => path !== cwd);
+    if (extraRoots.length) args.push("--add-dir", ...extraRoots);
     if (plan.model !== "default") args.push("--model", plan.model);
     if (plan.effort) args.push("--effort", plan.effort);
     if (sessionId) args.push("--resume", sessionId);
@@ -148,6 +187,14 @@ export function commandFor(
       cwd,
     };
   }
+  const accessLevels = new Set(roots.map((root) => root.access));
+  assert(
+    !plan.taskScoped || accessLevels.size <= 1,
+    "resource_scope_mixed_access",
+    "Codex cannot safely give one task both read-only and writable folders. Split it into separate tasks with matching access.",
+    409,
+  );
+  const writable = workspaceCapabilities(plan).write;
   const args = [
     "exec",
     "--json",
@@ -156,11 +203,14 @@ export function commandFor(
     "--ignore-rules",
     "-c",
     `sandbox_mode=${JSON.stringify(
-      workspaceCapabilities(plan).write ? "workspace-write" : "read-only",
+      writable ? "workspace-write" : "read-only",
     )}`,
     "-c",
     'approval_policy="never"',
   ];
+  if (writable)
+    for (const root of roots)
+      if (root.path !== cwd) args.push("--add-dir", root.path);
   if (plan.model !== "default") args.push("--model", plan.model);
   if (plan.effort)
     args.push("-c", `model_reasoning_effort=${JSON.stringify(plan.effort)}`);

@@ -4,6 +4,7 @@ import { RunManager, commandFor, executeCommand } from "./runtime.ts";
 import { prepareRunContext } from "./run-context.ts";
 import type { Agent, Task } from "./model.ts";
 import { ensureWorkspaceBaseline } from "./workspace-changes.ts";
+import { prepareTaskResourceFolders } from "./project-worktrees.ts";
 export class Scheduler {
   executeProvider: typeof executeCommand;
   service: TeamService;
@@ -95,6 +96,11 @@ export class Scheduler {
         if (this.service.taskState(task.id).waitReason) continue;
         let plan;
         try {
+          await prepareTaskResourceFolders(
+            this.service.store,
+            this.service.store.get<Agent>("agent", task.agentId),
+            task.id,
+          );
           plan = await this.service.launchPlan(task.agentId, task.id);
           if (this.stopped || !this.runs.enabled) break;
           // Leave the task queued until its runtime is resolved; an unavailable runtime fails the task in execute().
@@ -124,7 +130,7 @@ export class Scheduler {
       this.runs.assertRuntimeReady(plan);
       const agent = this.service.store.get<Agent>("agent", task.agentId);
       await Promise.all(
-        plan.workspaces
+        (plan.providerRoots ?? plan.workspaces)
           .filter((workspace) => workspace.access === "write")
           .map((workspace) =>
             ensureWorkspaceBaseline(this.service.store, agent, workspace.path),
@@ -157,7 +163,9 @@ export class Scheduler {
       const run = recovery.startRun(
         task,
         plan.connection?.transport === "acp" ||
-          plan.workspaces.some((w) => w.access === "write"),
+          (plan.providerRoots ?? plan.workspaces).some(
+            (w) => w.access === "write",
+          ),
       );
       effectId = run.effectId;
       const prompt = `${task.title}\n${task.instructions}\nCompletion criteria: ${task.completionCriteria}\nDependency results:\n${inputs}${recovery.continuationNote(task)}`;

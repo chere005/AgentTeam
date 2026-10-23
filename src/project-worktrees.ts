@@ -10,17 +10,56 @@
 // branches from it, change detection snapshots it) but READ-ONLY for that worker while it has a
 // worktree of it: AgentTeam-mediated writes as the worker there (Git panel, staging, commands,
 // path assignments) are refused rather than only detected. The integration step runs on the
-// integrator, which keeps its write access. Provider processes run in the worktree; per-folder OS
-// sandboxing is not implemented, so writes a provider makes elsewhere on its own are still only
-// detected by the parallel change check (every attached checkout is snapshotted) and routed to
-// the planner. The previous write access is recorded on the worktree record (`sourceAccess`) and
-// restored when the worker's last such worktree is removed or archived, or when a path-isolated
-// assignment needs the checkout writable again.
+// integrator, which keeps its write access. Provider commands receive the task's declared roots;
+// direct Claude and Codex launches apply their supported directory-level restrictions. They cannot
+// enforce per-file AgentTeam rules, so scoped tasks using those rules are refused. The previous
+// write access is recorded on the worktree record (`sourceAccess`) and restored when the worker's
+// last such worktree is removed or archived, or when a path-isolated assignment needs the checkout
+// writable again.
 import { assert, type Agent } from "./model.ts";
+import { decideBoth } from "./access.ts";
 import { contains } from "./resources.ts";
 import type { Store } from "./store.ts";
 import type { WorktreeRecord } from "./worktrees.ts";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
+import { mkdir, realpath, stat } from "node:fs/promises";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
+
+function pathKey(path: string) {
+  if (process.platform === "win32") {
+    const unprefixed = path
+      .replace(/^\\\\\?\\UNC\\/i, "\\\\")
+      .replace(/^\\\\\?\\/, "")
+      .replaceAll("/", "\\");
+    const normalized = resolve(unprefixed),
+      withoutTrailingSeparator = normalized.replace(/\\+$/, "");
+    return (
+      /^[a-z]:$/i.test(withoutTrailingSeparator)
+        ? `${withoutTrailingSeparator}\\`
+        : withoutTrailingSeparator
+    ).toLowerCase();
+  }
+  return resolve(path);
+}
+
+function samePath(a: string, b: string) {
+  return pathKey(a) === pathKey(b);
+}
+
+function containsPath(root: string, path: string) {
+  const rel = relative(pathKey(root), pathKey(path));
+  return (
+    rel === "" || (!isAbsolute(rel) && rel !== ".." && !/^\.\.[\\/]/.test(rel))
+  );
+}
+
+export type ProviderWorkspaceRoot = {
+  path: string;
+  access: "read" | "write";
+  active: boolean;
+  /** Native provider tools cannot represent AgentTeam's per-file rules. */
+  restricted: boolean;
+};
 
 /** A worker's own worktree that turned its source checkout read-only for that worker. */
 export type ProjectWorktreeRecord = WorktreeRecord & {
@@ -125,17 +164,15 @@ export function restoreSourceWrite(
 }
 
 /**
- * Primary provider root for a task, or null to use the agent's active folder when no paths are
- * declared. Keep this at the declared directory itself: using its enclosing attachment would give
- * the provider access to sibling resources it does not hold a lease for. At present only the first
- * declared path determines cwd; launch plans still need to propagate or reject additional roots. A
- * declared path outside every attached folder refuses the launch.
+ * Exact provider roots for a task, or null when it declares none. Keep these at the declared
+ * directories themselves: using their enclosing attachments would expose sibling resources the
+ * task does not hold a lease for. A detached or newly restricted path refuses the launch.
  */
-export function taskWorkingFolder(
+export function taskProviderRoots(
   store: Store,
   agent: Agent,
   taskId: string | undefined,
-): string | null {
+): ProviderWorkspaceRoot[] | null {
   if (!taskId) return null;
   const task = store
     .list<{ id: string; resourcePaths?: string[] }>("task")
@@ -160,5 +197,119 @@ export function taskWorkingFolder(
     `Task resource paths must be directories to isolate provider access; "${files[0]}" is a file`,
     400,
   );
-  return declared[0];
+  return declared.map((path) => {
+    const workspace = agent.workspaces
+      .filter((w) => contains(w.path, path))
+      .sort((a, b) => b.path.length - a.path.length)[0];
+    assert(
+      existsSync(workspace.path) &&
+        samePath(realpathSync(workspace.path), workspace.path),
+      "workspace_changed",
+      `Attached folder ${workspace.path} moved or now resolves through a symlink; reattach it`,
+      409,
+    );
+    if (existsSync(path))
+      assert(
+        samePath(realpathSync(path), path),
+        "resource_path_changed",
+        `Task resource folder ${path} now resolves through a symlink or has moved`,
+        409,
+      );
+    const rel = relative(workspace.path, path).replace(/\\/g, "/");
+    const decision = decideBoth(workspace, rel, rel);
+    assert(
+      decision.access !== "none",
+      "resource_path_access_changed",
+      `${agent.name} no longer has access to ${path}: ${decision.reason}`,
+      403,
+    );
+    return {
+      path,
+      access:
+        workspace.access === "write" && decision.access === "write"
+          ? ("write" as const)
+          : ("read" as const),
+      active: false,
+      restricted: !!workspace.explicitOnly || !!workspace.rules?.length,
+    };
+  });
+}
+
+/** Create requested output directories just before dispatch; their paths are already leased. */
+export async function prepareTaskResourceFolders(
+  store: Store,
+  agent: Agent,
+  taskId: string,
+) {
+  const task = store
+    .list<{ id: string; resourcePaths?: string[] }>("task")
+    .find((t) => t.id === taskId);
+  for (const path of task?.resourcePaths ?? []) {
+    const workspace = agent.workspaces
+      .filter((w) => contains(w.path, path))
+      .sort((a, b) => b.path.length - a.path.length)[0];
+    assert(
+      workspace,
+      "resource_path_detached",
+      `${agent.name} no longer has a folder containing ${path}, which this task declares; attach it again or change the task`,
+      409,
+    );
+    try {
+      const info = await stat(path);
+      assert(
+        info.isDirectory(),
+        "resource_path_not_directory",
+        `Task resource paths must be directories; "${path}" is a file`,
+        400,
+      );
+      assert(
+        samePath(await realpath(path), path),
+        "resource_path_changed",
+        `Task resource folder ${path} now resolves through a symlink or has moved`,
+        409,
+      );
+      continue;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    const rel = relative(workspace.path, path).replace(/\\/g, "/");
+    const access = decideBoth(workspace, rel, rel).access;
+    assert(
+      workspace.access === "write" && access === "write",
+      "resource_path_read_only",
+      `Cannot create ${path}; ${agent.name} needs write access to that folder`,
+      403,
+    );
+    const workspaceReal = await realpath(workspace.path);
+    let parent = dirname(path);
+    for (;;) {
+      try {
+        const parentReal = await realpath(parent);
+        assert(
+          containsPath(workspaceReal, parentReal),
+          "resource_path_changed",
+          `The parent of ${path} now resolves outside ${workspace.path}`,
+          409,
+        );
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        const next = dirname(parent);
+        assert(
+          next !== parent && contains(workspace.path, next),
+          "resource_path_changed",
+          `No safe attached parent exists for ${path}`,
+          409,
+        );
+        parent = next;
+      }
+    }
+    await mkdir(path, { recursive: true });
+    assert(
+      samePath(await realpath(path), path),
+      "resource_path_changed",
+      `Task resource folder ${path} resolved through a symlink after creation`,
+      409,
+    );
+  }
 }

@@ -630,6 +630,8 @@ test("knowledge: confined to attached folders, bounded index, citations, stalene
   const ws = await tmp("agentteam-know-"),
     outside = await tmp("agentteam-outside-");
   await mkdir(join(ws, "docs"));
+  await mkdir(join(ws, "docs", "allowed"));
+  await mkdir(join(ws, "docs", "other"));
   await writeFile(
     join(ws, "docs", "guide.md"),
     "# Guide\nThe flux capacitor requires plutonium.\nSecond line.\n",
@@ -637,6 +639,14 @@ test("knowledge: confined to attached folders, bounded index, citations, stalene
   await writeFile(
     join(ws, "docs", "other.txt"),
     "Unrelated notes about lunch.\n",
+  );
+  await writeFile(
+    join(ws, "docs", "allowed", "notes.md"),
+    "taskscope comet ALLOWED-MARKER\n",
+  );
+  await writeFile(
+    join(ws, "docs", "other", "notes.md"),
+    "taskscope comet FORBIDDEN-MARKER\n",
   );
   await writeFile(join(ws, ".env"), "API_KEY=zzz-hidden-marker\n");
   await writeFile(
@@ -672,7 +682,7 @@ test("knowledge: confined to attached folders, bounded index, citations, stalene
     include: true,
   });
   assert.equal(created.status, "ready");
-  assert.equal(created.files, 2, JSON.stringify(created.skipped));
+  assert.equal(created.files, 4, JSON.stringify(created.skipped));
   assert.ok(
     created.skipped.symlink >= 1 &&
       created.skipped["secret-looking name"] >= 1 &&
@@ -687,6 +697,17 @@ test("knowledge: confined to attached folders, bounded index, citations, stalene
     !JSON.stringify(hits).includes("OUTSIDE-MARKER") &&
       !JSON.stringify(hits).includes("hidden-marker"),
   );
+  assert.deepEqual(
+    await knowledge.search(agent.id, "flux capacitor", {
+      allowedPaths: [join(ws, "docs", "other.txt")],
+    }),
+    [],
+    "task context omits matching knowledge outside its declared resources",
+  );
+  const scopedHits = await knowledge.search(agent.id, "unrelated lunch", {
+    allowedPaths: [join(ws, "docs", "other.txt")],
+  });
+  assert.equal(scopedHits[0].file, "other.txt");
   assert.deepEqual(await knowledge.search(other.id, "flux capacitor"), []);
 
   // Cited, untrusted context reaches a run only for sources flagged include.
@@ -701,6 +722,29 @@ test("knowledge: confined to attached folders, bounded index, citations, stalene
   assert.match(plan.instructions, /\[K1\] Docs\/guide\.md:1-4/);
   assert.ok(record!.approxTokens.knowledge > 0);
   assert.equal(record!.knowledge[0].label, "Docs/guide.md:1-4");
+
+  const workflow = service.workflow({
+    name: "Scoped knowledge",
+    goal: "Use only the declared resource folder",
+    ownerId: agent.id,
+    completionCriteria: "done",
+  });
+  const scopedTask = service.task({
+    workflowId: workflow.id,
+    agentId: agent.id,
+    title: "Use task-specific notes",
+    completionCriteria: "done",
+    resourcePaths: [join(ws, "docs", "allowed")],
+  });
+  const scopedPlan = await service.launchPlan(agent.id, scopedTask.id);
+  await prepareRunContext(
+    service,
+    scopedPlan,
+    "taskscope comet",
+    scopedTask.id,
+  );
+  assert.match(scopedPlan.instructions, /ALLOWED-MARKER/);
+  assert.doesNotMatch(scopedPlan.instructions, /FORBIDDEN-MARKER/);
 
   // Staleness, refresh.
   await writeFile(

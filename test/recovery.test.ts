@@ -20,6 +20,19 @@ type Provider = ConstructorParameters<typeof Scheduler>[2];
 const hang: Provider = () => new Promise(() => undefined);
 const flush = () => new Promise((r) => setImmediate(r));
 
+/** A provider that signals when the ledger has started it, then remains in flight. */
+function hangingProvider() {
+  let started!: () => void;
+  const providerStarted = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const provider: Provider = () => {
+    started();
+    return new Promise(() => undefined);
+  };
+  return { provider, providerStarted };
+}
+
 /** Opens (or reopens) the same SQLite file: reopening is the crash/restart simulation. */
 function boot(path: string, provider?: Provider) {
   const store = new Store(path),
@@ -171,13 +184,15 @@ test("provider execution crash: completed stays completed, running becomes resum
 test("uncertain mutating effect blocks the task until the user decides", async () => {
   const ws = await writable("repo"),
     db = join(ws.root, "t.sqlite");
-  let b = boot(db, hang);
+  const pending = hangingProvider();
+  let b = boot(db, pending.provider);
   const w = await world(b, {
     workspaces: [{ path: ws.path, access: "write", active: true }],
   });
   const t = w.task(w.agent.id);
   await b.scheduler.tick();
   assert.equal(statusOf(b, t.id), "running");
+  await pending.providerStarted;
   b.store.close();
   b = boot(db);
   startup(b);
@@ -254,12 +269,14 @@ test("an abort while the run context is prepared never records or starts a provi
 test("user can mark an uncertain run applied (no provider call) or abandon it", async () => {
   const ws = await writable("repo"),
     db = join(ws.root, "t.sqlite");
-  let b = boot(db, hang);
+  const pending = hangingProvider();
+  let b = boot(db, pending.provider);
   const w = await world(b, {
     workspaces: [{ path: ws.path, access: "write", active: true }],
   });
   const t1 = w.task(w.agent.id);
   await b.scheduler.tick();
+  await pending.providerStarted;
   b.store.close();
   b = boot(db);
   startup(b);
@@ -289,8 +306,10 @@ test("user can mark an uncertain run applied (no provider call) or abandon it", 
     title: "second",
     completionCriteria: "D",
   });
-  b.scheduler.executeProvider = hang;
+  const pendingSecond = hangingProvider();
+  b.scheduler.executeProvider = pendingSecond.provider;
   await b.scheduler.tick();
+  await pendingSecond.providerStarted;
   b.store.close();
   b = boot(db);
   startup(b);
@@ -909,19 +928,23 @@ test("interrupted/blocked tasks: resumable at the last attempt, keep the agent n
 test("limit resume skips a limit-stopped task whose aborted mutating run is uncertain", async () => {
   const ws = await writable("repo"),
     db = join(ws.root, "t.sqlite");
-  const b = boot(
-    db,
-    (_c, _e, _emit, signal) =>
-      new Promise((_, reject) =>
-        signal.addEventListener("abort", () => reject(new Error("aborted"))),
-      ),
-  );
+  let providerStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    providerStarted = resolve;
+  });
+  const b = boot(db, (_c, _e, _emit, signal) => {
+    providerStarted();
+    return new Promise((_, reject) =>
+      signal.addEventListener("abort", () => reject(new Error("aborted"))),
+    );
+  });
   const w = await world(b, {
     workspaces: [{ path: ws.path, access: "write", active: true }],
   });
   const t = w.task(w.agent.id);
   b.service.limits.setLimits(w.wf.id, { maxAgentTurns: 5 });
   await b.scheduler.tick();
+  await started;
   assert.equal(statusOf(b, t.id), "running");
   b.service.limits.trip(w.wf.id, "turns", "test trip", 5, 5, {
     abortRunning: true,

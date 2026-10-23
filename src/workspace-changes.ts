@@ -4,6 +4,7 @@ import { relative, resolve, sep } from "node:path";
 import { decideBoth, traversable } from "./access.ts";
 import type { Agent, Workspace } from "./model.ts";
 import type { Store } from "./store.ts";
+import { contains } from "./resources.ts";
 
 const MAX_FILES = 2_000;
 const MAX_FILE_BYTES = 256_000;
@@ -32,7 +33,9 @@ async function snapshot(
   agent: Agent,
   root: string,
 ): Promise<Baseline["files"]> {
-  const ws = agent.workspaces.find((candidate) => candidate.path === root);
+  const ws = agent.workspaces
+    .filter((candidate) => contains(candidate.path, root))
+    .sort((a, b) => b.path.length - a.path.length)[0];
   if (!ws) return {};
   const files: Baseline["files"] = {};
   let count = 0;
@@ -54,6 +57,7 @@ async function snapshot(
         continue;
       const absolute = resolve(directory, entry.name);
       const rel = relative(root, absolute).split(sep).join("/");
+      const workspaceRel = relative(ws.path, absolute).split(sep).join("/");
       let info;
       try {
         info = await lstat(absolute);
@@ -62,12 +66,15 @@ async function snapshot(
       }
       if (info.isSymbolicLink()) continue;
       if (info.isDirectory()) {
-        const decision = decideBoth(ws, rel, rel).access;
-        if (decision !== "none" || traversable(ws, rel))
+        const decision = decideBoth(ws, workspaceRel, workspaceRel).access;
+        if (decision !== "none" || traversable(ws, workspaceRel))
           await walk(absolute, depth + 1);
         continue;
       }
-      if (!info.isFile() || decideBoth(ws, rel, rel).access === "none")
+      if (
+        !info.isFile() ||
+        decideBoth(ws, workspaceRel, workspaceRel).access === "none"
+      )
         continue;
       count++;
       let bytes: Buffer;

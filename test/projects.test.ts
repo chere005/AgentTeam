@@ -188,6 +188,16 @@ test("example teams are listed with their shape and insert as teams only: no goa
       assert.deepEqual(r.profile.expectations, {});
       assert.equal(r.profile.intendedLead, undefined);
       assert.match(manager.instructions, /queued\/running is not a result/);
+      assert.match(
+        manager.instructions,
+        /regenerate them after the last source edit/,
+      );
+      assert.match(manager.instructions, /inconclusive, never approve/);
+      const reference = manager.instructions.match(
+        /independent reference: ([0-9]+\.[0-9]+)/,
+      )?.[1];
+      assert.ok(reference, "the Pi review prompt carries its expected output");
+      assert.equal(reference!.replace(".", "").length, 300);
     }
   }
   assert.equal(w.store.list<Workflow>("workflow").length, 0);

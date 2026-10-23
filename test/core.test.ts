@@ -383,6 +383,70 @@ test("provider file tools are limited to the attached workspace and assigned acc
   );
   assert.ok(readOnly.args.includes('sandbox_mode="read-only"'));
 
+  const secondRoot = await realpath(
+    await mkdtemp(join(tmpdir(), "agentteam-tools-second-")),
+  );
+  t.after(() => rm(secondRoot, { recursive: true, force: true }));
+  const multiRootBuilder = await service.saveAgent({
+    name: "Multi-root builder",
+    environment: "codex",
+    roleType: "implementer",
+    tools: ["read", "edit", "write"],
+    workspaces: [
+      { path: root, access: "write", active: true },
+      { path: secondRoot, access: "write", active: false },
+    ],
+  });
+  const workflow = service.workflow({
+    name: "Scoped task",
+    goal: "Use only declared resource folders",
+    ownerId: multiRootBuilder.id,
+    completionCriteria: "done",
+  });
+  const task = service.task({
+    workflowId: workflow.id,
+    agentId: multiRootBuilder.id,
+    title: "Write to two resources",
+    completionCriteria: "done",
+    resourcePaths: [root, secondRoot],
+  });
+  const scopedPlan = await service.launchPlan(multiRootBuilder.id, task.id);
+  assert.equal(scopedPlan.cwd, root);
+  assert.deepEqual(
+    scopedPlan.providerRoots.map((r) => r.path),
+    [root, secondRoot],
+  );
+  const scopedCommand = commandFor(scopedPlan, null, "Write", process.cwd());
+  assert.deepEqual(
+    scopedCommand.args.flatMap((arg, i, all) =>
+      arg === "--add-dir" ? [all[i + 1]] : [],
+    ),
+    [secondRoot],
+  );
+
+  const mixed = await service.saveAgent({
+    name: "Mixed access builder",
+    environment: "codex",
+    roleType: "implementer",
+    tools: ["read", "edit", "write"],
+    workspaces: [
+      { path: root, access: "write", active: true },
+      { path: secondRoot, access: "read", active: false },
+    ],
+  });
+  const mixedTask = service.task({
+    workflowId: workflow.id,
+    agentId: mixed.id,
+    title: "Mixed permissions",
+    completionCriteria: "done",
+    resourcePaths: [root, secondRoot],
+  });
+  const mixedPlan = await service.launchPlan(mixed.id, mixedTask.id);
+  assert.throws(
+    () => commandFor(mixedPlan, null, "Review", process.cwd()),
+    code("resource_scope_mixed_access"),
+  );
+
   const restricted = await service.saveAgent({
     name: "Rule-restricted builder",
     environment: "claude",

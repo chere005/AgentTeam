@@ -32,6 +32,7 @@ export async function knowledgeContext(
   service: TeamService,
   agentId: string,
   request: string,
+  allowedPaths?: string[],
 ) {
   const hits = await capabilitiesFor(service).knowledge.search(
     agentId,
@@ -39,6 +40,7 @@ export async function knowledgeContext(
     {
       limit: 4,
       onlyIncluded: true,
+      ...(allowedPaths ? { allowedPaths } : {}),
     },
   );
   const used: Citation[] = [];
@@ -64,7 +66,13 @@ export async function knowledgeContext(
  */
 export function prepareRunContext(
   service: TeamService,
-  plan: { agentId: string; instructions: string; skills?: unknown[] },
+  plan: {
+    agentId: string;
+    instructions: string;
+    skills?: unknown[];
+    providerRoots?: { path: string }[];
+    taskScoped?: boolean;
+  },
   request: string,
   subjectId: string,
 ): ReturnType<typeof finish> | Promise<ReturnType<typeof finish>> {
@@ -73,7 +81,14 @@ export function prepareRunContext(
     .some((s) => s.include);
   // Without included knowledge sources this stays synchronous, so run start adds no extra ticks.
   if (!wanted) return finish(service, plan, request, subjectId, null);
-  return knowledgeContext(service, plan.agentId, request)
+  return knowledgeContext(
+    service,
+    plan.agentId,
+    request,
+    plan.taskScoped
+      ? (plan.providerRoots ?? []).map((root) => root.path)
+      : undefined,
+  )
     .catch(() => ({ citations: [] as Citation[], text: "" }))
     .then((k) => finish(service, plan, request, subjectId, k));
 }

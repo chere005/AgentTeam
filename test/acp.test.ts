@@ -131,6 +131,27 @@ test("connection changes never reuse session IDs from another transport", () => 
     connection: { transport: "acp", executable: "adapter", args: [] },
   };
   assert.throws(
+    () =>
+      commandFor(
+        {
+          ...plan,
+          taskScoped: true,
+          providerRoots: [
+            {
+              path: process.cwd(),
+              access: "write",
+              active: false,
+              restricted: false,
+            },
+          ],
+        },
+        null,
+        "task",
+        process.cwd(),
+      ),
+    /Task resource folders require a direct Claude or Codex CLI run/,
+  );
+  assert.throws(
     () => commandFor(plan, "direct-session", "hello", process.cwd()),
     /different adapter/,
   );

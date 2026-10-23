@@ -1,7 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../src/store.ts";
@@ -13,6 +20,7 @@ import { defaults, type DetectedRuntime } from "../src/discovery.ts";
 import { planTaskOrder } from "../src/projects.ts";
 import type { TeamProfile } from "../src/team-profiles.ts";
 import type { Agent, Task, Workflow } from "../src/model.ts";
+import { prepareTaskResourceFolders } from "../src/project-worktrees.ts";
 
 // Project lifecycle (src/project-lifecycle.ts), detach rules, scoped pipeline verification
 // (src/pipeline.ts), free-form task dependencies (src/projects.ts) and worktree isolation of two
@@ -716,7 +724,7 @@ test("launchPlan never runs a task outside its declared folders: a detached decl
     completionCriteria: "done",
     resourcePaths: [join(repo, "a")],
   });
-  assert.equal((await w.service.launchPlan(id, task.id)).cwd, repo);
+  assert.equal((await w.service.launchPlan(id, task.id)).cwd, join(repo, "a"));
   // paths over two folders: the active folder holds one of them
   const spread = w.service.task({
     workflowId: wf.id,
@@ -726,7 +734,24 @@ test("launchPlan never runs a task outside its declared folders: a detached decl
     completionCriteria: "done",
     resourcePaths: [join(repo, "a"), join(repo2, "b")],
   });
-  assert.equal((await w.service.launchPlan(id, spread.id)).cwd, repo2);
+  assert.equal(
+    (await w.service.launchPlan(id, spread.id)).cwd,
+    join(repo, "a"),
+  );
+  // A declared output directory may be new. The scheduler prepares it inside its attached root
+  // before launch, so the provider can start in the exact leased directory.
+  const newFolder = join(repo, "new-output");
+  const fresh = w.service.task({
+    workflowId: wf.id,
+    agentId: id,
+    title: "Create output folder",
+    instructions: "Create output here",
+    completionCriteria: "done",
+    resourcePaths: [newFolder],
+  });
+  await prepareTaskResourceFolders(w.store, w.agent(id), fresh.id);
+  assert.equal((await stat(newFolder)).isDirectory(), true);
+  assert.equal((await w.service.launchPlan(id, fresh.id)).cwd, newFolder);
   // repo detached after the task was created: refused, never run in repo2 (unleased)
   w.store.put("agent", {
     ...w.agent(id),

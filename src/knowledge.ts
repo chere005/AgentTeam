@@ -403,7 +403,11 @@ export class KnowledgeBase {
   async search(
     agentId: string,
     query: string,
-    options: { limit?: number; onlyIncluded?: boolean } = {},
+    options: {
+      limit?: number;
+      onlyIncluded?: boolean;
+      allowedPaths?: string[];
+    } = {},
   ): Promise<Citation[]> {
     const agent = this.agent(agentId);
     const terms = tokenize(query);
@@ -427,6 +431,11 @@ export class KnowledgeBase {
             join(u.source.folder, ...chunk.file.split("/")),
           ),
         )
+        .filter((chunk) => {
+          if (!options.allowedPaths) return true;
+          const path = resolve(u.source.folder, ...chunk.file.split("/"));
+          return options.allowedPaths.some((root) => inside(root, path));
+        })
         .map((chunk) => ({ ...u, chunk })),
     );
     if (!all.length) return [];

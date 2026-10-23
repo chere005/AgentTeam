@@ -19,7 +19,7 @@ import { ParallelWork } from "./parallel.ts";
 import { HandoffNotes } from "./handoffs.ts";
 import { PipelineService } from "./pipeline.ts";
 import { TeamSpaces } from "./team-spaces.ts";
-import { taskWorkingFolder } from "./project-worktrees.ts";
+import { taskProviderRoots } from "./project-worktrees.ts";
 import { withRoleDefaults } from "./roles.ts";
 import { Store } from "./store.ts";
 import { SkillCatalog } from "./skills.ts";
@@ -1137,8 +1137,17 @@ export class TeamService {
     });
     const decisions = decideSkills(entries, undefined);
     const sections = composeSections(agent, entries, decisions, adapter);
+    const scopedRoots = taskProviderRoots(this.store, agent, taskId);
+    const providerRoots =
+      scopedRoots ??
+      agent.workspaces.map((workspace) => ({
+        path: workspace.path,
+        access: workspace.access,
+        active: workspace.active,
+        restricted: !!workspace.explicitOnly || !!workspace.rules?.length,
+      }));
     const cwd =
-      taskWorkingFolder(this.store, agent, taskId) ??
+      scopedRoots?.[0]?.path ??
       agent.workspaces.find((w) => w.active)?.path ??
       null;
     if (cwd) {
@@ -1156,6 +1165,7 @@ export class TeamService {
       model: agent.model,
       effort: agent.effort,
       cwd,
+      taskScoped: scopedRoots !== null,
       instructions: sectionsText(sections),
       skills: loaded.map(({ mode, skill }, i) => ({
         id: skill.id,
@@ -1169,6 +1179,7 @@ export class TeamService {
         reason: decisions[i].reason,
       })),
       workspaces: agent.workspaces,
+      providerRoots,
       tools: agent.tools,
       warnings: [
         ...loaded
