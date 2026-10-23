@@ -2,7 +2,7 @@
 
 ## Start here: macOS test build checkpoint (October 23, 2026)
 
-Current worktree: `/Users/s/GIT/AgentTeam-stabilize`, branch `codex/stability-fixes-2026-10-22` at `ef525f8` (previous checkpoint `b792dce`). The separate `/Users/s/GIT/AgentTeam` checkout was not modified.
+Current worktree: `/Users/s/GIT/AgentTeam-stabilize`, pushed branch `codex/stability-fixes-2026-10-22` (previous checkpoint `b792dce`). The separate `/Users/s/GIT/AgentTeam` checkout was not modified.
 
 This checkpoint adds persisted agent nicknames and bounded raster avatars, fixes Windows directory-link test fixtures, makes the Pi reviewer require fresh execution evidence and fail closed when it is absent, and closes launch/configuration races. It also adds a desktop identity persistence test and fixes two test-only issues found during verification (an invalid PNG fixture and an ambiguous team-pack status selector).
 
