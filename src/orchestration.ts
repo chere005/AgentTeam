@@ -346,7 +346,7 @@ export const invokeArgsSchema = z
       .max(50)
       .default([])
       .describe(
-        "Optional absolute folders/files inside the recipient's attached workspace to reserve for this task. Declare disjoint paths for independent writers; the backend validates access and leases only those paths.",
+        "Optional absolute directory paths inside the recipient's attached workspace to reserve and expose to the provider for this task. These are directory scopes, not target filenames; missing paths are created before launch only when the recipient has write access. Declare disjoint directories for independent writers. If work shares a directory, omit resourcePaths and sequence the tasks.",
       ),
     dependsOn: z.array(z.string()).max(50).default([]),
   })

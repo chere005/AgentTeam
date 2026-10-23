@@ -5,7 +5,7 @@ import {
   type ElectronApplication,
   type Page,
 } from "@playwright/test";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -138,6 +138,112 @@ test("first run shows four main views, a useful empty state and a slim top bar",
         .getByRole("tab"),
     ).toHaveCount(4);
     await page.screenshot({ path: test.info().outputPath("first-run.png") });
+    expect(errors).toEqual([]);
+  });
+});
+
+test("Cmd+Shift+P opens commands and Cmd+P searches files and chats with scope prefixes", async () => {
+  await withApp(async ({ directory, start }) => {
+    const project = join(directory, "project");
+    await mkdir(project);
+    await writeFile(join(project, "alpha-notes.md"), "sample file");
+    const { page, errors } = await start();
+    const agent = await api(page, "POST", "/agents", {
+      name: "Alpha",
+      environment: "codex",
+      workspaces: [{ path: project, access: "read" }],
+    });
+    const session = await api(page, "POST", `/agents/${agent.id}/session`);
+    await api(page, "POST", `/sessions/${session.id}/messages`, {
+      text: "Deploy the alpha service",
+    });
+
+    await page.keyboard.press(
+      process.platform === "darwin" ? "Meta+Shift+p" : "Control+Shift+p",
+    );
+    const palette = page.getByRole("dialog", { name: "Command palette" });
+    await expect(palette).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    await page.keyboard.press(
+      process.platform === "darwin" ? "Meta+p" : "Control+p",
+    );
+    const search = page.getByRole("dialog", { name: "Quick search" });
+    const input = search.getByRole("combobox", {
+      name: "Search files and chats",
+    });
+    const results = search.getByRole("listbox", { name: "Files and chats" });
+    await expect(search).toContainText("Team: Main team");
+
+    await input.fill("alpha");
+    await expect(
+      results.getByRole("option", { name: /alpha-notes\.md/ }),
+    ).toBeVisible();
+    await expect(
+      results.getByRole("option", { name: /Deploy the alpha service/ }),
+    ).toBeVisible();
+
+    await input.fill("files: alpha");
+    await expect(
+      results.getByRole("option", { name: /alpha-notes\.md/ }),
+    ).toBeVisible();
+    await expect(
+      results.getByRole("option", { name: /Deploy the alpha service/ }),
+    ).toHaveCount(0);
+    await input.fill("f: alpha");
+    await expect(
+      results.getByRole("option", { name: /alpha-notes\.md/ }),
+    ).toBeVisible();
+
+    await input.fill("chats: deploy");
+    await expect(
+      results.getByRole("option", { name: /Deploy the alpha service/ }),
+    ).toBeVisible();
+    await expect(
+      results.getByRole("option", { name: /alpha-notes\.md/ }),
+    ).toHaveCount(0);
+    await input.fill("c: deploy");
+    await expect(
+      results.getByRole("option", { name: /Deploy the alpha service/ }),
+    ).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+});
+
+test("Chat shows a live run timer and the one-hour provider budget", async () => {
+  await withApp(async ({ directory, start }) => {
+    const { page, errors } = await start();
+    const agent = await api(page, "POST", "/agents", {
+      name: "Long-running Builder",
+      environment: "codex",
+    });
+    const session = await api(page, "POST", `/agents/${agent.id}/session`);
+
+    // Seed one in-progress session without invoking a provider or changing user data.
+    const db = new DatabaseSync(join(directory, "data", "agentteam.sqlite"));
+    const row = db
+      .prepare("SELECT data FROM entities WHERE kind='session' AND id=?")
+      .get(session.id) as { data: string };
+    const seeded = JSON.parse(row.data);
+    seeded.state = "running";
+    seeded.startedAt = new Date(Date.now() - 65_000).toISOString();
+    seeded.timeoutMs = 3_600_000;
+    db.prepare("UPDATE entities SET data=? WHERE kind='session' AND id=?").run(
+      JSON.stringify(seeded),
+      session.id,
+    );
+    db.close();
+
+    await page.reload();
+    await tab(page, "Chat").click();
+    await page.getByLabel("Agent", { exact: true }).selectOption(agent.id);
+    const progress = page.getByTestId("run-progress");
+    await expect(progress).toBeVisible();
+    await expect(progress).toContainText("Long-running Builder is working");
+    await expect(progress).toContainText("elapsed · up to");
+    const bar = progress.getByRole("progressbar");
+    expect(Number(await bar.getAttribute("aria-valuenow"))).toBeGreaterThan(0);
+    await expect(bar).toHaveAttribute("aria-valuemax", "100");
     expect(errors).toEqual([]);
   });
 });

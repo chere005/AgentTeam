@@ -286,10 +286,24 @@ test("quickstart Pi review fails closed without fresh execution evidence", async
   );
   assert.ok(manager && reviewer, "manager and reviewer are configured");
 
-  assert.match(manager.instructions, /Do not ask the reviewer to run commands/);
+  assert.match(
+    manager.instructions,
+    /read-only.*commands such as cat, sed, grep, cmp, wc, and sha256sum\/shasum inside that scope/i,
+  );
+  assert.match(
+    manager.instructions,
+    /do not ask the reviewer to build or run programs, install dependencies, or modify files/i,
+  );
   assert.match(manager.instructions, /dedicated safe verification setup/);
   assert.match(manager.instructions, /stale \.out files do not count/);
-  assert.match(reviewer.instructions, /Do not run commands\./);
+  assert.match(
+    reviewer.instructions,
+    /read-only commands such as cat, sed, grep, cmp, wc, and sha256sum\/shasum within your resourcePaths/i,
+  );
+  assert.match(
+    reviewer.instructions,
+    /Do not build or run programs, install dependencies, or modify files/i,
+  );
   assert.match(
     reviewer.instructions,
     /fresh execution evidence is provided for all three current source files/,
@@ -470,6 +484,14 @@ test("free-form projects: product team (profile access, task list) and a plain t
   const team = await w.insert("product-feature-team");
   const members = w.service.teamSpaces.members(team.teamId).agents;
   const id = (n: string) => members.find((a) => a.name === n)!.id;
+  assert.match(
+    w.store.get<Agent>("agent", id("Engineering Manager")).instructions,
+    /resourcePaths are directory scopes, never target filenames.*missing path is created before launch.*owner has write access/i,
+  );
+  assert.match(
+    w.store.get<Agent>("agent", id("Engineering Manager")).instructions,
+    /poll teammate_result for that exact child.*review_pending, poll the included reviewTaskId.*check the original child again.*resource-busy.*do not start a same-workspace verifier.*do not create duplicate manual reviews/i,
+  );
   const r = await w.call("POST", `/team-spaces/${team.teamId}/projects`, {
     goal: "Add a dark mode toggle to the settings page",
     workspace: w.repo,
@@ -494,7 +516,14 @@ test("free-form projects: product team (profile access, task list) and a plain t
   assert.equal(access("Code Reviewer"), "read");
   assert.equal(access("Security Reviewer"), "read");
   assert.equal(access("Backend Engineer"), "write");
-  assert.equal(access("Engineering Manager"), "read");
+  // The coordinator holds no project lease while its delegated writers work.
+  assert.equal(access("Engineering Manager"), undefined);
+  assert.ok(
+    !r.body.setup.attachments.some(
+      (attachment: { agentId: string }) =>
+        attachment.agentId === id("Engineering Manager"),
+    ),
+  );
   const resume = await w.call("POST", `/workflows/${r.body.id}/pause`, {
     paused: false,
   });

@@ -13,7 +13,11 @@ import { join } from "node:path";
 import { Store } from "../src/store.ts";
 import { SkillCatalog } from "../src/skills.ts";
 import { TeamService } from "../src/service.ts";
-import { globMatch, matchEvidence } from "../src/orchestration.ts";
+import {
+  globMatch,
+  invokeArgsSchema,
+  matchEvidence,
+} from "../src/orchestration.ts";
 import { ToolSessions, handleToolRpc } from "../src/tool-endpoint.ts";
 import { roleWarnings } from "../src/roles.ts";
 import type { Agent, Task } from "../src/model.ts";
@@ -90,6 +94,13 @@ test("role presets: reviewer/adjudicator default read-only, coordinator delegate
   );
   store.close();
   void service;
+});
+
+test("delegated resource paths are directory scopes, not target files", () => {
+  assert.match(
+    invokeArgsSchema.shape.resourcePaths.description ?? "",
+    /directory paths.*not target filenames.*created before launch.*recipient has write access.*disjoint directories.*sequence the tasks/i,
+  );
 });
 
 test("glob matching and rule evidence", () => {

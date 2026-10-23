@@ -3,7 +3,7 @@
   "schemaVersion": 3,
   "template": {
     "name": "Product feature team",
-    "description": "An Engineering Manager over frontend, backend and QA engineers, a technical writer, a mandatory code reviewer and an advisory security reviewer. Assign it product features as projects; every source change waits for the Code Reviewer's approval, and changes to auth, crypto or secrets code also get a security consultation.",
+    "description": "The Engineering Manager plans and delegates without direct file access. Frontend, backend, QA and documentation work goes to specialists; source changes need Code Reviewer approval, with security consultation for auth, crypto or secrets.",
     "agents": [
       {
         "key": "manager",
@@ -15,7 +15,7 @@
         "effort": null,
         "schedulingPriority": 60,
         "maxConcurrentInvocations": null,
-        "instructions": "Restate the feature as acceptance criteria. Split it into frontend, backend, test and documentation tasks and delegate them through AgentTeam only. A change is not done until the Code Reviewer approved it; never mark a task complete on an engineer's word alone. Report only checks that actually ran. Finish with one JSON object: plan, delegations (task, recipient, reason) and synthesis (what shipped, what is unverified, open risks).",
+        "instructions": "You coordinate and have no direct workspace-folder access; delegated agents hold the file leases. Restate the feature as acceptance criteria. Delegate only the smallest useful tasks through AgentTeam. Use separate existing directories for parallel writers; when tasks touch the same directory, omit resourcePaths and run them one at a time. resourcePaths are directory scopes, never target filenames; a missing path is created before launch only when its owner has write access. After every delegation, poll teammate_result for that exact child. If it returns review_pending, poll the included reviewTaskId until that review is completed or failed, then check the original child again. Queued, running, resource-busy, and review_pending are not completed results. Do not start a same-workspace verifier, reviewer, or follow-up writer while an earlier task or its required review is pending. AgentTeam automatically creates mandatory Code Reviewer tasks for matching source changes: wait for those tasks and use their verdict; do not create duplicate manual reviews. If review requests changes, delegate only those fixes, wait for completion and a fresh required review, then verify the final files. Run QA after implementation/review is complete; do not claim tests passed unless a teammate provides the actual command output. Use task reports and review evidence; never claim you inspected files or ran checks. Report accurately if permission or resource limits block work. Finish with one JSON object: plan, delegations (task, recipient, reason, result), and synthesis (files, actual checks and outcomes, what remains unverified, open risks).",
         "tools": [],
         "skills": [],
         "workspaces": [],
@@ -144,19 +144,97 @@
       }
     ],
     "edges": [
-      { "from": "manager", "to": "frontend", "kind": "delegate", "bidirectional": false, "enabled": true },
-      { "from": "manager", "to": "backend", "kind": "delegate", "bidirectional": false, "enabled": true },
-      { "from": "manager", "to": "qa", "kind": "delegate", "bidirectional": false, "enabled": true },
-      { "from": "manager", "to": "writer", "kind": "delegate", "bidirectional": false, "enabled": true },
-      { "from": "manager", "to": "reviewer", "kind": "delegate", "bidirectional": false, "enabled": true },
-      { "from": "manager", "to": "security", "kind": "consult", "bidirectional": false, "enabled": true },
-      { "from": "frontend", "to": "reviewer", "kind": "review", "bidirectional": false, "enabled": true },
-      { "from": "backend", "to": "reviewer", "kind": "review", "bidirectional": false, "enabled": true },
-      { "from": "qa", "to": "reviewer", "kind": "review", "bidirectional": false, "enabled": true },
-      { "from": "writer", "to": "reviewer", "kind": "review", "bidirectional": false, "enabled": true },
-      { "from": "frontend", "to": "security", "kind": "review", "bidirectional": false, "enabled": true },
-      { "from": "backend", "to": "security", "kind": "review", "bidirectional": false, "enabled": true },
-      { "from": "qa", "to": "security", "kind": "review", "bidirectional": false, "enabled": true }
+      {
+        "from": "manager",
+        "to": "frontend",
+        "kind": "delegate",
+        "bidirectional": false,
+        "enabled": true
+      },
+      {
+        "from": "manager",
+        "to": "backend",
+        "kind": "delegate",
+        "bidirectional": false,
+        "enabled": true
+      },
+      {
+        "from": "manager",
+        "to": "qa",
+        "kind": "delegate",
+        "bidirectional": false,
+        "enabled": true
+      },
+      {
+        "from": "manager",
+        "to": "writer",
+        "kind": "delegate",
+        "bidirectional": false,
+        "enabled": true
+      },
+      {
+        "from": "manager",
+        "to": "reviewer",
+        "kind": "delegate",
+        "bidirectional": false,
+        "enabled": true
+      },
+      {
+        "from": "manager",
+        "to": "security",
+        "kind": "consult",
+        "bidirectional": false,
+        "enabled": true
+      },
+      {
+        "from": "frontend",
+        "to": "reviewer",
+        "kind": "review",
+        "bidirectional": false,
+        "enabled": true
+      },
+      {
+        "from": "backend",
+        "to": "reviewer",
+        "kind": "review",
+        "bidirectional": false,
+        "enabled": true
+      },
+      {
+        "from": "qa",
+        "to": "reviewer",
+        "kind": "review",
+        "bidirectional": false,
+        "enabled": true
+      },
+      {
+        "from": "writer",
+        "to": "reviewer",
+        "kind": "review",
+        "bidirectional": false,
+        "enabled": true
+      },
+      {
+        "from": "frontend",
+        "to": "security",
+        "kind": "review",
+        "bidirectional": false,
+        "enabled": true
+      },
+      {
+        "from": "backend",
+        "to": "security",
+        "kind": "review",
+        "bidirectional": false,
+        "enabled": true
+      },
+      {
+        "from": "qa",
+        "to": "security",
+        "kind": "review",
+        "bidirectional": false,
+        "enabled": true
+      }
     ],
     "rules": [
       {
@@ -171,9 +249,29 @@
           "textIncludes": [],
           "tagsAny": [],
           "changedFilesAny": [
-            "*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.py", "*.go", "*.rs",
-            "*.java", "*.kt", "*.swift", "*.rb", "*.php", "*.cs", "*.c", "*.cc",
-            "*.cpp", "*.h", "*.hpp", "*.sql", "*.vue", "*.svelte"
+            "*.ts",
+            "*.tsx",
+            "*.js",
+            "*.jsx",
+            "*.mjs",
+            "*.cjs",
+            "*.py",
+            "*.go",
+            "*.rs",
+            "*.java",
+            "*.kt",
+            "*.swift",
+            "*.rb",
+            "*.php",
+            "*.cs",
+            "*.c",
+            "*.cc",
+            "*.cpp",
+            "*.h",
+            "*.hpp",
+            "*.sql",
+            "*.vue",
+            "*.svelte"
           ],
           "catchAll": false
         }
@@ -190,8 +288,15 @@
           "textIncludes": [],
           "tagsAny": [],
           "changedFilesAny": [
-            "**/auth/**", "*auth*", "**/crypto/**", "*crypto*", "**/secrets/**",
-            "*secret*", "*session*", "*token*", "*password*"
+            "**/auth/**",
+            "*auth*",
+            "**/crypto/**",
+            "*crypto*",
+            "**/secrets/**",
+            "*secret*",
+            "*session*",
+            "*token*",
+            "*password*"
           ],
           "catchAll": false
         }
@@ -214,7 +319,6 @@
       "workspace": {
         "label": "Product repository",
         "access": {
-          "manager": "read",
           "frontend": "write",
           "backend": "write",
           "qa": "write",

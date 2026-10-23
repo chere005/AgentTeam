@@ -207,6 +207,7 @@ test("detach is offered after a project ends and never touches pre-existing fold
   const p = w.profile(teamId);
   const [frontend, backend] = p.roles.implement;
   const lead = p.leadId;
+  const reviewer = p.roles.review[0];
   // the frontend engineer had the repository before any project (user's own attachment)
   const fe = w.agent(frontend);
   w.store.put("agent", {
@@ -227,8 +228,20 @@ test("detach is offered after a project ends and never touches pre-existing fold
   const c = await w.assign(teamId, {
     goal: "Project C on the same repo",
     workspace: repo,
+    tasks: [
+      {
+        title: "Review Project C",
+        agentId: reviewer,
+        instructions: "Review the project workspace read-only.",
+      },
+    ],
   });
-  assert.deepEqual(w.store.get<any>("workflow", c.id).setup.attachments, []);
+  assert.ok(
+    w.store
+      .get<any>("workflow", c.id)
+      .setup.attachments.every((x: any) => x.agentId !== lead),
+    "the coordinator has no folder lease",
+  );
   // active project: no offer, detaching is refused
   let view = (await w.call("GET", `/projects/${a.id}`)).body;
   assert.equal(view.detach.offer, false);
@@ -249,7 +262,7 @@ test("detach is offered after a project ends and never touches pre-existing fold
   await w.call("POST", `/projects/${c.id}/lifecycle`, { action: "archive" });
   w.store.put("session", {
     id: "s-busy",
-    agentId: lead,
+    agentId: reviewer,
     state: "running",
     createdAt: new Date().toISOString(),
   });
@@ -258,25 +271,29 @@ test("detach is offered after a project ends and never touches pre-existing fold
   assert.ok(!view.detach.candidates.some((x: any) => x.agentId === frontend));
   assert.ok(view.detach.candidates.some((x: any) => x.agentId === backend));
   assert.match(
-    view.detach.kept.find((x: any) => x.agentId === lead).reason,
+    view.detach.kept.find((x: any) => x.agentId === reviewer).reason,
     /is working/,
   );
   r = await w.call("POST", `/projects/${a.id}/detach`, {});
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.ok(!w.folders(backend).includes(repo));
   assert.ok(w.folders(frontend).includes(repo), "pre-existing folder kept");
-  assert.ok(w.folders(lead).includes(repo), "busy agent kept");
+  assert.ok(w.folders(reviewer).includes(repo), "busy agent kept");
+  assert.ok(
+    !w.folders(lead).includes(repo),
+    "coordinator has no workspace lease",
+  );
   w.store.remove("session", "s-busy");
-  // the lead, now idle, still keeps the folder: archived project C's unfinished lead task (no
-  // declared paths, C's workspace is this folder) would run there once C is reopened, and C did
-  // not record the folder as its own, so reopening C would not re-attach it
+  // the reviewer, now idle, still keeps the folder: archived project C's unfinished review task
+  // (no declared paths, C's workspace is this folder) would run there once C is reopened, and C
+  // did not record the folder as its own, so reopening C would not re-attach it
   view = (await w.call("GET", `/projects/${a.id}`)).body;
   assert.equal(view.detach.candidates.length, 0);
   assert.match(
-    view.detach.kept.find((x: any) => x.agentId === lead).reason,
+    view.detach.kept.find((x: any) => x.agentId === reviewer).reason,
     /Needed by unfinished task/,
   );
-  // C's lead task cancelled: the lead's attachment can go
+  // C's review task cancelled: the reviewer's attachment can go
   for (const task of w.store
     .list<Task>("task")
     .filter((x) => x.workflowId === c.id))
@@ -286,7 +303,7 @@ test("detach is offered after a project ends and never touches pre-existing fold
   // declining the offer hides it (the folders stay)
   r = await w.call("POST", `/projects/${a.id}/detach`, { dismiss: true });
   assert.equal(r.body.project.detach.offer, false);
-  assert.ok(w.folders(lead).includes(repo));
+  assert.ok(!w.folders(lead).includes(repo));
   // reopening re-attaches what the project detached (with its recorded access)
   r = await w.call("POST", `/projects/${a.id}/lifecycle`, { action: "reopen" });
   assert.equal(r.status, 200, JSON.stringify(r.body));
