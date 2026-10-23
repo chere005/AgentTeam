@@ -19,11 +19,13 @@ Verified 2026-10-23 with isolated AgentTeam data profiles under
 
 ## App verification
 
-- Full backend suite: **473 total, 472 passed, 0 failed, 1 skipped** (opt-in Wolfram smoke test).
-- Electron UI suite: **67/67 passed**.
+- Full backend suite: **478 total, 477 passed, 0 failed, 1 skipped** (opt-in Wolfram smoke test).
+- Local Electron UI suite: **68/68 passed**.
 - Typecheck, production build, release audit, Prettier, and `git diff --check`: passed.
+- GitHub release `v0.2.2` completed all four installer jobs and published all platform assets. The downloadable Apple Silicon ZIP and DMG matched `SHA256SUMS.txt`; ZIP and DMG integrity checks passed.
+- Required macOS preflight passed. Optional Windows UI checks had 54 passed, 10 failed, and 4 skipped; Linux had 61 passed, 6 failed, and 1 flaky test. Several failures hit Playwright's 45-second per-test timeout. These optional CI results do not establish cross-platform UI reliability.
 - The production build reports Vite's advisory that its largest minified UI chunk is about 1.69 MB (500 KB advisory threshold). The app remains usable; code-splitting is a separate optimization.
 
 ## Limits observed
 
-Codex task sandboxing on this Mac denies access to the host's Node executable and loopback sockets, even though task files are writable. AgentTeam correctly records these as unverified instead of claiming the tests ran. Host-side verification currently supplies the runtime evidence. Windows OS-level sandbox enforcement and fresh Windows/Linux preflight remain unverified.
+Codex task sandboxing on this Mac denies access to the host's Node executable and loopback sockets, even though task files are writable. AgentTeam correctly records these as unverified instead of claiming the tests ran. Host-side verification currently supplies the runtime evidence. Windows OS-level sandbox enforcement remains unfinished. The latest preflight exposed slow/flaky Windows and Linux UI tests; their details are in Actions run [40007628041](https://github.com/chere005/AgentTeam/actions/runs/40007628041).
