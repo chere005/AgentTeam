@@ -9,7 +9,7 @@ import {
 /** Which view the side panel shows: the conversation or the selected agent's setup. */
 export type SideView = "chat" | "agent";
 /**
- * A workspace layout: which feature tabs are open (Canvas is always there), which tab is active,
+ * A workspace layout: which feature tabs are open (Layout is always there), which tab is active,
  * and the side panel. Layouts are saved per team (Settings → Layouts).
  */
 export type PaneLayout = {
@@ -52,7 +52,7 @@ export function sanitizeLayout(
 export const presetLayouts: NamedLayout[] = [
   {
     id: "simple",
-    name: "Canvas & chat",
+    name: "Layout & chat",
     layout: defaultLayout,
   },
   {

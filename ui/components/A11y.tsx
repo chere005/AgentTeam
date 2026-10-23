@@ -109,7 +109,9 @@ export function DialogFocusManager() {
 }
 
 export const shortcuts: { keys: string; action: string }[] = [
-  { keys: "Mod+K", action: "More: open any view, agent or action" },
+  { keys: "Mod+Shift+P", action: "Open the command palette" },
+  { keys: "Mod+P", action: "Fuzzy-search project files and chats" },
+  { keys: "Mod+K", action: "Command palette shortcut alias" },
   { keys: "Mod+\\", action: "Show or hide the side panel (chat, agent setup)" },
   { keys: "Mod+Shift+N", action: "New agent" },
   { keys: "Mod+Shift+T", action: "Switch team" },

@@ -67,8 +67,8 @@ export function setProjectRoot(path: string) {
 export type ProviderProfile = "chat" | "task";
 export type ProviderLimits = { timeoutMs: number; maxOutputBytes: number };
 const providerDefaults = {
-  chat: { timeoutSeconds: 180, maxOutputMb: 4 },
-  task: { timeoutSeconds: 1800, maxOutputMb: 16 },
+  chat: { timeoutSeconds: 3600, maxOutputMb: 8 },
+  task: { timeoutSeconds: 3600, maxOutputMb: 16 },
 } as const;
 function positive(
   value: string | undefined,

@@ -12,6 +12,7 @@ import {
   PanelRightOpen,
   PanelRightClose,
   Pause,
+  CircleHelp,
 } from "lucide-react";
 import {
   api,
@@ -31,6 +32,7 @@ import { TeamLibrary } from "./components/Teams";
 import { TeamCanvas } from "./components/TeamCanvas";
 import { AgentPanel, NewAgentDialog } from "./components/AgentPanel";
 import { CommandMenu, type PaletteAction } from "./components/CommandMenu";
+import { QuickSwitch } from "./components/QuickSwitch";
 import {
   Chat,
   Workflows,
@@ -51,6 +53,12 @@ import { filterSnapshot, itemTeam, teamIndex, teamKey } from "./team-view";
 import { DialogFocusManager, ShortcutHelp } from "./components/A11y";
 import { focusables } from "./components/A11y";
 import { clampWidth, type PaneLayout } from "./workspace";
+import { TeamChatView } from "./components/TeamChatView";
+import { HelpMenu } from "./components/HelpMenu";
+import { ProjectTrace } from "./components/ProjectTrace";
+import { UsageAndLimits } from "./components/UsageAndLimits";
+import { canLeaveFileEditor } from "./file-editor-guard";
+import { isProjectWorkflow } from "./project-kind";
 import {
   CANVAS,
   closeTab,
@@ -64,9 +72,19 @@ import {
 import type { InboxItem } from "./inbox";
 
 type Placement = "replace" | "beside";
+type MainView = "canvas" | "team-chat" | "files" | "review";
 /** Stored open tabs of a team (first run and new teams: Canvas only). */
 const loadTabs = (teamId: string) =>
-  sanitizeTabs(saved(teamKey("tabs", teamId), null));
+  (() => {
+    const state = sanitizeTabs(saved(teamKey("tabs", teamId), null));
+    return {
+      tabs: state.tabs.filter((id) => id !== "files" && id !== "review"),
+      active:
+        state.active === "files" || state.active === "review"
+          ? CANVAS
+          : state.active,
+    };
+  })();
 
 export default function App() {
   const [data, setData] = useState<Snapshot>(empty),
@@ -88,15 +106,60 @@ export default function App() {
       () => saved<boolean>("agentPanel.open", false) === true,
     ),
     [help, setHelp] = useState(false),
+    [featureHelp, setFeatureHelp] = useState(false),
+    [mainView, setMainView] = useState<MainView>(() => {
+      const value = saved<MainView>("main.view", "canvas");
+      return ["canvas", "team-chat", "files", "review"].includes(value)
+        ? value
+        : "canvas";
+    }),
     [palette, setPalette] = useState(false),
+    [quickSwitch, setQuickSwitch] = useState(false),
+    [quickFileTarget, setQuickFileTarget] = useState<{
+      agentId: string;
+      workspace: string;
+      path: string;
+    } | null>(null),
+    [quickGroupChatTarget, setQuickGroupChatTarget] = useState<string | null>(
+      null,
+    ),
     [creating, setCreating] = useState(false);
+  const mainViewRef = useRef(mainView);
+  mainViewRef.current = mainView;
   const [selected, setSelected] = useState(() => saved("selected", ""));
+  const [projectsByTeam, setProjectsByTeam] = useState<Record<string, string>>(
+    () => saved("current.projects", {}),
+  );
   // Actions that close the agent panel or replace its agent ask first when it has unsaved edits.
   const { guard, dialog: unsavedDialog } = useUnsavedGuard();
   // One team at a time: every view gets the active team's slice of the (unfiltered) snapshot.
   const view = useMemo(() => filterSnapshot(data, data.activeTeamId), [data]);
   const teamId = view.activeTeamId,
     team = view.teamView.team;
+  const currentProjectId = projectsByTeam[teamId] ?? "";
+  const projectWorkflows = useMemo(
+    () => view.workflows.filter(isProjectWorkflow),
+    [view.workflows],
+  );
+  const currentProject =
+    projectWorkflows.find((workflow) => workflow.id === currentProjectId) ??
+    null;
+  const setCurrentProject = (id: string) => {
+    if (id !== currentProjectId && !canLeaveFileEditor()) return;
+    setProjectsByTeam((previous) => {
+      const next = { ...previous, [teamId]: id };
+      persist("current.projects", next);
+      return next;
+    });
+  };
+  useEffect(() => {
+    if (
+      ready &&
+      currentProjectId &&
+      !projectWorkflows.some((workflow) => workflow.id === currentProjectId)
+    )
+      setCurrentProject("");
+  }, [ready, teamId, currentProjectId, projectWorkflows]);
   // Open feature tabs, remembered per team; loaded when the active team changes.
   const [tabs, setTabsState] = useState<TabState>(() => loadTabs(teamId));
   const tabsTeam = useRef(teamId);
@@ -204,7 +267,8 @@ export default function App() {
     persist("side.width", width);
     persist("agentPanel.placement", placement);
     persist("agentPanel.open", panelOpen);
-  }, [showRight, width, selected, placement, panelOpen]);
+    persist("main.view", mainView);
+  }, [showRight, width, selected, placement, panelOpen, mainView]);
 
   // A different team: its agents differ, so the agent panel closes (the chat stays).
   const panelTeam = useRef(teamId);
@@ -213,7 +277,43 @@ export default function App() {
     panelTeam.current = teamId;
     setPanelOpen(false);
   }, [teamId]);
-  const openFeature = (id: TabId) => setTabs((t) => openTab(t, id));
+  const openFeature = (id: TabId) => {
+    if (id === "files" || id === "review") {
+      if (mainView !== id && !canLeaveFileEditor()) return;
+      setMainView(id);
+      return;
+    }
+    if (mainView !== "canvas" && !canLeaveFileEditor()) return;
+    setMainView("canvas");
+    setTabs((t) => openTab(t, id));
+  };
+  const openMainView = (id: MainView) => {
+    if (mainView !== id && !canLeaveFileEditor()) return;
+    setMainView(id);
+    if (id === "canvas") setTabs((t) => openTab(t, CANVAS));
+  };
+  const openQuickFile = (file: {
+    agentId: string;
+    workspace: string;
+    path: string;
+  }) => {
+    if (!canLeaveFileEditor()) return;
+    setQuickFileTarget(file);
+    setSelected(file.agentId);
+    openMainView("files");
+  };
+  const openQuickAgentChat = (agentId: string) => {
+    if (!canLeaveFileEditor()) return;
+    setQuickGroupChatTarget(null);
+    setSelected(agentId);
+    openMainView("team-chat");
+  };
+  const openQuickGroupChat = (chatId: string, agentId: string) => {
+    if (!canLeaveFileEditor()) return;
+    setSelected(agentId);
+    setQuickGroupChatTarget(chatId);
+    openMainView("team-chat");
+  };
   // Saved layouts never include Settings itself (layouts are applied from there).
   const current: PaneLayout = {
     tabs: tabs.tabs.filter((t) => t !== "settings"),
@@ -222,12 +322,24 @@ export default function App() {
     rightWidth: width,
   };
   const applyLayout = (l: PaneLayout) => {
+    const nextMainView: MainView =
+      l.active === "files"
+        ? "files"
+        : l.active === "review"
+          ? "review"
+          : "canvas";
+    setMainView(nextMainView);
     // Applied from Settings: keep that tab open (last) so the layout list stays reachable.
     setTabs((t) => ({
       tabs: t.tabs.includes("settings")
-        ? [...l.tabs.filter((x) => x !== "settings"), "settings"]
-        : l.tabs,
-      active: l.active,
+        ? [
+            ...l.tabs.filter(
+              (x) => x !== "settings" && x !== "files" && x !== "review",
+            ),
+            "settings",
+          ]
+        : l.tabs.filter((x) => x !== "files" && x !== "review"),
+      active: l.active === "files" || l.active === "review" ? CANVAS : l.active,
     }));
     setShowRight(l.showRight);
     setWidth(l.rightWidth);
@@ -239,7 +351,7 @@ export default function App() {
       setShowRight(true);
       if (placement === "replace") setPanelOpen(false);
     });
-  /** Selecting an agent (canvas, palette, "Set up"): opens its setup panel. */
+  /** Explicit setup actions open an agent's setup panel. */
   const openAgentPanel = (id: string) => {
     const open = () => {
       setSelected(id);
@@ -248,6 +360,11 @@ export default function App() {
     };
     if (id === selected) open();
     else guard(open);
+  };
+  /** Canvas selection follows the side pane: chat stays chat unless setup is already open. */
+  const selectCanvasAgent = (id: string) => {
+    if (placement === "replace" && panelOpen && agent) openAgentPanel(id);
+    else openConversation(id);
   };
   /** Team management from the switcher: errors go to the toast and keep the form open. */
   const teamAction = async (fn: () => Promise<unknown>) => {
@@ -262,6 +379,7 @@ export default function App() {
   /** Make `id` the active team (persisted by the backend); never pauses or cancels any work. */
   const switchTeam = (id: string, why?: string) => {
     if (id === teamId) return;
+    if (!canLeaveFileEditor()) return;
     guard(() => doSwitchTeam(id, why));
   };
   const doSwitchTeam = (id: string, why?: string) => {
@@ -342,12 +460,41 @@ export default function App() {
         guard(() => setShowRight((v) => !v));
       } else if (
         mod &&
+        e.shiftKey &&
+        !e.altKey &&
+        e.key.toLowerCase() === "p"
+      ) {
+        e.preventDefault();
+        setPalette(true);
+      } else if (
+        mod &&
+        !e.shiftKey &&
+        !e.altKey &&
+        e.key.toLowerCase() === "p"
+      ) {
+        e.preventDefault();
+        setQuickSwitch(true);
+      } else if (
+        mod &&
         !e.shiftKey &&
         !e.altKey &&
         e.key.toLowerCase() === "k"
       ) {
         e.preventDefault();
         setPalette(true);
+      } else if (mod && !e.shiftKey && !e.altKey && /^[1-4]$/.test(e.key)) {
+        e.preventDefault();
+        const mainViews: MainView[] = [
+          "canvas",
+          "team-chat",
+          "files",
+          "review",
+        ];
+        const next = mainViews[Number(e.key) - 1];
+        if (mainViewRef.current !== next && !canLeaveFileEditor()) return;
+        setMainView(next);
+        mainViewRef.current = next;
+        if (next === "canvas") setTabs((tabs) => openTab(tabs, CANVAS));
       } else if (mod && e.shiftKey && e.key.toLowerCase() === "n") {
         e.preventDefault();
         setCreating(true);
@@ -384,6 +531,8 @@ export default function App() {
   const props = {
     data: view,
     selected,
+    currentProjectId,
+    setCurrentProject,
     setSelected: (id: string) =>
       id === selected ? undefined : guard(() => setSelected(id)),
     act,
@@ -399,7 +548,7 @@ export default function App() {
           <TeamCanvas
             key={teamId}
             {...props}
-            setSelected={openAgentPanel}
+            setSelected={selectCanvasAgent}
             add={() => setCreating(true)}
             openTeams={() => openFeature("library")}
             openBlockers={(agentId) => {
@@ -418,7 +567,9 @@ export default function App() {
       case "git":
       case "review":
       case "preview":
-        return <Workspace {...props} view={id} />;
+        return (
+          <Workspace {...props} view={id} currentProject={currentProject} />
+        );
       case "settings":
         return (
           <Preferences
@@ -498,10 +649,25 @@ export default function App() {
             goCanvas={() => openFeature(CANVAS)}
           />
         );
-      case "limits":
+      case "trace":
+        return (
+          <ProjectTrace
+            data={view}
+            events={events}
+            openChat={openConversation}
+          />
+        );
       case "recovery":
       case "shared":
         return <ProjectPanels {...props} kind={id} />;
+      case "usage":
+        return (
+          <UsageAndLimits
+            data={view}
+            events={events}
+            openFeature={openFeature}
+          />
+        );
       case "activity":
         return <ActivityLog events={events} data={view} />;
     }
@@ -530,10 +696,10 @@ export default function App() {
     },
     {
       id: "canvas",
-      name: "Canvas",
-      description: "Back to the team graph.",
+      name: "Layout",
+      description: "Back to the team layout and graph.",
       keywords: "team graph home",
-      run: () => openFeature(CANVAS),
+      run: () => openMainView("canvas"),
     },
     {
       id: "chat",
@@ -545,6 +711,34 @@ export default function App() {
           setShowRight(true);
           if (placement === "replace") setPanelOpen(false);
         }),
+    },
+    {
+      id: "team-chat",
+      name: "Chat",
+      description: "Open the conversation-first team workspace.",
+      keywords: "group agent handoff messages",
+      run: () => openMainView("team-chat"),
+    },
+    {
+      id: "main-files",
+      name: "Open Files view",
+      description: "Browse and edit files in the current project workspace.",
+      keywords: "workspace edit editor project",
+      run: () => openMainView("files"),
+    },
+    {
+      id: "main-diff",
+      name: "Open Diff view",
+      description: "Review code changes in the current project.",
+      keywords: "review changes git code compare",
+      run: () => openMainView("review"),
+    },
+    {
+      id: "help",
+      name: "Help and feature guide",
+      description: "See what each view does and how to try it.",
+      keywords: "guide features help how test",
+      run: () => setFeatureHelp(true),
     },
     {
       id: "toggle-side",
@@ -651,6 +845,29 @@ export default function App() {
             }
           />
         )}
+        {ready && (
+          <label className="topbar-project">
+            <span>Current project</span>
+            <select
+              aria-label="Current project"
+              data-testid="current-project-picker"
+              value={currentProjectId}
+              disabled={projectWorkflows.length === 0}
+              onChange={(event) => setCurrentProject(event.target.value)}
+              title={
+                currentProject?.name ??
+                "No current project; choose one to keep the views in project context"
+              }
+            >
+              <option value="">No current project</option>
+              {projectWorkflows.map((workflow) => (
+                <option key={workflow.id} value={workflow.id}>
+                  {workflow.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {ready && members.length > 0 && (
           <button
             className="topbar-assign"
@@ -691,16 +908,25 @@ export default function App() {
           </button>
         )}
         <button
+          className="topbar-help"
+          aria-label="Help and feature guide"
+          title="Help: what each feature does and how to try it"
+          onClick={() => setFeatureHelp(true)}
+        >
+          <CircleHelp size={15} />
+          Help
+        </button>
+        <button
           className="topbar-more"
           aria-label="More"
           aria-haspopup="dialog"
-          aria-keyshortcuts="Control+K Meta+K"
-          title="All views and actions (Ctrl/Cmd+K)"
+          aria-keyshortcuts="Control+Shift+P Meta+Shift+P Control+K Meta+K"
+          title="Command palette (Ctrl/Cmd+Shift+P)"
           onClick={() => setPalette(true)}
         >
           <Search size={15} />
           More
-          <kbd>{/Mac/i.test(navigator.platform) ? "⌘K" : "Ctrl K"}</kbd>
+          <kbd>{/Mac/i.test(navigator.platform) ? "⌘⇧P" : "Ctrl+Shift+P"}</kbd>
         </button>
         <button
           className="icon"
@@ -715,7 +941,9 @@ export default function App() {
         </span>
       </header>
       {notice && <TeamNotice text={notice} dismiss={() => setNotice("")} />}
-      <div className="body">
+      <div
+        className={`body${mainView === "team-chat" ? " team-chat-mode" : ""}`}
+      >
         <main
           className="main-pane"
           id="main-pane"
@@ -723,46 +951,120 @@ export default function App() {
           aria-label="Main content"
           data-testid={ready ? "workspace-ready" : undefined}
         >
-          {tabs.tabs.length > 0 && (
-            <div className="view-tabs" role="tablist" aria-label="Open views">
-              {[CANVAS as TabId, ...tabs.tabs].map((id) => (
+          <div
+            className="view-tabs"
+            role="tablist"
+            aria-label="Main views and open features"
+          >
+            {(
+              [
+                ["canvas", "Layout", "⌘1"],
+                ["team-chat", "Chat", "⌘2"],
+                ["files", "Files", "⌘3"],
+                ["review", "Diff", "⌘4"],
+              ] as const
+            ).map(([id, label, shortcut]) => {
+              const active =
+                mainView === id && (id !== "canvas" || tabs.active === CANVAS);
+              const key = /Mac/i.test(navigator.platform)
+                ? shortcut
+                : shortcut.replace("⌘", "Ctrl+");
+              return (
+                <div key={id} className={`view-tab${active ? " active" : ""}`}>
+                  <button
+                    id={`tab-${id}`}
+                    role="tab"
+                    aria-selected={active}
+                    aria-controls="view-panel"
+                    aria-label={label}
+                    aria-keyshortcuts={`${/Mac/i.test(navigator.platform) ? "Meta" : "Control"}+${shortcut.slice(-1)}`}
+                    title={`${label} (${key})`}
+                    onClick={() => openMainView(id)}
+                  >
+                    {label}
+                    <kbd aria-hidden="true" className="view-shortcut">
+                      {key}
+                    </kbd>
+                  </button>
+                </div>
+              );
+            })}
+            {tabs.tabs
+              .filter((id) => id !== "files" && id !== "review")
+              .map((id) => (
                 <div
                   key={id}
-                  className={"view-tab" + (tabs.active === id ? " active" : "")}
+                  className={
+                    "view-tab" +
+                    (mainView === "canvas" && tabs.active === id
+                      ? " active"
+                      : "")
+                  }
                 >
                   <button
                     role="tab"
                     id={"tab-" + id}
-                    aria-selected={tabs.active === id}
+                    aria-selected={mainView === "canvas" && tabs.active === id}
                     aria-controls="view-panel"
                     onClick={() => openFeature(id)}
                   >
                     {tabName(id)}
                   </button>
-                  {id !== CANVAS && (
-                    <button
-                      className="icon view-tab-close"
-                      aria-label={`Close ${tabName(id)}`}
-                      title="Close tab"
-                      onClick={() => setTabs((t) => closeTab(t, id))}
-                    >
-                      <X size={13} />
-                    </button>
-                  )}
+                  <button
+                    className="icon view-tab-close"
+                    aria-label={`Close ${tabName(id)}`}
+                    title="Close tab"
+                    onClick={() => setTabs((t) => closeTab(t, id))}
+                  >
+                    <X size={13} />
+                  </button>
                 </div>
               ))}
-            </div>
-          )}
+          </div>
           <div
             className="view-panel"
             id="view-panel"
-            role={tabs.tabs.length ? "tabpanel" : undefined}
+            role="tabpanel"
             aria-labelledby={
-              tabs.tabs.length ? "tab-" + tabs.active : undefined
+              mainView === "team-chat"
+                ? "tab-team-chat"
+                : mainView === "files"
+                  ? "tab-files"
+                  : mainView === "review"
+                    ? "tab-review"
+                    : tabs.active === CANVAS
+                      ? "tab-canvas"
+                      : "tab-" + tabs.active
             }
           >
             {ready ? (
-              featureView(tabs.active)
+              mainView === "team-chat" ? (
+                <TeamChatView
+                  data={view}
+                  events={events}
+                  selected={selected}
+                  setSelected={(id) => guard(() => setSelected(id))}
+                  requestedGroupChatId={quickGroupChatTarget}
+                  onGroupChatTargetHandled={() => setQuickGroupChatTarget(null)}
+                  paneProps={props}
+                />
+              ) : mainView === "files" ? (
+                <Workspace
+                  {...props}
+                  view="files"
+                  currentProject={currentProject}
+                  openFileTarget={quickFileTarget}
+                  onFileTargetHandled={() => setQuickFileTarget(null)}
+                />
+              ) : mainView === "review" ? (
+                <Workspace
+                  {...props}
+                  view="review"
+                  currentProject={currentProject}
+                />
+              ) : (
+                featureView(tabs.active)
+              )
             ) : (
               <div className="empty">
                 <Command size={36} />
@@ -771,7 +1073,7 @@ export default function App() {
               </div>
             )}
           </div>
-          {!showRight && (
+          {mainView === "canvas" && !showRight && (
             <button
               className="side-reopen"
               aria-label="Show side panel"
@@ -782,12 +1084,16 @@ export default function App() {
             </button>
           )}
         </main>
-        {ready && placement === "beside" && panelOpen && agent && (
-          <aside className="agent-column" aria-label="Agent setup">
-            {agentPanel}
-          </aside>
-        )}
-        {showRight && (
+        {mainView === "canvas" &&
+          ready &&
+          placement === "beside" &&
+          panelOpen &&
+          agent && (
+            <aside className="agent-column" aria-label="Agent setup">
+              {agentPanel}
+            </aside>
+          )}
+        {mainView === "canvas" && showRight && (
           <>
             <div
               className="resize"
@@ -874,6 +1180,8 @@ export default function App() {
       {palette && (
         <CommandMenu
           open={(id) => openFeature(id)}
+          selectMainView={(id) => openMainView(id as MainView)}
+          currentMainView={mainView}
           openTabs={tabs.tabs}
           agents={view.agents.map((a) => ({
             id: a.id,
@@ -888,7 +1196,27 @@ export default function App() {
           close={() => setPalette(false)}
         />
       )}
+      {quickSwitch && (
+        <QuickSwitch
+          data={view}
+          currentProject={currentProject}
+          close={() => setQuickSwitch(false)}
+          openFile={openQuickFile}
+          openAgentChat={openQuickAgentChat}
+          openGroupChat={openQuickGroupChat}
+        />
+      )}
       {help && <ShortcutHelp close={() => setHelp(false)} />}
+      {featureHelp && (
+        <HelpMenu
+          close={() => setFeatureHelp(false)}
+          open={(id) => {
+            setFeatureHelp(false);
+            if (id === "team-chat") openMainView(id);
+            else openFeature(id);
+          }}
+        />
+      )}
       {unsavedDialog}
       {error && (
         <div className="toast" role="alert">

@@ -20,6 +20,7 @@ import { assert, type Agent } from "./model.ts";
 import { contains } from "./resources.ts";
 import type { Store } from "./store.ts";
 import type { WorktreeRecord } from "./worktrees.ts";
+import { existsSync, statSync } from "node:fs";
 
 /** A worker's own worktree that turned its source checkout read-only for that worker. */
 export type ProjectWorktreeRecord = WorktreeRecord & {
@@ -124,14 +125,11 @@ export function restoreSourceWrite(
 }
 
 /**
- * Working folder of a task: the attached folder that contains every path the task declares (the
- * active folder when it does, else the most specific one), or null to keep the agent's active
- * folder when the task declares nothing. A worker shared by two projects thus runs each project's
- * task in that project's worktree or checkout, whichever folder was attached last. Paths spread
- * over several folders run in the active folder when it holds one of them, else in the folder of
- * the first path. A declared path outside every attached folder (its folder was detached or the
- * worktree removed after the task was created) refuses the launch: falling back to the active
- * folder would run the task in a folder its lease does not cover, possibly another project's.
+ * Primary provider root for a task, or null to use the agent's active folder when no paths are
+ * declared. Keep this at the declared directory itself: using its enclosing attachment would give
+ * the provider access to sibling resources it does not hold a lease for. At present only the first
+ * declared path determines cwd; launch plans still need to propagate or reject additional roots. A
+ * declared path outside every attached folder refuses the launch.
  */
 export function taskWorkingFolder(
   store: Store,
@@ -153,16 +151,14 @@ export function taskWorkingFolder(
     `${agent.name} no longer has a folder containing ${missing[0]}, which this task declares; attach it again or change the task`,
     409,
   );
-  const holds = (root: string) => declared.every((p) => contains(root, p));
-  const active = agent.workspaces.find((w) => w.active);
-  if (active && holds(active.path)) return active.path;
-  const all = agent.workspaces
-    .filter((w) => holds(w.path))
-    .sort((a, b) => b.path.length - a.path.length)[0];
-  if (all) return all.path;
-  if (active && declared.some((p) => contains(active.path, p)))
-    return active.path;
-  return agent.workspaces
-    .filter((w) => contains(w.path, declared[0]))
-    .sort((a, b) => b.path.length - a.path.length)[0].path;
+  const files = declared.filter(
+    (p) => existsSync(p) && !statSync(p).isDirectory(),
+  );
+  assert(
+    !files.length,
+    "resource_path_not_directory",
+    `Task resource paths must be directories to isolate provider access; "${files[0]}" is a file`,
+    400,
+  );
+  return declared[0];
 }

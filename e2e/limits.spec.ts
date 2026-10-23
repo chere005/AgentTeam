@@ -52,11 +52,11 @@ test("workflow limits: trip reason, honest usage, rejected then extended resume"
         () => undefined,
       );
     });
-    await openFeature(page, "Limits");
-    const wf = page.locator(".workflow", { hasText: "Bounded run" });
+    await openFeature(page, "Usage & limits");
+    const wf = page.locator(".usage-project", { hasText: "Bounded run" });
     await wf.locator("details.limits-panel > summary").click();
-    await expect(wf.getByTestId("limit-trip")).toHaveText(
-      "Stopped by limit: Maximum of 1 agent turns reached.",
+    await expect(wf.locator(".usage-trip")).toContainText(
+      "Maximum of 1 agent turns reached.",
     );
     await expect(wf.getByTestId("used-maxAgentTurns")).toContainText("used 1");
     await expect(wf.getByTestId("usage-note")).toContainText(

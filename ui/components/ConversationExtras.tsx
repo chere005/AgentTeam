@@ -191,34 +191,97 @@ export function LiveActivity({
 }) {
   const live = liveActivity(events, sessionId);
   if (!live.active) return null;
+  const latestTool = live.tools[live.tools.length - 1];
   return (
-    <div
+    <details
       className="live-activity"
       data-testid="live-activity"
       aria-live="polite"
     >
-      <div className="message-label">
+      <summary className="live-activity-summary">
         <span className="state-orbit processing" />
-        <b>{name}</b>
-        <span className="badge">streaming</span>
+        <b>{name} is working</b>
+        <span className="live-activity-current">
+          {latestTool?.title ??
+            (live.tools.length ? "Working" : "Waiting for response")}
+        </span>
+        {live.tools.length > 0 && (
+          <span className="badge">
+            {live.tools.length} tool{" "}
+            {live.tools.length === 1 ? "step" : "steps"}
+          </span>
+        )}
+      </summary>
+      <div className="live-activity-details">
+        {live.tools.length > 0 && (
+          <ul className="live-tools" data-testid="live-tools">
+            {live.tools.map((t) => (
+              <li key={t.id} className={"tool-" + t.status}>
+                <Wrench size={12} /> <span>{t.title}</span>
+                <span className="badge">{t.status}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {live.text ? (
+          <div className="message-text partial" data-testid="live-text">
+            {live.text}
+          </div>
+        ) : (
+          <div className="hint">Waiting for the provider’s first output…</div>
+        )}
       </div>
-      {live.tools.length > 0 && (
-        <ul className="live-tools" data-testid="live-tools">
-          {live.tools.map((t) => (
-            <li key={t.id} className={"tool-" + t.status}>
-              <Wrench size={12} /> <span>{t.title}</span>
-              <span className="badge">{t.status}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-      {live.text ? (
-        <div className="message-text partial" data-testid="live-text">
-          {live.text}
-        </div>
-      ) : (
-        <div className="hint">Waiting for the provider’s first output…</div>
-      )}
+    </details>
+  );
+}
+
+export function RunProgress({
+  name,
+  startedAt,
+  timeoutMs,
+  now,
+}: {
+  name: string;
+  startedAt?: string;
+  timeoutMs?: number;
+  now: number;
+}) {
+  const start = startedAt ? Date.parse(startedAt) : now;
+  const elapsed = Math.max(0, now - (Number.isFinite(start) ? start : now));
+  const budget = timeoutMs ?? 3_600_000;
+  const remaining = Math.max(0, budget - elapsed);
+  const percent = Math.min(100, Math.round((elapsed / budget) * 100));
+  const duration = (ms: number) => {
+    const totalSeconds = Math.floor(ms / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    return hours
+      ? `${hours}h ${minutes}m`
+      : minutes
+        ? `${minutes}m ${seconds}s`
+        : `${seconds}s`;
+  };
+  return (
+    <div className="run-progress" role="status" data-testid="run-progress">
+      <div className="run-progress-heading">
+        <span className="state-orbit processing" />
+        <b>{name} is working</b>
+        <span className="run-progress-time">
+          {duration(elapsed)} elapsed · up to {duration(remaining)} remaining
+        </span>
+      </div>
+      <div
+        className="run-progress-track"
+        role="progressbar"
+        aria-label="Provider time limit used; this does not indicate task completion"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+        title="Shows time used from the provider limit, not work completion"
+      >
+        <span style={{ width: `${percent}%` }} />
+      </div>
     </div>
   );
 }

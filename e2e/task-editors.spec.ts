@@ -502,11 +502,11 @@ test("routing rule editing: mode, priority, persistence and backend error", asyn
   });
 });
 
-test("workflow limits editor covers every limit key", async () => {
+test("usage view edits and persists every project limit", async () => {
   await withApp(async (page) => {
     const { wf } = await fixture(page);
-    await openWorkflows(page, "Limits");
-    const w = page.locator(".workflow", { hasText: "Editable flow" });
+    await openWorkflows(page, "Usage & limits");
+    const w = page.locator(".usage-project", { hasText: "Editable flow" });
     await w.locator("details.limits-panel > summary").click();
     const labels: [string, string, number][] = [
       ["Max runtime (s)", "maxRuntimeSeconds", 3600],
@@ -534,9 +534,9 @@ test("workflow limits editor covers every limit key", async () => {
     await expect(w.getByRole("alert")).toContainText(
       "Max handoffs must be a whole number of at least 1",
     );
-    await reload(page, "Limits");
+    await reload(page, "Usage & limits");
     await page
-      .locator(".workflow", { hasText: "Editable flow" })
+      .locator(".usage-project", { hasText: "Editable flow" })
       .locator("details.limits-panel > summary")
       .click();
     await expect(page.getByLabel("Token budget (reported)")).toHaveValue(

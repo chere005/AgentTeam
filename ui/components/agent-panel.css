@@ -164,6 +164,28 @@
 .folder-row .inline {
   font-size: 12px;
 }
+.resource-sharing,
+.sharing-path-rules {
+  margin-top: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 12px;
+}
+.resource-sharing > label {
+  display: grid;
+  gap: 5px;
+  margin: 8px 0;
+}
+.resource-sharing select[multiple],
+.sharing-path-rule select[multiple] {
+  min-height: 70px;
+}
+.sharing-path-rule {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0;
+}
 .skill-row {
   align-items: center;
 }

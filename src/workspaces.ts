@@ -14,7 +14,7 @@ import { z } from "zod";
 import { openCommand } from "./native.ts";
 import { attachedRepoGitConfig, SAFE_GIT_CONFIG } from "./git-config.ts";
 import { applyStaging } from "./git-stage.ts";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { ResourceCoordinator } from "./resources.ts";
 import {
   decideBoth,
@@ -37,7 +37,46 @@ import {
   parseNameStatus,
   revisionProblem,
 } from "./diff.ts";
+import {
+  resetWorkspaceBaseline,
+  workspaceChanges,
+} from "./workspace-changes.ts";
 const exec = promisify(execFile);
+export const TEXT_EDITOR_MAX_BYTES = 256_000;
+const FILE_SEARCH_MAX_RESULTS = 300;
+const FILE_SEARCH_MAX_VISITS = 8_000;
+const subsequenceScore = (query: string, candidate: string) => {
+  const text = candidate.toLowerCase();
+  let total = 0;
+  for (const q of query.toLowerCase().trim().split(/\s+/).filter(Boolean)) {
+    let at = 0,
+      gaps = 0,
+      last = -2;
+    for (const char of q) {
+      const found = text.indexOf(char, at);
+      if (found < 0) return 0;
+      if (last >= 0) gaps += found - last - 1;
+      last = found;
+      at = found + 1;
+    }
+    total += Math.max(1, 100 - gaps - (text.includes(q) ? 0 : at));
+  }
+  return total;
+};
+const textFileSchema = z
+  .object({ workspace: z.string(), path: z.string() })
+  .strict();
+const saveTextSchema = textFileSchema
+  .extend({
+    content: z.string().max(TEXT_EDITOR_MAX_BYTES),
+    expectedHash: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+const createTextSchema = textFileSchema
+  .extend({ content: z.string().max(TEXT_EDITOR_MAX_BYTES) })
+  .strict();
+const sha256 = (bytes: Uint8Array) =>
+  createHash("sha256").update(bytes).digest("hex");
 const lexicalRel = lexicalRelative;
 const requestSchema = z
   .object({ workspace: z.string(), path: z.string().default(".") })
@@ -205,6 +244,64 @@ export class WorkspaceService {
         ),
     };
   }
+  async searchFiles(agentId: string, input: unknown) {
+    const data = z
+      .object({
+        workspace: z.string(),
+        query: z.string().trim().min(1).max(200),
+      })
+      .strict()
+      .parse(input);
+    const loc = await this.location(
+      agentId,
+      { workspace: data.workspace, path: "." },
+      false,
+      { traverse: true },
+    );
+    assert(
+      (await stat(loc.target)).isDirectory(),
+      "not_directory",
+      "Workspace is not a directory",
+      400,
+    );
+    const ws = this.store
+      .get<Agent>("agent", agentId)
+      .workspaces.find((workspace) => workspace.path === loc.root)!;
+    const found: { path: string; score: number }[] = [];
+    let visits = 0;
+    const walk = async (
+      directory: string,
+      relativePath: string,
+      depth: number,
+    ) => {
+      if (depth > 16 || visits >= FILE_SEARCH_MAX_VISITS) return;
+      let entries;
+      try {
+        entries = await readdir(directory, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (visits++ >= FILE_SEARCH_MAX_VISITS) return;
+        if ([".git", "node_modules", "vendor"].includes(entry.name)) continue;
+        if (entry.isSymbolicLink()) continue;
+        const path = join(relativePath, entry.name).split("\\").join("/");
+        const access = decideBoth(ws, path, path).access;
+        if (entry.isDirectory()) {
+          if (access !== "none" || traversable(ws, path))
+            await walk(resolve(directory, entry.name), path, depth + 1);
+        } else if (entry.isFile() && access !== "none") {
+          const score = subsequenceScore(data.query, path);
+          if (score) found.push({ path, score });
+        }
+      }
+    };
+    await walk(loc.target, ".", 0);
+    return found
+      .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
+      .slice(0, FILE_SEARCH_MAX_RESULTS)
+      .map(({ path }) => ({ path, name: basename(path), workspace: loc.root }));
+  }
   async preview(agentId: string, input: unknown) {
     const loc = await this.location(agentId, input),
       info = await stat(loc.target);
@@ -225,6 +322,187 @@ export class WorkspaceService {
       };
     } finally {
       await file.close();
+    }
+  }
+  /** Read a bounded UTF-8 source file for the in-app editor, under folder access rules. */
+  async readText(agentId: string, input: unknown) {
+    const data = textFileSchema.parse(input);
+    const loc = await this.location(agentId, data);
+    const info = await stat(loc.target);
+    assert(info.isFile(), "not_file", "Path is not a regular file", 400);
+    assert(
+      info.size <= TEXT_EDITOR_MAX_BYTES,
+      "file_too_large",
+      `Files over ${TEXT_EDITOR_MAX_BYTES / 1000} KB open read-only; use an external editor`,
+      413,
+    );
+    const handle = await open(loc.target, "r");
+    try {
+      const bytes = await handle.readFile();
+      assert(
+        bytes.length <= TEXT_EDITOR_MAX_BYTES,
+        "file_too_large",
+        `Files over ${TEXT_EDITOR_MAX_BYTES / 1000} KB open read-only; use an external editor`,
+        413,
+      );
+      assert(
+        !bytes.includes(0),
+        "binary_file",
+        "Binary files cannot be edited",
+        415,
+      );
+      let content: string;
+      try {
+        content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      } catch {
+        throw new AppError(
+          415,
+          "not_utf8",
+          "This file is not valid UTF-8 text",
+        );
+      }
+      return {
+        path: loc.relative,
+        content,
+        hash: sha256(bytes),
+        access: loc.access,
+      };
+    } finally {
+      await handle.close();
+    }
+  }
+  /** Save only if the source is still the version the editor loaded; access is checked again. */
+  async saveText(agentId: string, input: unknown) {
+    const data = saveTextSchema.parse(input);
+    const loc = await this.location(
+      agentId,
+      { workspace: data.workspace, path: data.path },
+      true,
+    );
+    const bytes = Buffer.from(data.content, "utf8");
+    assert(
+      bytes.length <= TEXT_EDITOR_MAX_BYTES && !bytes.includes(0),
+      "invalid_text",
+      "Text must be UTF-8 without NUL bytes and at most 256 KB",
+      413,
+    );
+    const info = await stat(loc.target);
+    assert(info.isFile(), "not_file", "Path is not a regular file", 400);
+    assert(
+      info.size <= TEXT_EDITOR_MAX_BYTES,
+      "file_too_large",
+      "Files over 256 KB cannot be saved in the in-app editor",
+      413,
+    );
+    const handle = await open(loc.target, "r+");
+    try {
+      const previous = await handle.readFile();
+      assert(
+        !previous.includes(0),
+        "binary_file",
+        "Binary files cannot be edited",
+        415,
+      );
+      try {
+        new TextDecoder("utf-8", { fatal: true }).decode(previous);
+      } catch {
+        throw new AppError(
+          415,
+          "not_utf8",
+          "This file is not valid UTF-8 text",
+        );
+      }
+      assert(
+        sha256(previous) === data.expectedHash,
+        "file_changed",
+        "The file changed since it was opened. Reload it before saving.",
+        409,
+      );
+      await handle.truncate(0);
+      let offset = 0;
+      while (offset < bytes.length) {
+        const result = await handle.write(
+          bytes,
+          offset,
+          bytes.length - offset,
+          offset,
+        );
+        offset += result.bytesWritten;
+      }
+      await handle.truncate(bytes.length);
+      return { path: loc.relative, hash: sha256(bytes), bytes: bytes.length };
+    } finally {
+      await handle.close();
+    }
+  }
+  /** Create a new text file in an existing writable workspace directory. */
+  async createText(agentId: string, input: unknown) {
+    const data = createTextSchema.parse(input);
+    const name = basename(data.path);
+    assert(
+      name !== "." && name !== ".." && !name.includes("\0") && name !== ".git",
+      "invalid_path",
+      "Choose a file name inside the workspace",
+      400,
+    );
+    const parentPath = dirname(data.path).split("\\").join("/") || ".";
+    const parent = await this.location(
+      agentId,
+      { workspace: data.workspace, path: parentPath },
+      true,
+    );
+    assert(
+      (await stat(parent.target)).isDirectory(),
+      "not_directory",
+      "The file's folder does not exist",
+      400,
+    );
+    const target = resolve(parent.target, name);
+    const relativePath = relative(parent.root, target).split("\\").join("/");
+    const agent = this.store.get<Agent>("agent", agentId);
+    const workspace = agent.workspaces.find(
+      (item) => item.path === parent.root,
+    )!;
+    const decision = decideBoth(workspace, lexicalRel(data.path), relativePath);
+    assert(
+      decision.access === "write",
+      decision.access === "none" ? "access_denied" : "read_only",
+      decision.reason,
+      403,
+    );
+    const bytes = Buffer.from(data.content, "utf8");
+    assert(
+      bytes.length <= TEXT_EDITOR_MAX_BYTES,
+      "invalid_text",
+      "Text must be at most 256 KB",
+      413,
+    );
+    assert(
+      !bytes.includes(0),
+      "invalid_text",
+      "Text cannot contain NUL bytes",
+      400,
+    );
+    const handle = await open(target, "wx", 0o666).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === "EEXIST")
+          throw new AppError(
+            409,
+            "file_exists",
+            "A file with that name already exists",
+          );
+        throw error;
+      },
+    );
+    try {
+      await handle.writeFile(bytes);
+      return {
+        path: relativePath,
+        hash: sha256(bytes),
+        bytes: bytes.length,
+      };
+    } finally {
+      await handle.close();
     }
   }
   private async git(root: string, args: string[]) {
@@ -253,11 +531,17 @@ export class WorkspaceService {
         )
       ).stdout;
     } catch (e) {
+      const stderr = (e as { stderr?: string }).stderr?.trim() ?? "";
+      if (/not a git repository/i.test(stderr))
+        throw new AppError(
+          400,
+          "not_git_repository",
+          "This folder is not inside a Git repository. Choose a repository folder or initialize Git from the Git view.",
+        );
       throw new AppError(
         400,
         "git_error",
-        (e as { stderr?: string }).stderr?.trim().slice(0, 1000) ||
-          "Git command failed",
+        stderr.slice(0, 1000) || "Git command failed",
       );
     }
   }
@@ -522,11 +806,23 @@ export class WorkspaceService {
       400,
     );
     const loc = await this.location(agentId, { workspace: data.workspace });
-    const info = await this.gitInfo(
-      agentId,
-      { workspace: data.workspace },
-      { untrackedAll: !data.base },
-    );
+    let info: Awaited<ReturnType<WorkspaceService["gitInfo"]>>;
+    try {
+      info = await this.gitInfo(
+        agentId,
+        { workspace: data.workspace },
+        { untrackedAll: !data.base },
+      );
+    } catch (error) {
+      if (!(error instanceof AppError) || error.code !== "not_git_repository")
+        throw error;
+      return (await workspaceChanges(
+        this.store,
+        this.store.get<Agent>("agent", agentId),
+        loc.root,
+        data.path,
+      )) as unknown as ReviewResult;
+    }
     const attribution = this.attribution(agentId, loc.root, info);
     const compare = data.base
       ? await this.compareSpec(loc.root, { ...data, base: data.base })
@@ -685,6 +981,18 @@ export class WorkspaceService {
       meta,
     };
   }
+  async resetChanges(agentId: string, input: unknown) {
+    const { workspace } = z
+      .object({ workspace: z.string() })
+      .strict()
+      .parse(input);
+    const loc = await this.location(agentId, { workspace });
+    return resetWorkspaceBaseline(
+      this.store,
+      this.store.get<Agent>("agent", agentId),
+      loc.root,
+    );
+  }
   async mutateGit(agentId: string, input: unknown) {
     const data = z
       .object({
@@ -821,6 +1129,8 @@ export class WorkspaceService {
   }
 }
 type ReviewResult = Awaited<ReturnType<WorkspaceService["gitInfo"]>> & {
+  source?: "git" | "folder";
+  baselineAt?: string;
   files: { status: string; path: string; from?: string; similarity?: number }[];
   filesTruncated: boolean;
   compare: {

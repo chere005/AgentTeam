@@ -41,7 +41,17 @@ type Workspace = {
   active: boolean;
   rules?: AccessRule[];
   explicitOnly?: boolean;
+  sharing?: {
+    scope: "nobody" | "selected" | "team" | "all";
+    agentIds: string[];
+  };
+  shareRules?: {
+    path: string;
+    scope: "nobody" | "selected" | "team" | "all";
+    agentIds: string[];
+  }[];
 };
+type ShareScope = "nobody" | "selected" | "team" | "all";
 type SkillPick = { id: string; mode: string; allowUnverified: boolean };
 export type AgentForm = {
   schedulingPriority: number;
@@ -198,7 +208,12 @@ export function AgentFormSections({
         update("workspaces", [
           ...form.workspaces,
           // New folders are read-only until the user allows edits.
-          { path, access: "read", active: form.workspaces.length === 0 },
+          {
+            path,
+            access: "read",
+            active: form.workspaces.length === 0,
+            sharing: { scope: "nobody", agentIds: [] },
+          },
         ]);
     } catch (e) {
       setError(String(e));
@@ -412,6 +427,69 @@ export function AgentFormSections({
                       Working folder
                     </label>
                   </div>
+                  <details className="resource-sharing">
+                    <summary>Share file contents in conversations</summary>
+                    <label>
+                      This folder
+                      <select
+                        aria-label={`Share ${ws.path} with`}
+                        value={ws.sharing?.scope ?? "nobody"}
+                        onChange={(event) =>
+                          setWorkspace(i, {
+                            sharing: {
+                              scope: event.target.value as ShareScope,
+                              agentIds: ws.sharing?.agentIds ?? [],
+                            },
+                          })
+                        }
+                      >
+                        <option value="nobody">Nobody</option>
+                        <option value="selected">Specific agents</option>
+                        <option value="team">All team agents</option>
+                        <option value="all">All agents</option>
+                      </select>
+                    </label>
+                    {ws.sharing?.scope === "selected" && (
+                      <select
+                        aria-label={`Agents allowed to share ${ws.path}`}
+                        multiple
+                        value={ws.sharing.agentIds}
+                        onChange={(event) =>
+                          setWorkspace(i, {
+                            sharing: {
+                              scope: "selected",
+                              agentIds: Array.from(
+                                event.currentTarget.selectedOptions,
+                                (option) => option.value,
+                              ),
+                            },
+                          })
+                        }
+                      >
+                        {(data.teamView?.allAgents ?? data.agents)
+                          .filter((candidate) => candidate.id !== agent?.id)
+                          .map((candidate) => (
+                            <option key={candidate.id} value={candidate.id}>
+                              {candidate.name}
+                              {candidate.teamId !== agent?.teamId
+                                ? ` · ${data.teams.find((team) => team.id === candidate.teamId)?.name ?? "Other team"}`
+                                : ""}
+                            </option>
+                          ))}
+                      </select>
+                    )}
+                    <small className="quiet">
+                      Controls which teammates may receive file contents from
+                      this folder in a conversation. It does not attach the
+                      folder to them.
+                    </small>
+                    <SharingPathRules
+                      workspace={ws}
+                      agents={data.teamView?.allAgents ?? data.agents}
+                      ownerId={agent?.id}
+                      onChange={(shareRules) => setWorkspace(i, { shareRules })}
+                    />
+                  </details>
                 </div>
                 <button
                   className="icon"
@@ -738,6 +816,94 @@ export function AgentFormSections({
         )}
       </details>
     </>
+  );
+}
+
+function SharingPathRules({
+  workspace,
+  agents,
+  ownerId,
+  onChange,
+}: {
+  workspace: Workspace;
+  agents: Agent[];
+  ownerId?: string;
+  onChange: (rules: NonNullable<Workspace["shareRules"]> | undefined) => void;
+}) {
+  const rules = workspace.shareRules ?? [];
+  const update = (
+    index: number,
+    patch: Partial<NonNullable<Workspace["shareRules"]>[number]>,
+  ) =>
+    onChange(
+      rules.map((rule, i) => (i === index ? { ...rule, ...patch } : rule)),
+    );
+  return (
+    <details className="sharing-path-rules">
+      <summary>Exceptions for files or subfolders ({rules.length})</summary>
+      {rules.map((rule, index) => (
+        <div className="sharing-path-rule" key={`${rule.path}-${index}`}>
+          <input
+            aria-label="Shared file or folder path"
+            placeholder="Relative path, e.g. docs/design.md"
+            value={rule.path}
+            onChange={(event) => update(index, { path: event.target.value })}
+          />
+          <select
+            aria-label={`Sharing for ${rule.path || "path rule"}`}
+            value={rule.scope}
+            onChange={(event) =>
+              update(index, { scope: event.target.value as ShareScope })
+            }
+          >
+            <option value="nobody">Nobody</option>
+            <option value="selected">Specific agents</option>
+            <option value="team">All team agents</option>
+            <option value="all">All agents</option>
+          </select>
+          {rule.scope === "selected" && (
+            <select
+              aria-label={`Agents allowed to share ${rule.path || "path"}`}
+              multiple
+              value={rule.agentIds}
+              onChange={(event) =>
+                update(index, {
+                  agentIds: Array.from(
+                    event.currentTarget.selectedOptions,
+                    (option) => option.value,
+                  ),
+                })
+              }
+            >
+              {agents
+                .filter((candidate) => candidate.id !== ownerId)
+                .map((candidate) => (
+                  <option key={candidate.id} value={candidate.id}>
+                    {candidate.name}
+                  </option>
+                ))}
+            </select>
+          )}
+          <button
+            type="button"
+            className="text-button"
+            aria-label={`Remove sharing rule ${rule.path || index + 1}`}
+            onClick={() => onChange(rules.filter((_, i) => i !== index))}
+          >
+            Remove
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        className="text-button"
+        onClick={() =>
+          onChange([...rules, { path: "", scope: "nobody", agentIds: [] }])
+        }
+      >
+        Add file or folder rule
+      </button>
+    </details>
   );
 }
 

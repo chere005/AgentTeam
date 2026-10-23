@@ -28,6 +28,51 @@
 .invocation-panel li {
   line-height: 1.6;
 }
+.group-chat {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.group-chat-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.group-chat-heading b {
+  color: var(--text);
+}
+.group-chat-messages {
+  display: grid;
+  gap: 6px;
+  max-height: 240px;
+  overflow: auto;
+}
+.group-chat-message {
+  padding: 7px 8px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  font-size: 12px;
+}
+.group-chat-message p {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.group-chat textarea {
+  width: 100%;
+  min-height: 56px;
+  resize: vertical;
+}
+.group-chat-invite select {
+  min-width: 0;
+  flex: 1;
+}
 .diagnostics {
   margin: 8px 0 0;
   padding: 0;

@@ -64,6 +64,11 @@ declare global {
       openAgent: (id: string, mode: string) => Promise<any>;
       /** Main-process Save as… for the redacted diagnostic bundle (absent outside the desktop app). */
       saveDiagnostics?: (format: "zip" | "json") => Promise<any>;
+      /** Native Save dialog for a scratch text file. */
+      saveTextFile?: (
+        name: string,
+        content: string,
+      ) => Promise<{ path: string } | null>;
       /** Mirrors Settings -> Appearance to the main process (window background, first paint). */
       setTheme?: (setting: "system" | "light" | "dark") => Promise<unknown>;
       onEvent: (callback: (event: TeamEvent) => void) => () => void;
@@ -71,8 +76,16 @@ declare global {
     };
   }
 }
-export const api = (path: string, method = "GET", body?: unknown) =>
-  window.agentteam.request(method, path, body);
+export async function api(path: string, method = "GET", body?: unknown) {
+  try {
+    return await window.agentteam.request(method, path, body);
+  } catch (error) {
+    const message = String(
+      error instanceof Error ? error.message : error,
+    ).replace(/^Error invoking remote method 'api': Error: /, "");
+    throw new Error(message);
+  }
+}
 export const empty: Snapshot = {
   agents: [],
   edges: [],

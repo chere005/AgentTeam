@@ -19,6 +19,13 @@ export type PaletteAction = {
 export type PaletteAgent = { id: string; name: string; detail: string };
 type Entry =
   | { type: "feature"; id: FeatureId; name: string; description: string }
+  | {
+      type: "mainView";
+      id: string;
+      name: string;
+      description: string;
+      shortcut: string;
+    }
   | { type: "agent"; id: string; name: string; description: string }
   | {
       type: "action";
@@ -29,9 +36,8 @@ type Entry =
     };
 
 /**
- * The single entry to everything beyond the canvas and chat: opened by the top-bar "More" button
- * or Ctrl/Cmd+K. With an empty query it is the grouped "More" menu (every feature with a one-line
- * description); typing searches features, agents and actions. Arrow keys move, Enter opens,
+ * Search every main view, feature, agent and action from one palette. With an empty query it lists
+ * main views first; typing searches across all entries. Arrow keys move, Enter opens,
  * Escape closes and returns focus to the opener.
  */
 export function CommandMenu({
@@ -39,6 +45,8 @@ export function CommandMenu({
   agents,
   actions,
   selectAgent,
+  selectMainView,
+  currentMainView,
   close,
   openTabs,
 }: {
@@ -46,6 +54,8 @@ export function CommandMenu({
   agents: PaletteAgent[];
   actions: PaletteAction[];
   selectAgent: (id: string) => void;
+  selectMainView: (id: string) => void;
+  currentMainView: string;
   close: () => void;
   /** Feature tabs already open (marked in the list). */
   openTabs: FeatureId[];
@@ -55,16 +65,29 @@ export function CommandMenu({
   const input = useRef<HTMLInputElement>(null),
     list = useRef<HTMLUListElement>(null);
   const searching = query.trim().length > 0;
+  const modKey = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform) ? "⌘" : "Ctrl+";
+  const mainViews = useMemo<Extract<Entry, { type: "mainView" }>[]>(
+    () => [
+      { type: "mainView", id: "canvas", name: "Layout", description: "Team graph and agent setup", shortcut: `${modKey}1` },
+      { type: "mainView", id: "team-chat", name: "Chat", description: "Agent and group conversations", shortcut: `${modKey}2` },
+      { type: "mainView", id: "files", name: "Files", description: "Browse and edit project files", shortcut: `${modKey}3` },
+      { type: "mainView", id: "review", name: "Diff", description: "Review pending file changes", shortcut: `${modKey}4` },
+    ],
+    [modKey],
+  );
   const entries: Entry[] = useMemo(() => {
     if (!searching)
-      return FEATURE_GROUPS.flatMap((g) =>
+      return [...mainViews, ...FEATURE_GROUPS.flatMap((g) =>
         FEATURES.filter((f) => f.group === g).map((f) => ({
           type: "feature" as const,
           id: f.id,
           name: f.name,
           description: f.description,
         })),
-      );
+      )];
+    const main: Entry[] = mainViews.filter((v) =>
+      matchScore(query, v.name, `${v.description} ${v.shortcut}`) > 0,
+    );
     const features: Entry[] = searchFeatures(query).map((f) => ({
       type: "feature",
       id: f.id,
@@ -96,8 +119,8 @@ export function CommandMenu({
         description: a.description,
         run: a.run,
       }));
-    return [...features, ...acts, ...people];
-  }, [query, agents, actions, searching]);
+    return [...main, ...features, ...acts, ...people];
+  }, [query, agents, actions, searching, mainViews]);
   useEffect(() => setCursor(0), [query]);
   useEffect(() => {
     list.current
@@ -107,6 +130,7 @@ export function CommandMenu({
   const choose = (e: Entry) => {
     close();
     if (e.type === "feature") openFeature(e.id);
+    else if (e.type === "mainView") selectMainView(e.id);
     else if (e.type === "agent") selectAgent(e.id);
     else e.run();
   };
@@ -115,16 +139,22 @@ export function CommandMenu({
   const heading = (e: Entry, i: number) => {
     const prev = entries[i - 1];
     if (!searching) {
+      if (e.type === "mainView")
+        return !prev || prev.type !== "mainView" ? "Main views" : null;
       const g = FEATURES.find((f) => f.id === e.id)?.group;
-      const pg = prev && FEATURES.find((f) => f.id === prev.id)?.group;
+      const pg = prev?.type === "feature"
+        ? FEATURES.find((f) => f.id === prev.id)?.group
+        : null;
       return !prev || g !== pg ? g : null;
     }
     if (prev && prev.type === e.type) return null;
-    return e.type === "feature"
-      ? "Views"
-      : e.type === "action"
-        ? "Actions"
-        : "Agents";
+    return e.type === "mainView"
+      ? "Main views"
+      : e.type === "feature"
+        ? "Features"
+        : e.type === "action"
+          ? "Actions"
+          : "Agents";
   };
   return (
     <div
@@ -216,6 +246,14 @@ export function CommandMenu({
                   </span>
                   {e.type === "feature" && openTabs.includes(e.id) && (
                     <span className="palette-open">open</span>
+                  )}
+                  {e.type === "mainView" && (
+                    <>
+                      {currentMainView === e.id && (
+                        <span className="palette-open">current</span>
+                      )}
+                      <kbd className="palette-shortcut">{e.shortcut}</kbd>
+                    </>
                   )}
                 </div>
               </li>

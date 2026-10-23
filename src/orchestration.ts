@@ -21,6 +21,7 @@ import {
 import { REVIEW_CONTRACT, SPECIALIST_PRESETS, ROLE_PRESETS } from "./roles.ts";
 import type { TeamService } from "./service.ts";
 import { contractObjects, jsonObjectCandidates } from "./limits.ts";
+import { mayShareExcerpt } from "./resource-sharing.ts";
 import {
   sliceCodePoints,
   untrusted,
@@ -261,6 +262,7 @@ export type Invocation = {
     instructions: string;
     tags: string[];
     changedFiles: string[];
+    resourcePaths?: string[];
     context: unknown;
   };
   createdAt: string;
@@ -318,11 +320,34 @@ export const invokeArgsSchema = z
       .object({
         summary: z.string().max(20_000).optional(),
         data: z.record(z.string(), z.unknown()).optional(),
+        /** Explicit excerpts only; file contents never travel as implicit attachments. */
+        resources: z
+          .array(
+            z
+              .object({
+                workspacePath: z.string().min(1).max(1000),
+                path: z.string().min(1).max(500),
+                content: z.string().max(20_000),
+              })
+              .strict(),
+          )
+          .max(20)
+          .describe(
+            "Optional file excerpts. The backend checks source read access and the recipient's access or explicit resource sharing grant. Never include an entire file or folder.",
+          )
+          .optional(),
       })
       .strict()
       .optional(),
     tags: z.array(z.string().max(100)).max(50).default([]),
     changedFiles: z.array(z.string().max(500)).max(1000).default([]),
+    resourcePaths: z
+      .array(z.string().min(1).max(1000))
+      .max(50)
+      .default([])
+      .describe(
+        "Optional absolute folders/files inside the recipient's attached workspace to reserve for this task. Declare disjoint paths for independent writers; the backend validates access and leases only those paths.",
+      ),
     dependsOn: z.array(z.string()).max(50).default([]),
   })
   .strict();
@@ -343,15 +368,33 @@ export class Orchestration {
   }
 
   // -- tools -------------------------------------------------------------------------------------------
-  tools(): ToolDefinition[] {
+  tools(ctx?: ToolContext): ToolDefinition[] {
+    const reachable = ctx
+      ? this.store
+          .list<Agent>("agent")
+          .filter(
+            (agent) =>
+              agent.id !== ctx.agentId &&
+              this.service.permitted(ctx.agentId, agent.id, "delegate"),
+          )
+      : [];
+    const invokeSchema = z.toJSONSchema(invokeArgsSchema, {
+      io: "input",
+    }) as Record<string, any>;
+    if (ctx) {
+      const names = reachable.map((agent) => agent.name);
+      const ids = reachable.map((agent) => agent.id);
+      const recipient = invokeSchema.properties?.recipient;
+      if (recipient && (names.length || ids.length)) {
+        recipient.enum = [...names, ...ids];
+        recipient.description = `Use an exact reachable teammate name or id. Names: ${names.join("; ")}.`;
+      }
+    }
     return [
       {
         name: "invoke_teammate",
-        description:
-          "Delegate work to a teammate through AgentTeam. Communication permissions, child/depth/loop limits, resource locks and validation gates are enforced by the backend. Returns parent/child task ids; read the outcome with teammate_result.",
-        inputSchema: z.toJSONSchema(invokeArgsSchema, {
-          io: "input",
-        }) as Record<string, unknown>,
+        description: `Delegate work to a teammate through AgentTeam. ${ctx ? (reachable.length ? `Reachable teammates (use exact names): ${reachable.map((agent) => agent.name).join(", ")}.` : "No teammates are currently reachable from this agent.") : "The caller's reachable teammates are listed in the tool input schema."} Communication permissions, child/depth/loop limits, resource locks, validation gates and explicit file-excerpt sharing permissions are enforced by the backend. Do not attach or copy whole files. Share summaries in context; pass a short excerpt only through context.resources, where the recipient must have read access or the resource must allow sharing. Returns parent/child task ids; read the outcome with teammate_result.`,
+        inputSchema: invokeSchema,
         handler: (ctx, args) => this.invokeTeammate(ctx, args),
       },
       {
@@ -367,12 +410,22 @@ export class Orchestration {
   }
 
   // -- recipient resolution -----------------------------------------------------------------------------
-  private agentByRef(ref: string): Agent {
+  private agentByRef(ref: string, fromAgentId: string): Agent {
     const agents = this.store.list<Agent>("agent");
     const byId = agents.find((a) => a.id === ref);
     if (byId) return byId;
     const named = agents.filter((a) => a.name === ref);
-    assert(named.length > 0, "not_found", `Agent ${ref} not found`, 404);
+    const reachable = agents.filter(
+      (a) =>
+        a.id !== fromAgentId &&
+        this.service.permitted(fromAgentId, a.id, "delegate"),
+    );
+    assert(
+      named.length > 0,
+      "not_found",
+      `Agent ${ref} not found. Use an exact reachable teammate name: ${reachable.map((a) => a.name).join(", ") || "none"}`,
+      404,
+    );
     assert(
       named.length === 1,
       "ambiguous_recipient",
@@ -418,7 +471,7 @@ export class Orchestration {
     workflowId?: string,
   ) {
     if (args.recipient) {
-      const a = this.agentByRef(args.recipient);
+      const a = this.agentByRef(args.recipient, fromAgentId);
       return {
         agentId: a.id,
         method: "explicit" as const,
@@ -569,11 +622,24 @@ export class Orchestration {
     const parent = this.parentFor(ctx);
     const route = this.resolveRecipient(caller.id, args, parent.workflowId);
     const recipient = this.store.get<Agent>("agent", route.agentId);
+    for (const resource of args.context?.resources ?? [])
+      assert(
+        mayShareExcerpt(
+          caller,
+          recipient,
+          resource.workspacePath,
+          resource.path,
+        ),
+        "resource_share_denied",
+        `Cannot share ${resource.path} with ${recipient.name}. Both agents need read access, or the resource must explicitly allow sharing with that agent.`,
+        403,
+      );
     const envelope = {
       invokedBy: { id: caller.id, name: caller.name, taskId: parent.id },
       route: { method: route.method, reason: route.reason },
       summary: args.context?.summary ?? null,
       data: args.context?.data ?? null,
+      resources: args.context?.resources ?? [],
       tags: args.tags,
       changedFiles: args.changedFiles,
     };
@@ -599,6 +665,9 @@ export class Orchestration {
         args.completionCriteria ?? "Return the requested result to the invoker",
       ...(args.changedFiles.length ? { changedFiles: args.changedFiles } : {}),
       ...(args.tags.length ? { tags: args.tags } : {}),
+      ...(args.resourcePaths.length
+        ? { resourcePaths: args.resourcePaths }
+        : {}),
     });
     const invocation: Invocation = {
       id: child.id,
@@ -616,6 +685,7 @@ export class Orchestration {
         instructions: args.instructions,
         tags: args.tags,
         changedFiles: args.changedFiles,
+        resourcePaths: args.resourcePaths,
         context: args.context ?? null,
       },
       createdAt: new Date().toISOString(),

@@ -224,13 +224,21 @@ export function WorkflowStateEditor({
       data-testid="state-editor"
       onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
     >
-      <summary>Edit shared state</summary>
+      <summary>Set up shared fields</summary>
       {open && (
         <>
+          <p className="hint state-editor-intro">
+            Shared state is for durable project facts that later tasks should
+            reuse, such as a decision, requirement, output or handoff. Ordinary
+            chat stays in Chat. Set who can read and update each field below.
+          </p>
           <section className="task-section" aria-label="State fields">
             <b>Fields</b>
             {!fields.length && !draft && (
-              <small className="quiet">No state fields defined.</small>
+              <small className="quiet">
+                Nothing is shared yet. Add a field when the team needs a fact to
+                persist across tasks.
+              </small>
             )}
             {fields.map((f) => (
               <div className="row between" key={f.key}>

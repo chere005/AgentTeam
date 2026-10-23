@@ -5,10 +5,10 @@ import {
   type ElectronApplication,
   type Page,
 } from "@playwright/test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openChatWith, openFeature } from "./helpers";
+import { openChatWith, openFeature, openSetup } from "./helpers";
 
 // All tests use a temp AGENTTEAM_DATA_DIR (also Electron's userData, so localStorage is isolated)
 // and fixture data created through the API; no provider is ever invoked.
@@ -58,16 +58,19 @@ const store = (page: Page, key: string) =>
 const side = (page: Page) =>
   page.getByRole("complementary", { name: "Side panel" });
 const tab = (page: Page, name: string) =>
-  page.getByRole("tablist", { name: "Open views" }).getByRole("tab", { name });
+  page
+    .getByRole("tablist", { name: "Main views and open features" })
+    .getByRole("tab", { name });
 
 test("workspace persistence: open tabs, side panel width, selection and canvas viewport survive a relaunch", async () => {
   await withApp(async ({ start }) => {
     const first = await start();
     let page = first.page;
-    // Defaults: only the canvas (no tab strip) and the conversation in the side panel.
-    await expect(page.getByRole("tablist", { name: "Open views" })).toHaveCount(
-      0,
-    );
+    // Main views are permanent; direct agent chat remains in the side panel.
+    await expect(tab(page, "Layout")).toBeVisible();
+    await expect(tab(page, "Chat")).toBeVisible();
+    await expect(tab(page, "Files")).toBeVisible();
+    await expect(tab(page, "Diff")).toBeVisible();
     await expect(side(page).getByRole("tab", { name: "Chat" })).toHaveAttribute(
       "aria-selected",
       "true",
@@ -102,7 +105,7 @@ test("workspace persistence: open tabs, side panel width, selection and canvas v
     page = second.page;
     await expect(tab(page, "Inbox")).toBeVisible();
     await expect(tab(page, "Activity log")).toBeVisible();
-    await expect(tab(page, "Canvas")).toHaveAttribute("aria-selected", "true");
+    await expect(tab(page, "Layout")).toHaveAttribute("aria-selected", "true");
     await expect(
       page.getByRole("separator", { name: "Resize side panel" }),
     ).toHaveAttribute("aria-valuenow", "500");
@@ -135,13 +138,180 @@ test("workspace persistence: open tabs, side panel width, selection and canvas v
   });
 });
 
+test("main view shortcuts keep the current project and Files can edit a text file", async () => {
+  await withApp(async ({ directory, start }) => {
+    const { page, errors } = await start();
+    const root = join(directory, "pi-demo");
+    await mkdir(root);
+    await writeFile(join(root, "README.md"), "# Pi demo\n");
+    const agent = await api(page, "POST", "/agents", {
+      name: "Pi builder",
+      environment: "codex",
+      workspaces: [{ path: root, access: "write", active: true }],
+    });
+    const project = await api(page, "POST", "/workflows", {
+      name: "Pi demo",
+      goal: "Create a small Pi example",
+      ownerId: agent.id,
+      completionCriteria: "README is saved",
+    });
+    await api(page, "POST", "/tasks", {
+      workflowId: project.id,
+      agentId: agent.id,
+      title: "Create the example",
+      completionCriteria: "The example is ready",
+    });
+    await page.reload();
+    await expect(
+      page.getByText("Workspace connected", { exact: true }),
+    ).toBeVisible();
+    const projectPicker = page.getByLabel("Current project");
+    await projectPicker.selectOption(project.id);
+    await expect(projectPicker).toHaveValue(project.id);
+
+    const views = ["Layout", "Chat", "Files", "Diff"];
+    for (let index = 0; index < views.length; index++) {
+      await page.keyboard.press(
+        `${process.platform === "darwin" ? "Meta" : "Control"}+${index + 1}`,
+      );
+      await expect(tab(page, views[index])).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      await expect(projectPicker).toHaveValue(project.id);
+    }
+
+    // Opening Diff captures a local baseline even for a folder without Git.
+    await tab(page, "Diff").click();
+    await expect(page.getByText("no Git required")).toBeVisible();
+    await tab(page, "Files").click();
+    const files = page.getByRole("complementary", { name: "Project files" });
+    await files.getByRole("button", { name: "README.md" }).click();
+    await page.getByRole("button", { name: "Edit file" }).click();
+    const editor = page.getByRole("textbox", { name: "File contents" });
+    await expect(editor).toHaveValue("# Pi demo\n");
+    await editor.fill("# Pi demo\n\nEdited in AgentTeam.\n");
+    await page.getByRole("button", { name: /Save/ }).click();
+    await expect(page.getByText(/Saved /)).toBeVisible();
+    expect(await readFile(join(root, "README.md"), "utf8")).toBe(
+      "# Pi demo\n\nEdited in AgentTeam.\n",
+    );
+    await page.getByRole("button", { name: "New file" }).click();
+    await page
+      .getByRole("textbox", { name: "New file name" })
+      .fill("example.py");
+    await page
+      .getByRole("textbox", { name: "File contents" })
+      .fill("print('ready')\n");
+    await page.getByRole("button", { name: "Save in workspace" }).click();
+    await expect(
+      page.getByText("example.py", { exact: true }).first(),
+    ).toBeVisible();
+    expect(await readFile(join(root, "example.py"), "utf8")).toBe(
+      "print('ready')\n",
+    );
+    await page.keyboard.press(
+      `${process.platform === "darwin" ? "Meta" : "Control"}+4`,
+    );
+    await expect(tab(page, "Diff")).toHaveAttribute("aria-selected", "true");
+    const changed = page.getByRole("navigation", { name: "Changed files" });
+    await expect(changed).toContainText("README.md");
+    await expect(changed).toContainText("example.py");
+    await expect(page.getByText("Current project: Pi demo")).toBeVisible();
+    await expect(projectPicker).toHaveValue(project.id);
+    expect(errors).toEqual([]);
+  });
+});
+
+test("Cmd+P finds chats and project files; Cmd+Shift+P stays the command palette", async () => {
+  await withApp(async ({ directory, start }) => {
+    const { page, errors } = await start();
+    const root = join(directory, "workspace");
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(
+      join(root, "src", "quickWidget.ts"),
+      "export const widget = true;\n",
+    );
+    const agent = await api(page, "POST", "/agents", {
+      name: "Search builder",
+      environment: "codex",
+      workspaces: [{ path: root, access: "write", active: true }],
+    });
+    const project = await api(page, "POST", "/workflows", {
+      name: "Search project",
+      goal: "Find a file and chat",
+      ownerId: agent.id,
+      completionCriteria: "Search works",
+    });
+    await api(page, "POST", "/tasks", {
+      workflowId: project.id,
+      agentId: agent.id,
+      title: "Search test",
+      completionCriteria: "Search works",
+    });
+    const session = await api(page, "POST", `/agents/${agent.id}/session`, {});
+    await api(page, "POST", `/sessions/${session.id}/messages`, {
+      text: "Find the green widget in this project",
+    });
+    await page.reload();
+    await expect(
+      page.getByText("Workspace connected", { exact: true }),
+    ).toBeVisible();
+    const projectPicker = page.getByLabel("Current project");
+    await projectPicker.selectOption(project.id);
+
+    await page.keyboard.press(
+      process.platform === "darwin" ? "Meta+p" : "Control+p",
+    );
+    const search = page.getByRole("dialog", { name: "Quick search" });
+    await search
+      .getByRole("combobox", { name: "Search files and chats" })
+      .fill("f: quick widget");
+    const fileResult = search.getByRole("option", { name: /quickWidget\.ts/ });
+    await expect(fileResult).toBeVisible();
+    await fileResult.click();
+    await expect(tab(page, "Files")).toHaveAttribute("aria-selected", "true");
+    await expect(
+      page.getByRole("button", { name: "quickWidget.ts", exact: true }),
+    ).toBeVisible();
+    await expect(projectPicker).toHaveValue(project.id);
+
+    await page.keyboard.press(
+      process.platform === "darwin" ? "Meta+p" : "Control+p",
+    );
+    const chatSearch = page.getByRole("dialog", { name: "Quick search" });
+    await chatSearch
+      .getByRole("combobox", { name: "Search files and chats" })
+      .fill("chats: green widget");
+    await chatSearch
+      .getByRole("option", { name: /Find the green widget/ })
+      .click();
+    await expect(tab(page, "Chat")).toHaveAttribute("aria-selected", "true");
+    await expect(
+      page.getByText("Find the green widget in this project"),
+    ).toBeVisible();
+    await expect(projectPicker).toHaveValue(project.id);
+
+    await page.keyboard.press(
+      process.platform === "darwin" ? "Meta+Shift+p" : "Control+Shift+p",
+    );
+    await expect(
+      page.getByRole("dialog", { name: "Command palette" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("dialog", { name: "Quick search" }),
+    ).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+});
+
 test("workspace layouts (Settings): presets open sets of tabs, are editable, and custom layouts persist", async () => {
   await withApp(async ({ start }) => {
     let { page, app } = await start();
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     // A function: `page` changes after the relaunch.
     const list = () => page.getByRole("list", { name: "Workspace layouts" });
-    for (const name of ["Canvas & chat", "Coding", "Review", "Monitoring"])
+    for (const name of ["Layout & chat", "Coding", "Review", "Monitoring"])
       await expect(
         list().getByRole("button", { name, exact: true }),
       ).toBeVisible();
@@ -179,10 +349,10 @@ test("workspace layouts (Settings): presets open sets of tabs, are editable, and
       list().getByRole("button", { name: "Coding (edited)" }),
     ).toBeVisible();
     await list()
-      .getByRole("button", { name: "Canvas & chat", exact: true })
+      .getByRole("button", { name: "Layout & chat", exact: true })
       .click();
-    await expect(tab(page, "Files")).toHaveCount(0);
-    await expect(tab(page, "Canvas")).toHaveAttribute("aria-selected", "true");
+    await expect(tab(page, "Files")).toBeVisible();
+    await expect(tab(page, "Layout")).toHaveAttribute("aria-selected", "true");
     await tab(page, "Settings").click();
     await list().getByRole("button", { name: "Coding (edited)" }).click();
     await expect(tab(page, "Files")).toBeVisible();
@@ -200,24 +370,23 @@ test("workspace layouts (Settings): presets open sets of tabs, are editable, and
   });
 });
 
-test("agent panel: canvas selection opens it in place of the chat, explicit chat actions switch back, beside-chat placement, Esc closes", async () => {
+test("canvas cards follow the selected side pane, explicit setup and chat actions switch views, beside-chat placement, Esc closes", async () => {
   await withApp(async ({ start }) => {
     const { page, errors } = await start();
     await api(page, "POST", "/agents", {
       name: "Watcher",
       environment: "codex",
     });
+    await api(page, "POST", "/agents", {
+      name: "Other agent",
+      environment: "codex",
+    });
     const chatTab = side(page).getByRole("tab", { name: "Chat" });
     const setupTab = side(page).getByRole("tab", { name: "Agent setup" });
-    // Selecting the agent on the canvas opens its setup panel in place of the chat.
+    // With Chat selected, clicking a card changes the conversation recipient and keeps Chat open.
+    await chatTab.click();
     const node = page.locator(".react-flow__node", { hasText: "Watcher" });
     await node.click();
-    await expect(setupTab).toHaveAttribute("aria-selected", "true");
-    await expect(page.getByTestId("agent-panel-name")).toHaveText("Watcher");
-    await expect(page.getByRole("textbox", { name: "Message" })).toHaveCount(0);
-    // Explicit action: "Chat in AgentTeam" from the canvas context menu opens the conversation.
-    await node.click({ button: "right" });
-    await page.getByRole("button", { name: "Chat in AgentTeam" }).click();
     await expect(chatTab).toHaveAttribute("aria-selected", "true");
     await expect(
       side(page).getByRole("combobox", { name: "Agent", exact: true }),
@@ -225,10 +394,33 @@ test("agent panel: canvas selection opens it in place of the chat, explicit chat
       (await api(page, "GET", "/agents")).find((a: any) => a.name === "Watcher")
         .id,
     );
-    // The chat header's setup button and the side tab both lead back to the panel.
+    await expect(page.getByRole("textbox", { name: "Message" })).toBeVisible();
+    // Setup remains available explicitly, and card clicks follow it once selected.
     await page.getByRole("button", { name: "Set up Watcher" }).click();
     await expect(setupTab).toHaveAttribute("aria-selected", "true");
-    await page.getByRole("button", { name: "Chat with Watcher" }).click();
+    const otherNode = page.locator(".react-flow__node", {
+      hasText: "Other agent",
+    });
+    await otherNode.click();
+    await expect(page.getByTestId("agent-panel-name")).toHaveText(
+      "Other agent",
+    );
+    await expect(setupTab).toHaveAttribute("aria-selected", "true");
+    // Explicit action: "Chat in AgentTeam" from the canvas context menu opens that conversation.
+    await otherNode.click({ button: "right" });
+    await page.getByRole("button", { name: "Chat in AgentTeam" }).click();
+    await expect(chatTab).toHaveAttribute("aria-selected", "true");
+    await expect(
+      side(page).getByRole("combobox", { name: "Agent", exact: true }),
+    ).toHaveValue(
+      (await api(page, "GET", "/agents")).find(
+        (a: any) => a.name === "Other agent",
+      ).id,
+    );
+    // Header actions switch back to setup and then to chat.
+    await page.getByRole("button", { name: "Set up Other agent" }).click();
+    await expect(setupTab).toHaveAttribute("aria-selected", "true");
+    await page.getByRole("button", { name: "Chat with Other agent" }).click();
     await expect(chatTab).toHaveAttribute("aria-selected", "true");
     // Beside the chat: both are visible at once; the choice persists.
     await setupTab.click();
@@ -236,7 +428,9 @@ test("agent panel: canvas selection opens it in place of the chat, explicit chat
       .getByRole("button", { name: "Show agent panel beside chat" })
       .click();
     const column = page.getByRole("complementary", { name: "Agent setup" });
-    await expect(column.getByTestId("agent-panel-name")).toHaveText("Watcher");
+    await expect(column.getByTestId("agent-panel-name")).toHaveText(
+      "Other agent",
+    );
     await expect(page.getByRole("textbox", { name: "Message" })).toBeVisible();
     expect(await store(page, "agentPanel.placement")).toBe('"beside"');
     // Esc closes the panel (focus is not in a text field).
@@ -265,6 +459,8 @@ test("agent setup accordion state is remembered per card when switching between 
         .locator(".react-flow__node-agent", { hasText: name })
         .first()
         .click();
+      if (!(await panel.isVisible()))
+        await page.getByRole("button", { name: `Set up ${name}` }).click();
       await expect(panel.getByTestId("agent-panel-name")).toHaveText(name);
     };
     await selectCard("Watcher");
@@ -702,9 +898,17 @@ test("canvas groups: collapse hides members behind a group node, hierarchy navig
     // Hierarchy navigation: Lead -> child Worker -> parent Lead.
     await page.locator(`.react-flow__node[data-id="${ids[0]}"]`).click();
     await page.getByRole("button", { name: "Child" }).click();
-    await expect(page.getByTestId("agent-panel-name")).toHaveText("Worker");
+    await expect(side(page).getByRole("tab", { name: "Chat" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(
+      side(page).getByRole("combobox", { name: "Agent", exact: true }),
+    ).toHaveValue(ids[1]);
     await page.getByRole("button", { name: "Parent" }).click();
-    await expect(page.getByTestId("agent-panel-name")).toHaveText("Lead");
+    await expect(
+      side(page).getByRole("combobox", { name: "Agent", exact: true }),
+    ).toHaveValue(ids[0]);
     expect(errors).toEqual([]);
   });
 });

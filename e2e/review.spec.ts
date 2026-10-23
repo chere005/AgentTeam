@@ -177,3 +177,57 @@ test("review: branch compare, side-by-side, keyboard navigation and narrow layou
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("Diff lists and compares pending file changes without requiring Git", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentteam-review-plain-"));
+  const project = join(directory, "plain-folder");
+  await mkdir(project);
+  const app = await electron.launch({
+    args: [".", ...(process.platform === "linux" ? ["--no-sandbox"] : [])],
+    env: {
+      ...process.env,
+      AGENTTEAM_DATA_DIR: join(directory, "data"),
+      AGENTTEAM_TEST: "1",
+    },
+  });
+  try {
+    const page = await app.firstWindow();
+    await expect(
+      page.getByText("Workspace connected", { exact: true }),
+    ).toBeVisible();
+    await page.evaluate(async (folder) => {
+      const snapshot = await window.agentteam.request("GET", "/snapshot");
+      const { id, createdAt, control, ...config } = snapshot.agents[0];
+      await window.agentteam.request("PUT", "/agents/" + id, {
+        ...config,
+        workspaces: [{ path: folder, access: "write", active: true }],
+      });
+    }, project);
+    await page.getByRole("tab", { name: "Diff", exact: true }).click();
+    const review = page.getByRole("region", { name: "Code review" });
+    await expect(
+      review.getByRole("heading", { name: "Pending changes" }),
+    ).toBeVisible();
+    await expect(review).toContainText("no Git required");
+    await expect(
+      review.getByRole("button", { name: "Compare branches" }),
+    ).toHaveCount(0);
+    await writeFile(join(project, "draft.py"), "print('Pi')\n");
+    await review.getByRole("button", { name: "Refresh" }).click();
+    const files = review.getByRole("navigation", { name: "Changed files" });
+    await expect(
+      files.getByRole("button", { name: /draft\.py/ }),
+    ).toBeVisible();
+    await files.getByRole("button", { name: /draft\.py/ }).click();
+    await expect(review.getByLabel("Diff content")).toContainText(
+      "print('Pi')",
+    );
+    await review
+      .getByRole("button", { name: "Set current files as baseline" })
+      .click();
+    await expect(review.getByText("No pending changes.")).toBeVisible();
+  } finally {
+    await app.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

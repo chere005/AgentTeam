@@ -54,18 +54,22 @@ const api = (page: Page, method: string, path: string, body?: unknown) =>
   );
 const tab = (page: Page, name: string) =>
   page
-    .getByRole("tablist", { name: "Open views" })
+    .getByRole("tablist", { name: "Main views and open features" })
     .getByRole("tab", { name, exact: true });
 
-test("first run shows only the canvas and the chat: no long navigation, getting-started card, slim top bar", async () => {
+test("first run shows four main views, a useful empty state and a slim top bar", async () => {
   await withApp(async ({ start }) => {
     const { page, errors } = await start();
     await expect(page.getByRole("navigation", { name: "Panes" })).toHaveCount(
       0,
     );
-    await expect(page.getByRole("tablist", { name: "Open views" })).toHaveCount(
-      0,
-    );
+    await expect(
+      page.getByRole("tablist", { name: "Main views and open features" }),
+    ).toBeVisible();
+    await expect(tab(page, "Layout")).toBeVisible();
+    await expect(tab(page, "Chat")).toBeVisible();
+    await expect(tab(page, "Files")).toBeVisible();
+    await expect(tab(page, "Diff")).toBeVisible();
     const empty = page.getByTestId("canvas-empty");
     await expect(empty).toContainText("No agents in Main team yet");
     await expect(
@@ -82,8 +86,12 @@ test("first run shows only the canvas and the chat: no long navigation, getting-
     await expect(
       side.getByRole("textbox", { name: "Message", exact: true }),
     ).toBeVisible();
-    // Top bar: team switcher, execution state, More and Settings; nothing that needs no action.
+    // Top bar: team, current project, execution state, Help, More and Settings.
     const bar = page.getByRole("banner");
+    await expect(bar.getByLabel("Current project")).toHaveValue("");
+    await expect(bar.getByLabel("Current project")).toContainText(
+      "No current project",
+    );
     // The chip appears once the backend reports ready; on a slow runner that is after first paint.
     await expect(
       bar.getByRole("button", { name: "Execution paused" }),
@@ -97,9 +105,14 @@ test("first run shows only the canvas and the chat: no long navigation, getting-
             (e) => e.getAttribute("aria-label") ?? e.textContent?.trim() ?? "",
           ),
       );
-    expect(labels).toHaveLength(4);
+    expect(labels).toHaveLength(5);
     expect(labels[0]).toMatch(/^Active team: Main team/);
-    expect(labels.slice(1)).toEqual(["Execution paused", "More", "Settings"]);
+    expect(labels.slice(1)).toEqual([
+      "Execution paused",
+      "Help and feature guide",
+      "More",
+      "Settings",
+    ]);
     await expect(
       bar.getByRole("button", { name: /^Attention inbox/ }),
     ).toHaveCount(0);
@@ -116,9 +129,14 @@ test("first run shows only the canvas and the chat: no long navigation, getting-
       page.getByRole("list", { name: "Example teams" }).getByRole("button"),
     ).toHaveCount(4);
     await page.getByRole("button", { name: "Close Team library" }).click();
-    await expect(page.getByRole("tablist", { name: "Open views" })).toHaveCount(
-      0,
-    );
+    await expect(
+      page.getByRole("tablist", { name: "Main views and open features" }),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByRole("tablist", { name: "Main views and open features" })
+        .getByRole("tab"),
+    ).toHaveCount(4);
     await page.screenshot({ path: test.info().outputPath("first-run.png") });
     expect(errors).toEqual([]);
   });
@@ -139,15 +157,17 @@ test("the More menu lists every feature by group with a description, and the pal
     await page.keyboard.press("Escape");
     await expect(palette).toHaveCount(0);
     await expect(page.getByRole("button", { name: "More" })).toBeFocused();
-    // Every feature opens as its own tab through the palette.
+    // Feature pages open as tabs; Files and Diff select their permanent main views.
     for (const f of FEATURES) {
       await openFeature(page, f.name);
       await expect(tab(page, f.name)).toHaveAttribute("aria-selected", "true");
       await expect(page.locator("#view-panel")).not.toBeEmpty();
     }
     await expect(
-      page.getByRole("tablist", { name: "Open views" }).getByRole("tab"),
-    ).toHaveCount(FEATURES.length + 1);
+      page
+        .getByRole("tablist", { name: "Main views and open features" })
+        .getByRole("tab"),
+    ).toHaveCount(FEATURES.length + 2);
     // Searching finds agents and actions too; Enter runs the highlighted entry.
     await page.keyboard.press(
       process.platform === "darwin" ? "Meta+k" : "Control+k",
@@ -164,20 +184,21 @@ test("the More menu lists every feature by group with a description, and the pal
   });
 });
 
-test("open tabs are remembered per team across a relaunch; a new team starts with canvas and chat only", async () => {
+test("feature tabs are remembered per team; the four main views are always available", async () => {
   await withApp(async ({ start }) => {
     let { page, app, errors } = await start();
     await openFeature(page, "Projects");
     await openFeature(page, "Git");
-    // A new team from the switcher: only the canvas.
+    // A new team starts with the four permanent main views and no feature tabs.
     await page.getByTestId("team-switcher").click();
     await page.getByRole("button", { name: "New team" }).click();
     await page.getByLabel("Team name").fill("Research");
     await page.getByRole("button", { name: "Create team" }).click();
     await expect(page.getByTestId("active-team-name")).toHaveText("Research");
-    await expect(page.getByRole("tablist", { name: "Open views" })).toHaveCount(
-      0,
-    );
+    await expect(tab(page, "Layout")).toBeVisible();
+    await expect(tab(page, "Chat")).toBeVisible();
+    await expect(tab(page, "Files")).toBeVisible();
+    await expect(tab(page, "Diff")).toBeVisible();
     await openFeature(page, "Inbox");
     await page.waitForTimeout(300);
     expect(errors).toEqual([]);
@@ -329,9 +350,10 @@ test("contextual entry: a pending approval shows the attention button and the ap
     db.close();
     let errors: string[];
     ({ app, page, errors } = await start());
-    await expect(page.getByRole("tablist", { name: "Open views" })).toHaveCount(
-      0,
-    );
+    await expect(tab(page, "Layout")).toBeVisible();
+    await expect(tab(page, "Chat")).toBeVisible();
+    await expect(tab(page, "Files")).toBeVisible();
+    await expect(tab(page, "Diff")).toBeVisible();
     const attention = page.getByRole("button", {
       name: /^Attention inbox, 1 item/,
     });

@@ -1,4 +1,4 @@
-/* More menu / command palette (Ctrl/Cmd+K). */
+/* Command palette (Ctrl/Cmd+Shift+P; Ctrl/Cmd+K remains an alias). */
 .palette-backdrop {
   position: fixed;
   inset: 0;
@@ -91,6 +91,13 @@
   border: 1px solid #2f5246;
   border-radius: 4px;
   padding: 1px 5px;
+}
+.palette-shortcut {
+  margin-left: 4px;
+  padding: 2px 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  white-space: nowrap;
 }
 .palette-empty {
   padding: 24px;

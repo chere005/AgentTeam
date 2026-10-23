@@ -59,6 +59,100 @@ test("file previews are bounded; binary files are identified", async (t) => {
     3,
   );
 });
+test("in-app text editing checks folder access and refuses stale saves", async (t) => {
+  const { root, team, agent, ws } = await fixture(t);
+  const path = join(root, "readme.md");
+  await writeFile(path, "# Original\n");
+  const opened = await ws.readText(agent.id, {
+    workspace: root,
+    path: "readme.md",
+  });
+  assert.equal(opened.content, "# Original\n");
+  const saved = await ws.saveText(agent.id, {
+    workspace: root,
+    path: "readme.md",
+    content: "# Updated\n",
+    expectedHash: opened.hash,
+  });
+  assert.equal(
+    (await ws.readText(agent.id, { workspace: root, path: "readme.md" }))
+      .content,
+    "# Updated\n",
+  );
+  await writeFile(path, "# External edit\n");
+  await assert.rejects(
+    ws.saveText(agent.id, {
+      workspace: root,
+      path: "readme.md",
+      content: "# Overwrite\n",
+      expectedHash: saved.hash,
+    }),
+    /changed since it was opened/i,
+  );
+  const reader = await team.saveAgent({
+    name: "Reader",
+    environment: "codex",
+    workspaces: [{ path: root, access: "read", active: true }],
+  });
+  const readOnly = await ws.readText(reader.id, {
+    workspace: root,
+    path: "readme.md",
+  });
+  assert.equal(readOnly.access, "read");
+  await assert.rejects(
+    ws.saveText(reader.id, {
+      workspace: root,
+      path: "readme.md",
+      content: "no write",
+      expectedHash: readOnly.hash,
+    }),
+    /read.only/i,
+  );
+});
+test("new text files can be created only in writable workspace paths", async (t) => {
+  const { root, team, agent, ws } = await fixture(t);
+  await mkdir(join(root, "src"));
+  const created = await ws.createText(agent.id, {
+    workspace: root,
+    path: "src/hello.ts",
+    content: "export const hello = 'world';\n",
+  });
+  assert.equal(created.path, "src/hello.ts");
+  assert.equal(
+    (await ws.readText(agent.id, { workspace: root, path: created.path }))
+      .content,
+    "export const hello = 'world';\n",
+  );
+  await assert.rejects(
+    ws.createText(agent.id, {
+      workspace: root,
+      path: "src/hello.ts",
+      content: "overwrite",
+    }),
+    /already exists/i,
+  );
+  await assert.rejects(
+    ws.createText(agent.id, {
+      workspace: root,
+      path: "../outside.ts",
+      content: "no",
+    }),
+    /escapes/i,
+  );
+  const reader = await team.saveAgent({
+    name: "Reader",
+    environment: "codex",
+    workspaces: [{ path: root, access: "read" }],
+  });
+  await assert.rejects(
+    ws.createText(reader.id, {
+      workspace: root,
+      path: "nope.txt",
+      content: "no",
+    }),
+    /read.only/i,
+  );
+});
 test("paths cannot escape through traversal, symlinks or Git internals", async (t) => {
   const { base, root, agent, ws } = await fixture(t);
   await writeFile(join(base, "secret"), "outside");
@@ -131,6 +225,33 @@ test("Git status, diffs, staging and commit work in an isolated fixture", async 
     (await ws.diff(agent.id, { workspace: root, staged: true })).diff,
     "",
   );
+});
+test("plain folders reject Git operations but still expose pending changes", async (t) => {
+  const { root, agent, ws } = await fixture(t);
+  await assert.rejects(ws.gitInfo(agent.id, { workspace: root }), {
+    code: "not_git_repository",
+    message:
+      "This folder is not inside a Git repository. Choose a repository folder or initialize Git from the Git view.",
+  });
+  const review = await ws.review(agent.id, { workspace: root });
+  assert.equal(review.source, "folder");
+  assert.equal(review.branch, "Folder baseline");
+  await writeFile(join(root, "draft.txt"), "pending\n");
+  await writeFile(join(root, "second.txt"), "also pending\n");
+  const changed = await ws.review(agent.id, { workspace: root });
+  assert.deepEqual(
+    changed.files.map((file) => file.path),
+    ["draft.txt", "second.txt"],
+  );
+  const fileDiff = await ws.review(agent.id, {
+    workspace: root,
+    path: "draft.txt",
+  });
+  assert.deepEqual(
+    fileDiff.files.map((file) => file.path),
+    ["draft.txt", "second.txt"],
+  );
+  assert.match(fileDiff.diff, /pending/);
 });
 test("read-only workspaces cannot stage files", async (t) => {
   const { root, team, ws } = await fixture(t);

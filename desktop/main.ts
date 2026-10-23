@@ -129,6 +129,26 @@ async function start() {
     });
     return result.canceled ? null : result.filePaths[0];
   });
+  ipcMain.handle("save-text-file", async (event, name, content) => {
+    trusted(event);
+    if (
+      typeof name !== "string" ||
+      !name.trim() ||
+      name.length > 180 ||
+      /[\\/\0]/.test(name) ||
+      typeof content !== "string" ||
+      Buffer.byteLength(content, "utf8") > 256_000 ||
+      content.includes("\0")
+    )
+      throw new Error("Invalid text file");
+    const picked = await dialog.showSaveDialog(win, {
+      title: "Save text file to your computer",
+      defaultPath: join(app.getPath("downloads"), name),
+    });
+    if (picked.canceled || !picked.filePath) return null;
+    await writeFile(picked.filePath, content, { encoding: "utf8" });
+    return { path: picked.filePath };
+  });
   // Diagnostic bundle "Save as…": the renderer names only the format; this process fetches the
   // redacted bundle, shows the dialog and writes the one chosen file (test mode records instead).
   ipcMain.handle("save-diagnostics", async (event, format) => {

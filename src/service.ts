@@ -4,7 +4,7 @@ import { realpath, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { ResourceCoordinator } from "./resources.ts";
-import { normalizeRules } from "./access.ts";
+import { normalizeRules, normalizeRelPath } from "./access.ts";
 import { canonicalDeclaredPaths } from "./declared-paths.ts";
 import { ValidationService } from "./validation.ts";
 import { LimitsService } from "./limits.ts";
@@ -48,6 +48,7 @@ import {
   type Message,
 } from "./model.ts";
 import { decideRouting } from "./routing-decision.ts";
+import { ensureWorkspaceBaseline } from "./workspace-changes.ts";
 export class TeamService {
   store: Store;
   skills: SkillCatalog;
@@ -145,6 +146,38 @@ export class TeamService {
       );
       ws.path = await realpath(ws.path);
       if (ws.rules) ws.rules = normalizeRules(ws.rules);
+      if (
+        ws.sharing?.scope === "selected" ||
+        ws.shareRules?.some((r) => r.scope === "selected")
+      ) {
+        const agentIds = new Set([
+          ...(ws.sharing?.agentIds ?? []),
+          ...(ws.shareRules ?? []).flatMap((rule) => rule.agentIds),
+        ]);
+        for (const agentId of agentIds) {
+          assert(
+            agentId !== id,
+            "invalid_share_target",
+            "An agent cannot share a resource with itself",
+            400,
+          );
+          this.store.get<Agent>("agent", agentId);
+        }
+      }
+      if (ws.shareRules) {
+        const seen = new Set<string>();
+        ws.shareRules = ws.shareRules.map((rule) => {
+          const path = normalizeRelPath(rule.path);
+          assert(
+            !seen.has(path.toLowerCase()),
+            "duplicate_share_rule",
+            `Duplicate sharing rule for "${path}"`,
+            400,
+          );
+          seen.add(path.toLowerCase());
+          return { ...rule, path };
+        });
+      }
       if (ws.explicitOnly)
         assert(
           ws.rules?.some((r) => r.access !== "none"),
@@ -198,6 +231,11 @@ export class TeamService {
       control: previous?.control ?? "team",
       createdAt: previous?.createdAt ?? new Date().toISOString(),
     };
+    await Promise.all(
+      agent.workspaces.map((workspace) =>
+        ensureWorkspaceBaseline(this.store, agent, workspace.path),
+      ),
+    );
     return this.store.transaction(() => {
       this.store.put("agent", agent);
       this.store.emit(previous ? "agent.updated" : "agent.created", agent.id);
@@ -1004,14 +1042,30 @@ export class TeamService {
   }
   message(sessionId: string, input: unknown) {
     const data = z
-      .object({ text: z.string().trim().min(1).max(100_000) })
+      .object({
+        text: z.string().trim().min(1).max(100_000),
+        groupChatId: z.string().optional(),
+      })
       .strict()
       .parse(input);
-    this.store.get<Session>("session", sessionId);
+    const session = this.store.get<Session>("session", sessionId);
+    if (data.groupChatId) {
+      const chat = this.store.get<{ participantIds: string[] }>(
+        "group-chat",
+        data.groupChatId,
+      );
+      assert(
+        chat.participantIds.includes(session.agentId),
+        "group_chat_membership_required",
+        "This agent is not a participant in the group conversation",
+        403,
+      );
+    }
     return this.store.transaction(() => {
       const message: Message = {
         id: randomUUID(),
         sessionId,
+        ...(data.groupChatId ? { groupChatId: data.groupChatId } : {}),
         role: "user",
         text: data.text,
         status: "queued",

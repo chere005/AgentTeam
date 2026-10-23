@@ -103,6 +103,43 @@ async function world(t: any) {
   };
 }
 
+test("Quickstart project leaves its coordinator unleased so delegated writers can run", async (t) => {
+  const w = await world(t);
+  const workspace = join(w.base, "pi-demo");
+  await mkdir(workspace);
+  const teamId = await w.insert("quickstart-code-team");
+  const profile = w.profile(teamId);
+  const workflow = await w.assign(teamId, {
+    name: "Pi 300 demo",
+    goal: "Write and review the Pi examples",
+    workspace,
+  });
+  const setup = w.store.get<any>("workflow", workflow.id).setup;
+  const manager = w.agent(profile.leadId);
+  const builderIds = profile.roles.implement;
+  const reviewerId = profile.roles.codexReview[0];
+  assert.equal(
+    manager.workspaces.some((folder) => folder.path === workspace),
+    false,
+    "the coordinator must not hold a folder lease while it waits for builders",
+  );
+  for (const id of builderIds)
+    assert.equal(
+      w.agent(id).workspaces.find((folder) => folder.path === workspace)
+        ?.access,
+      "write",
+    );
+  assert.equal(
+    w.agent(reviewerId).workspaces.find((folder) => folder.path === workspace)
+      ?.access,
+    "read",
+  );
+  assert.equal(
+    setup.attachments.some((item: any) => item.agentId === profile.leadId),
+    false,
+  );
+});
+
 test("projects can be completed, archived and reopened; archived projects never resume", async (t) => {
   const w = await world(t);
   const repo = await w.mkrepo("repo");

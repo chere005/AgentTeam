@@ -200,7 +200,10 @@ export async function createFreeFormProject(
           ),
         )
       : Object.fromEntries(agents.map((a) => [a.id, defaultProjectAccess(a)]));
-    if (!access[ownerId])
+    // An explicit role map can intentionally leave the coordinator without the project folder.
+    // Giving it a fallback read attachment still creates a folder lease for the whole manager
+    // run, which blocks the writers it has just delegated work to.
+    if (!profile?.workspace && !access[ownerId])
       access[ownerId] = defaultProjectAccess(
         agents.find((a) => a.id === ownerId)!,
       );
@@ -246,7 +249,7 @@ export async function createFreeFormProject(
           {
             title: "Plan and coordinate",
             agentId: ownerId,
-            instructions: `GOAL:\n${o.goal}\n\nRestate the goal as acceptance criteria, then plan and delegate the work to the team through AgentTeam. Report what was done, what was checked and what remains unverified.`,
+            instructions: `PROJECT WORKSPACE (absolute path): ${workspace}\n\nGOAL:\n${o.goal}\n\nRestate the goal as acceptance criteria, then plan and delegate the work to the team through AgentTeam. Report what was done, what was checked and what remains unverified.`,
           },
         ];
     // Created in dependency order so every dependency exists when its dependent is created.

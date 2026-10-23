@@ -17,8 +17,10 @@ type Meta = {
   noHunks: boolean;
 };
 type Review = {
+  source?: "git" | "folder";
   diffHash: string;
   branch: string;
+  baselineAt?: string;
   files: Change[];
   filesTruncated?: boolean;
   diff: string;
@@ -141,6 +143,7 @@ export function ChangesReview({
   const [sending, setSending] = useState(false),
     [sent, setSent] = useState(""),
     [sentTo, setSentTo] = useState("");
+  const [baselineNotice, setBaselineNotice] = useState("");
   const root = useRef<HTMLElement>(null),
     scroller = useRef<HTMLDivElement>(null);
 
@@ -153,7 +156,7 @@ export function ChangesReview({
   );
   const scopeKey = JSON.stringify(scope);
   const narrow = width < NARROW;
-  const split = view === "split" && !narrow;
+  const split = view === "split" && !narrow && review?.source !== "folder";
 
   useEffect(() => {
     const el = root.current;
@@ -294,7 +297,8 @@ export function ChangesReview({
   }
 
   const commentButton = (c: Cell) =>
-    c && (
+    c &&
+    review?.source !== "folder" && (
       <button
         className="diff-comment"
         disabled={!!comment}
@@ -315,7 +319,9 @@ export function ChangesReview({
       onKeyDown={onKeyDown}
     >
       <div className="row between">
-        <h3>Review changes</h3>
+        <h3>
+          {review?.source === "folder" ? "Pending changes" : "Review changes"}
+        </h3>
         <button
           onClick={() => {
             setPath("");
@@ -326,29 +332,62 @@ export function ChangesReview({
         </button>
       </div>
       <p className="hint">
-        {review?.branch} · {workspace}
-        <br />
-        {review?.attribution?.note ??
-          "Changes in this folder may come from any agent or editor."}
+        {review?.source === "folder" ? (
+          <>
+            Folder snapshot · no Git required · {workspace}
+            {review.baselineAt &&
+              ` · tracking edits since ${new Date(review.baselineAt).toLocaleString()}`}
+          </>
+        ) : (
+          <>
+            {review?.branch} · {workspace}
+            <br />
+            {review?.attribution?.note ??
+              "Changes in this folder may come from any agent or editor."}
+          </>
+        )}
       </p>
-      <div className="tabs">
-        {(
-          [
-            ["unstaged", "Unstaged"],
-            ["staged", "Staged"],
-            ["compare", "Compare branches"],
-          ] as const
-        ).map(([m, label]) => (
+      {review?.source === "folder" && (
+        <div className="row wrap folder-diff-baseline">
           <button
-            key={m}
-            className={mode === m ? "active" : ""}
-            onClick={() => switchMode(m)}
+            onClick={() => {
+              setError("");
+              void api(`/agents/${agentId}/files/changes/reset`, "POST", {
+                workspace,
+              })
+                .then(() => {
+                  setBaselineNotice("Current files are now the baseline.");
+                  setPath("");
+                  refresh((value) => value + 1);
+                })
+                .catch((reason) => setError(String(reason?.message ?? reason)));
+            }}
           >
-            {label}
+            Set current files as baseline
           </button>
-        ))}
-      </div>
-      {mode === "compare" && (
+          {baselineNotice && <span role="status">{baselineNotice}</span>}
+        </div>
+      )}
+      {review?.source !== "folder" && (
+        <div className="tabs">
+          {(
+            [
+              ["unstaged", "Unstaged"],
+              ["staged", "Staged"],
+              ["compare", "Compare branches"],
+            ] as const
+          ).map(([m, label]) => (
+            <button
+              key={m}
+              className={mode === m ? "active" : ""}
+              onClick={() => switchMode(m)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {review?.source !== "folder" && mode === "compare" && (
         <form
           className="review-compare"
           aria-label="Branch comparison"
@@ -425,7 +464,7 @@ export function ChangesReview({
           )}
         </p>
       )}
-      {(mode !== "compare" || cmp) && !error && (
+      {review?.source !== "folder" && (mode !== "compare" || cmp) && !error && (
         <ReviewComments
           agentId={agentId}
           workspace={workspace}
@@ -487,7 +526,7 @@ export function ChangesReview({
         </section>
       )}
       {loading && <p role="status">Loading changes…</p>}
-      {mode === "compare" && !cmp && (
+      {review?.source !== "folder" && mode === "compare" && !cmp && (
         <p className="hint">Choose a base and press Compare.</p>
       )}
       {review && (
@@ -523,11 +562,9 @@ export function ChangesReview({
               ))}
               {!review.files.length && (
                 <p className="hint">
-                  No{" "}
-                  {mode === "compare"
-                    ? "committed differences between these revisions"
-                    : `${mode} changes`}
-                  .
+                  {review.source === "folder"
+                    ? "No pending changes."
+                    : `No ${mode === "compare" ? "committed differences between these revisions" : `${mode} changes`}.`}
                 </p>
               )}
             </nav>

@@ -43,14 +43,96 @@
   border-radius: 8px;
 }
 .live-activity {
-  padding: 8px 12px;
+  padding: 0 12px;
   border: 1px dashed var(--line);
   border-radius: 8px;
   margin: 8px 0;
 }
+.live-activity > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  cursor: pointer;
+  list-style: disclosure-closed;
+  font-size: 12px;
+}
+.live-activity[open] > summary {
+  list-style: disclosure-open;
+}
+.live-activity-current {
+  color: var(--muted, #91a0b4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.live-activity-details {
+  padding: 0 0 8px 18px;
+}
+.run-progress {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  margin: 10px 0;
+  background: color-mix(in srgb, var(--panel, #1b2630) 82%, transparent);
+}
+.run-progress-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #b7e7d7;
+  font-size: 12px;
+}
+.run-progress-time {
+  margin-left: auto;
+  color: var(--muted, #91a0b4);
+  font-size: 11px;
+  text-align: right;
+}
+.run-progress-track {
+  height: 4px;
+  margin-top: 10px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #293543;
+}
+.run-progress-track span {
+  display: block;
+  height: 100%;
+  min-width: 3px;
+  border-radius: inherit;
+  background: #80d8bd;
+  transition: width 1s linear;
+}
 .live-activity .partial {
   white-space: pre-wrap;
   opacity: 0.85;
+}
+.message-disclosure {
+  border: 1px solid #303b4d;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 5px 0;
+}
+.message-disclosure > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+  color: #b9c6d6;
+  font-size: 12px;
+  list-style: disclosure-closed;
+}
+.message-disclosure[open] > summary {
+  margin-bottom: 8px;
+  list-style: disclosure-open;
+}
+.message-disclosure-preview {
+  color: var(--muted, #91a0b4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 .live-tools {
   list-style: none;

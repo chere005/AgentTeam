@@ -9,6 +9,7 @@ import {
   type SessionConfigOption,
 } from "@agentclientprotocol/sdk";
 import { assert } from "./model.ts";
+import { providerLimits } from "./config.ts";
 import { killPlanned, planSpawn } from "./runtime-spawn.ts";
 import type { RuntimeAdapter } from "./runtime-types.ts";
 
@@ -25,6 +26,7 @@ export function acpSessionPrefix(executable: string, args: string[]) {
 export const acpAdapter: RuntimeAdapter = {
   async execute(command, _environment, emit, signal, hooks) {
     signal.throwIfAborted();
+    const limits = providerLimits(hooks?.profile ?? "chat");
     const request = command.acp!;
     const plan = await planSpawn(command.executable, command.args);
     signal.throwIfAborted();
@@ -77,17 +79,21 @@ export const acpAdapter: RuntimeAdapter = {
     });
     child.stdout.on("data", (data: Buffer) => {
       bytes += data.length;
-      if (bytes > 4_000_000) {
-        failure = new Error("ACP output exceeds 4 MB limit");
+      if (bytes > limits.maxOutputBytes) {
+        failure = new Error(
+          `ACP output exceeds ${Math.round(limits.maxOutputBytes / 1_000_000)} MB limit`,
+        );
         terminate();
       }
     });
     signal.addEventListener("abort", abort, { once: true });
     if (signal.aborted) abort();
     const timer = setTimeout(() => {
-      failure = new Error("ACP runtime exceeded the 180-second limit");
+      failure = new Error(
+        `ACP runtime exceeded the ${limits.timeoutMs / 1000}-second limit`,
+      );
       terminate();
-    }, 180000);
+    }, limits.timeoutMs);
     const stream = ndJsonStream(
       Writable.toWeb(child.stdin),
       Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,

@@ -2,7 +2,8 @@ import { buildQueue, reservationHolders } from "./queue.ts";
 import { TeamService } from "./service.ts";
 import { RunManager, commandFor, executeCommand } from "./runtime.ts";
 import { prepareRunContext } from "./run-context.ts";
-import type { Task } from "./model.ts";
+import type { Agent, Task } from "./model.ts";
+import { ensureWorkspaceBaseline } from "./workspace-changes.ts";
 export class Scheduler {
   executeProvider: typeof executeCommand;
   service: TeamService;
@@ -121,6 +122,14 @@ export class Scheduler {
     let effectId: string | null = null;
     try {
       this.runs.assertRuntimeReady(plan);
+      const agent = this.service.store.get<Agent>("agent", task.agentId);
+      await Promise.all(
+        plan.workspaces
+          .filter((workspace) => workspace.access === "write")
+          .map((workspace) =>
+            ensureWorkspaceBaseline(this.service.store, agent, workspace.path),
+          ),
+      );
       // Guided parallel work: remember the checkouts' state to compare changed files afterwards.
       if (this.service.parallel.isAssigned(task.id))
         await this.service.parallel.begin(task).catch(() => {});

@@ -23,6 +23,8 @@ import { acpAdapter, acpSessionPrefix } from "./acp.ts";
 import { prepareRunContext } from "./run-context.ts";
 import { assistantContext } from "./assistant-context.ts";
 import { ToolSessions } from "./tool-endpoint.ts";
+import { GroupChats } from "./group-chat.ts";
+import { ensureWorkspaceBaseline } from "./workspace-changes.ts";
 
 /** Provider file access is available only inside the current unrestricted attachment. */
 function workspaceCapabilities(plan: LaunchPlan) {
@@ -488,6 +490,8 @@ export class RunManager {
       for (const session of store.list<Session>("session"))
         if (session.state === "running") {
           session.state = "idle";
+          delete session.startedAt;
+          delete session.timeoutMs;
           store.put("session", session);
           store.emit("session.interrupted", session.id, {
             reason: "Backend restarted; request will not automatically repeat",
@@ -536,6 +540,13 @@ export class RunManager {
     }
     const plan = await this.service.launchPlan(agent.id);
     this.assertRuntimeReady(plan);
+    await Promise.all(
+      plan.workspaces
+        .filter((workspace) => workspace.access === "write")
+        .map((workspace) =>
+          ensureWorkspaceBaseline(store, agent, workspace.path),
+        ),
+    );
     if (agent.kind === "team-assistant")
       plan.instructions +=
         "\n\n" +
@@ -590,6 +601,8 @@ export class RunManager {
       this.service.resources.acquire(sessionId, agent.id, null);
       store.remove("run-request", sessionId);
       current.state = "running";
+      current.startedAt = new Date().toISOString();
+      current.timeoutMs = providerLimits("chat").timeoutMs;
       store.put("session", current);
       for (const m of pending) {
         m.status = "processing";
@@ -621,6 +634,7 @@ export class RunManager {
       try {
         const title = request.trim().slice(0, 300) || "Agent conversation";
         const workflow = this.service.workflow({
+          kind: "conversation",
           name: `Chat: ${title}`.slice(0, 300),
           goal: request.slice(0, 5000) || "Respond to the user's message",
           ownerId: agent.id,
@@ -741,11 +755,18 @@ export class RunManager {
         store.put<Message>("message", {
           id: randomUUID(),
           sessionId: id,
+          ...(message.groupChatId ? { groupChatId: message.groupChatId } : {}),
           role: "assistant",
           text,
           status: "delivered",
           createdAt: new Date().toISOString(),
         });
+        if (message.groupChatId)
+          new GroupChats(this.service).recordReply(
+            message.groupChatId,
+            plan.agentId,
+            text,
+          );
         store.emit("session.completed", id);
       });
       if (conversationTask)
@@ -784,6 +805,8 @@ export class RunManager {
       const session = store.get<Session>("session", id);
       this.service.resources.release(id);
       session.state = "idle";
+      delete session.startedAt;
+      delete session.timeoutMs;
       store.put("session", session);
       store.emit("session.idle", id, { agentId: session.agentId });
     }

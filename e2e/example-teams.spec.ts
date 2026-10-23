@@ -268,7 +268,9 @@ test("example teams: listed with shape and org preview, inserted as teams (no pr
             .filter((a: any) => a.teamId === quickstartTeamId)
             .map((a: any) => [a.name, a.workspaces]),
         );
-        expect(assigned.get("Manager (Claude Opus)")[0].access).toBe("read");
+        // The manager knows the absolute project path but has no folder lease, so its delegated
+        // writers can start immediately instead of waiting for the manager's broad read lock.
+        expect(assigned.get("Manager (Claude Opus)")).toEqual([]);
         for (const name of [
           "C++ Builder (Claude Sonnet)",
           "Python Builder (Claude Sonnet)",

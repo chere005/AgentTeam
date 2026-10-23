@@ -774,7 +774,13 @@ test("tool definitions and per-run-token JSON-RPC endpoint", async () => {
   assert.throws(() => rpc("tools/list", undefined, null), {
     code: "unauthorized",
   });
-  assert.equal(rpc("tools/list").result.tools.length, 2);
+  const listed = rpc("tools/list").result.tools;
+  assert.equal(listed.length, 2);
+  const recipientSchema = listed[0].inputSchema.properties.recipient;
+  assert.ok(recipientSchema.enum.includes(w.name));
+  assert.ok(recipientSchema.enum.includes(w.id));
+  assert.ok(!recipientSchema.enum.includes(lead.name));
+  assert.ok(listed[0].description.includes(w.name));
   const call = rpc("tools/call", {
     name: "invoke_teammate",
     arguments: { recipient: w.id, title: "via tool" },
@@ -782,6 +788,14 @@ test("tool definitions and per-run-token JSON-RPC endpoint", async () => {
   const out = JSON.parse(call.result.content[0].text);
   assert.equal(out.parentTaskId, parent.id);
   assert.equal(call.result.isError, false);
+  const unknownRecipient = rpc("tools/call", {
+    name: "invoke_teammate",
+    arguments: { recipient: "W Builder", title: "misspelled recipient" },
+  });
+  assert.equal(unknownRecipient.result.isError, true);
+  assert.ok(
+    JSON.parse(unknownRecipient.result.content[0].text).message.includes(w.name),
+  );
   // Forged identity in arguments is rejected; permission errors surface as tool errors.
   const forged = rpc("tools/call", {
     name: "invoke_teammate",

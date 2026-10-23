@@ -16,7 +16,6 @@ import {
 import { PipelineHistory, PIPELINE_SAMPLE_ID } from "./Pipeline";
 import { AssignProject, useAssignRequest } from "./Projects";
 import { ProjectLifecycle } from "./ProjectLifecycle";
-import { WorkflowLimits } from "./Limits";
 import { WorkflowRecovery } from "./Recovery";
 import { WorkflowSharedState } from "./SharedState";
 import { WorkflowStateEditor } from "./StateEditor";
@@ -25,11 +24,13 @@ import { RuleEditor } from "./RuleEditor";
 import { HarnessSettings } from "./HarnessSettings";
 import { GitWorkflowPanel } from "./GitWorkflow";
 import { FilePreview, OpenWith } from "./FilePreview";
+import { TextEditor } from "./TextEditor";
 import { EditorSettings } from "./EditorSettings";
 import {
   ConversationLink,
   ConversationSearch,
   LiveActivity,
+  RunProgress,
   NewBelow,
   OwnershipBar,
   UnreadDivider,
@@ -47,6 +48,9 @@ import {
   unreadLabel,
 } from "../conversation";
 import { ProposalCards } from "./ProposalCard";
+import { InvocationPanel } from "./InvocationPanel";
+import { MessageMarkdown } from "./Markdown";
+import { canLeaveFileEditor } from "../file-editor-guard";
 import { useWorkspaceWatch } from "./useWorkspaceWatch";
 import { EffectiveAccess, LaunchReview, ExternalNotice } from "./AccessUi";
 import { accessLabel } from "../access-view";
@@ -82,6 +86,7 @@ import {
   type TeamEvent,
 } from "../api";
 import { eventVisible } from "../team-view";
+import { isProjectWorkflow } from "../project-kind";
 import type { FeatureId } from "../features";
 import { GitRenamePair } from "./GitRenamePair";
 /** Comma-separated declared task paths from the task form. */
@@ -90,10 +95,15 @@ const declaredPaths = (text: string) =>
     .split(",")
     .map((v) => v.trim())
     .filter(Boolean);
+const PI_DEMO_PROMPT =
+  "Start a fresh demo in agentteam-demo/pi-300/; ignore earlier chat work and leave it untouched. Define 300 significant decimal digits of Pi (the leading 3 counts as digit one). Assign these files to the matching builders: cpp/pi.cpp, python/pi.py, and typescript/pi.ts. Have each builder create its subfolder, implement the program, and report how to run it. Then ask the Codex reviewer to check correctness and request focused fixes until it approves. Run the programs only if a command tool is available; report clearly if they were not run. Give me the files, review rounds, and final report.";
 export type PaneProps = {
   data: Snapshot;
   selected: string;
   setSelected: (id: string) => void;
+  currentProjectId?: string;
+  setCurrentProject?: (id: string) => void;
+  currentProject?: Snapshot["workflows"][number] | null;
   act: (fn: () => Promise<unknown>) => Promise<void>;
   events: TeamEvent[];
   edit: (a: Agent) => void;
@@ -129,6 +139,8 @@ export function Chat(p: PaneProps) {
   const [sending, setSending] = useState(false),
     [searching, setSearching] = useState(false),
     [options, setOptions] = useState(false),
+    [clock, setClock] = useState(Date.now),
+    [fallbackStartedAt, setFallbackStartedAt] = useState(Date.now),
     // Which agent the loaded messages belong to (scroll restore must not run on stale messages).
     [owner, setOwner] = useState("");
   const unread = useUnread(p.events, p.selected);
@@ -138,6 +150,12 @@ export function Chat(p: PaneProps) {
     owner === p.selected ? messages.length : 0,
     box,
   );
+  useEffect(() => {
+    setFallbackStartedAt(Date.now());
+    if (session?.state !== "running") return;
+    const timer = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [session?.id, session?.state]);
   // Synchronous guards: state updates are async, so a fast double Enter/click could otherwise
   // post the same message twice. `composing` tracks IME composition across browsers.
   const sendLock = useRef(false),
@@ -220,6 +238,19 @@ export function Chat(p: PaneProps) {
           <AgentPicker {...p} unread={unread.counts} />
         </div>
         <div className="row">
+          {p.data.teamView?.team.name.startsWith("Quickstart:") &&
+            agent.name.startsWith("Manager") && (
+              <button
+                className="secondary pi-demo-shortcut"
+                title="Fill in a fresh, multi-agent Pi demo prompt"
+                onClick={() => {
+                  setDraft(PI_DEMO_PROMPT);
+                  persist("draft." + agent.id, PI_DEMO_PROMPT);
+                }}
+              >
+                <Play size={14} /> Pi demo
+              </button>
+            )}
           <button
             className="icon"
             title="Search messages"
@@ -294,6 +325,11 @@ export function Chat(p: PaneProps) {
           </span>
         </div>
       )}
+      <InvocationPanel
+        agent={agent}
+        limit={agent.maxConcurrentInvocations}
+        data={p.data}
+      />
       {mode === "cli" ? (
         <div className="scroll section">
           <h3>Continue in your agent’s interface</h3>
@@ -344,13 +380,16 @@ export function Chat(p: PaneProps) {
                       "Give this agent a task, ask a question, or explore an idea."}
                 </p>
                 <div className="suggestions">
-                  {(agent.kind === "team-assistant"
-                    ? [
-                        "Help me design my team",
-                        "Review the current workflow",
-                        "Which skills should I add?",
-                      ]
-                    : ["Explain your responsibilities", "Plan the next task"]
+                  {(p.data.teamView?.team.name.startsWith("Quickstart:") &&
+                  agent.name.startsWith("Manager")
+                    ? [PI_DEMO_PROMPT]
+                    : agent.kind === "team-assistant"
+                      ? [
+                          "Help me design my team",
+                          "Review the current workflow",
+                          "Which skills should I add?",
+                        ]
+                      : ["Explain your responsibilities", "Plan the next task"]
                   ).map((text) => (
                     <button
                       key={text}
@@ -402,7 +441,7 @@ export function Chat(p: PaneProps) {
                     {splitProposalBlocks(m.text).map((part, j) =>
                       part.kind === "text" ? (
                         <div className="message-text" key={j}>
-                          {part.text}
+                          <MessageMarkdown text={part.text} collapsible />
                         </div>
                       ) : (
                         <details className="proposal-json" key={j}>
@@ -423,16 +462,15 @@ export function Chat(p: PaneProps) {
                     />
                   </>
                 ) : (
-                  <div className="message-text">{m.text}</div>
+                  <div className="message-text">
+                    <MessageMarkdown
+                      text={m.text}
+                      collapsible={m.role === "assistant"}
+                    />
+                  </div>
                 )}
               </article>
             ))}
-            {session?.state === "running" && (
-              <div className="thinking">
-                <span className="state-orbit processing" />
-                {agent.name} is processing…
-              </div>
-            )}
             {session && (
               <LiveActivity
                 events={p.events}
@@ -452,6 +490,16 @@ export function Chat(p: PaneProps) {
             <NewBelow n={scroll.below} jump={scroll.toBottom} />
           </div>
           <div className="composer-wrap">
+            {session?.state === "running" && (
+              <RunProgress
+                name={agent.name}
+                startedAt={
+                  session.startedAt ?? new Date(fallbackStartedAt).toISOString()
+                }
+                timeoutMs={session.timeoutMs}
+                now={clock}
+              />
+            )}
             {!p.data.liveExecution && (
               <div className="notice">
                 Execution is paused. Messages stay queued until you resume in
@@ -559,13 +607,14 @@ export function Workflows(p: PaneProps) {
   const [assigning, setAssigning] = useState(false);
   // Archived projects are hidden unless asked for (src/project-lifecycle.ts).
   const [showArchived, setShowArchived] = useState(false);
-  const archived = p.data.workflows.filter(
+  const projectWorkflows = p.data.workflows.filter(isProjectWorkflow);
+  const archived = projectWorkflows.filter(
     (w) =>
       (w as { lifecycle?: { state: string } }).lifecycle?.state === "archived",
   ).length;
   const shownWorkflows = showArchived
-    ? p.data.workflows
-    : p.data.workflows.filter(
+    ? projectWorkflows
+    : projectWorkflows.filter(
         (w) =>
           (w as { lifecycle?: { state: string } }).lifecycle?.state !==
           "archived",
@@ -599,10 +648,8 @@ export function Workflows(p: PaneProps) {
         </div>
       </div>
       <p className="hint projects-hint">
-        A project is one piece of work for {teamName}: a goal, a workspace,
-        tasks and gates, run by the team’s agents.{" "}
-        {p.data.workflows.length > 0 &&
-          `${p.data.workflows.filter((w) => w.status === "running").length} running · ${p.data.workflows.filter((w) => w.status === "queued").length} queued · ${p.data.workflows.filter((w) => w.status === "completed").length} complete.`}
+        Projects group a goal, workspace and tasks for {teamName}. Follow each
+        project here; agent conversations are in Chat.
       </p>
       {assigning && (
         <AssignProject
@@ -666,7 +713,7 @@ export function Workflows(p: PaneProps) {
           </button>
         </form>
       )}
-      {!p.data.workflows.length && !creating && !assigning && (
+      {!projectWorkflows.length && !creating && !assigning && (
         <div className="empty compact">
           <ListTodoIcon />
           <h3>No projects in {teamName}</h3>
@@ -688,65 +735,59 @@ export function Workflows(p: PaneProps) {
         </label>
       )}
       {shownWorkflows.map((w) => (
-        <section className="workflow" key={w.id}>
-          <div className="row between">
-            <b>{w.name}</b>
-            <span
-              className={"badge " + (w.status === "running" ? "green" : "")}
-            >
-              {w.status}
-            </span>
+        <section className="workflow project-card" key={w.id}>
+          <div className="row between project-heading">
+            <div className="project-heading-copy">
+              <h3>{w.name}</h3>
+              <p>{w.goal}</p>
+            </div>
+            <div className="row">
+              <span
+                className={"badge " + (w.status === "running" ? "green" : "")}
+              >
+                {w.status === "needs-attention" ? "needs attention" : w.status}
+              </span>
+              {p.setCurrentProject && (
+                <button
+                  className="text-button"
+                  aria-pressed={p.currentProjectId === w.id}
+                  onClick={() => p.setCurrentProject!(w.id)}
+                >
+                  {p.currentProjectId === w.id
+                    ? "Current project"
+                    : "Make current"}
+                </button>
+              )}
+            </div>
           </div>
-          <p>{w.goal}</p>
           <ProjectLifecycle workflow={w} act={p.act} />
           <SampleSetup workflow={w} act={p.act} />
-          {w.setup?.sample === PIPELINE_SAMPLE_ID && (
-            <PipelineHistory workflowId={w.id} act={p.act} />
-          )}
           <WorkflowGateSummary tasks={w.tasks} />
-          {p.openFeature && (
-            <div className="row wrap project-links">
-              <button
-                className="text-button"
-                onClick={() => p.openFeature!("limits")}
-              >
-                Limits
-              </button>
-              <button
-                className="text-button"
-                onClick={() => p.openFeature!("recovery")}
-              >
-                Recovery
-              </button>
-              <button
-                className="text-button"
-                onClick={() => p.openFeature!("shared")}
-              >
-                Shared state
-              </button>
-              <button
-                className="text-button"
-                onClick={() => p.openFeature!("graphs")}
-              >
-                Workflow graphs
-              </button>
+          <div className="project-progress-row">
+            <div
+              className="progress project-progress"
+              role="progressbar"
+              aria-label={`${w.name} task progress`}
+              aria-valuemin={0}
+              aria-valuemax={w.tasks.length}
+              aria-valuenow={
+                w.tasks.filter((t) => t.status === "completed").length
+              }
+            >
+              <span
+                style={{
+                  width: `${w.tasks.length ? (100 * w.tasks.filter((t) => t.status === "completed").length) / w.tasks.length : 0}%`,
+                }}
+              />
             </div>
-          )}
-          <div className="progress">
-            <span
-              style={{
-                width: `${w.tasks.length ? (100 * w.tasks.filter((t) => t.status === "completed").length) / w.tasks.length : 0}%`,
-              }}
-            />
-          </div>
-          <div className="row between quiet">
             <small>
-              {w.tasks.filter((t) => t.status === "completed").length} /{" "}
-              {w.tasks.length} tasks
+              {w.tasks.filter((t) => t.status === "completed").length} of{" "}
+              {w.tasks.length} tasks complete
             </small>
             <button
               className="icon"
-              title={w.paused ? "Resume workflow" : "Pause workflow"}
+              title={w.paused ? "Resume project" : "Pause project"}
+              aria-label={w.paused ? "Resume project" : "Pause project"}
               onClick={() =>
                 void p.act(() =>
                   api("/workflows/" + w.id + "/pause", "POST", {
@@ -758,86 +799,140 @@ export function Workflows(p: PaneProps) {
               {w.paused ? <Play size={15} /> : <Pause size={15} />}
             </button>
           </div>
-          {w.tasks.map((t) => (
-            <details className="task" key={t.id}>
-              <summary>
-                <span className={"task-dot " + t.status} />
-                <span>
-                  {t.title}
-                  <small>
-                    {p.data.agents.find((a) => a.id === t.agentId)?.name}
-                  </small>
-                </span>
-                <GateBadge task={t} />
-                <span className="badge">{t.status}</span>
-              </summary>
-              <p>{t.instructions}</p>
-              <small>Done when: {t.completionCriteria}</small>
-              {t.dependsOn.length > 0 && (
-                <p className="hint">
-                  Depends on{" "}
-                  {t.dependsOn
-                    .map((id) => w.tasks.find((x) => x.id === id)?.title)
-                    .join(", ")}
-                </p>
-              )}
-              {t.result && <pre>{t.result}</pre>}
-              {p.openChat && (
-                <ConversationLink
-                  taskId={t.id}
-                  openChat={p.openChat}
-                  label="Open agent conversation"
+          <details className="project-tasks">
+            <summary>
+              <b>Tasks</b>
+              <span>
+                {w.tasks.length} total ·{" "}
+                {
+                  w.tasks.filter(
+                    (t) => t.status === "queued" || t.status === "running",
+                  ).length
+                }{" "}
+                active ·{" "}
+                {
+                  w.tasks.filter((t) =>
+                    ["failed", "blocked", "interrupted"].includes(t.status),
+                  ).length
+                }{" "}
+                need attention
+              </span>
+            </summary>
+            {w.tasks.map((t) => (
+              <details className="task" key={t.id}>
+                <summary>
+                  <span className={"task-dot " + t.status} />
+                  <span>
+                    {t.title}
+                    <small>
+                      {p.data.agents.find((a) => a.id === t.agentId)?.name}
+                    </small>
+                  </span>
+                  <GateBadge task={t} />
+                  <span className="badge">{t.status}</span>
+                </summary>
+                <p>{t.instructions}</p>
+                <small>Done when: {t.completionCriteria}</small>
+                {t.dependsOn.length > 0 && (
+                  <p className="hint">
+                    Depends on{" "}
+                    {t.dependsOn
+                      .map((id) => w.tasks.find((x) => x.id === id)?.title)
+                      .join(", ")}
+                  </p>
+                )}
+                {t.result && <pre>{t.result}</pre>}
+                {p.openChat && (
+                  <ConversationLink
+                    taskId={t.id}
+                    openChat={p.openChat}
+                    label="Open agent conversation"
+                  />
+                )}
+                <TaskValidation
+                  task={t}
+                  liveExecution={p.data.liveExecution}
+                  act={p.act}
                 />
-              )}
-              <TaskValidation
-                task={t}
-                liveExecution={p.data.liveExecution}
-                act={p.act}
-              />
-              <TaskSettings task={t} tasks={w.tasks} act={p.act} />
-              <div className="row">
-                {t.status === "failed" && (
-                  <button
-                    onClick={() =>
-                      void p.act(() =>
-                        api("/tasks/" + t.id + "/status", "POST", {
-                          status: "queued",
-                        }),
-                      )
-                    }
-                  >
-                    Retry
-                  </button>
-                )}
-                {["queued", "failed", "interrupted", "blocked"].includes(
-                  t.status,
-                ) && (
-                  <button
-                    onClick={() =>
-                      void p.act(() =>
-                        api("/tasks/" + t.id + "/status", "POST", {
-                          status: "cancelled",
-                        }),
-                      )
-                    }
-                  >
-                    Cancel
-                  </button>
-                )}
-                {t.status === "running" && (
-                  <button
-                    onClick={() =>
-                      void p.act(() =>
-                        api("/tasks/" + t.id + "/cancel", "POST"),
-                      )
-                    }
-                  >
-                    Stop
-                  </button>
-                )}
+                <TaskSettings task={t} tasks={w.tasks} act={p.act} />
+                <div className="row">
+                  {t.status === "failed" && (
+                    <button
+                      onClick={() =>
+                        void p.act(() =>
+                          api("/tasks/" + t.id + "/status", "POST", {
+                            status: "queued",
+                          }),
+                        )
+                      }
+                    >
+                      Retry
+                    </button>
+                  )}
+                  {["queued", "failed", "interrupted", "blocked"].includes(
+                    t.status,
+                  ) && (
+                    <button
+                      onClick={() =>
+                        void p.act(() =>
+                          api("/tasks/" + t.id + "/status", "POST", {
+                            status: "cancelled",
+                          }),
+                        )
+                      }
+                    >
+                      Cancel
+                    </button>
+                  )}
+                  {t.status === "running" && (
+                    <button
+                      onClick={() =>
+                        void p.act(() =>
+                          api("/tasks/" + t.id + "/cancel", "POST"),
+                        )
+                      }
+                    >
+                      Stop
+                    </button>
+                  )}
+                </div>
+              </details>
+            ))}
+          </details>
+          <details className="project-more">
+            <summary>Project settings & reports</summary>
+            {w.setup?.sample === PIPELINE_SAMPLE_ID && (
+              <PipelineHistory workflowId={w.id} act={p.act} />
+            )}
+            {p.openFeature && (
+              <div className="row wrap project-links">
+                <button
+                  className="text-button"
+                  onClick={() => p.openFeature!("usage")}
+                >
+                  Limits and usage
+                </button>
+                <button
+                  className="text-button"
+                  onClick={() => p.openFeature!("recovery")}
+                >
+                  Recovery
+                </button>
+                <button
+                  className="text-button"
+                  onClick={() => p.openFeature!("shared")}
+                >
+                  Shared state
+                </button>
+                <button
+                  className="text-button"
+                  onClick={() => p.openFeature!("graphs")}
+                >
+                  Step-by-step runs
+                </button>
               </div>
-            </details>
-          ))}
+            )}
+          </details>
           <button
             className="text-button"
             onClick={() => {
@@ -1127,12 +1222,35 @@ export type WorkspaceView = "files" | "git" | "review" | "preview";
 const VIEW_TITLE: Record<WorkspaceView, string> = {
   files: "Files",
   git: "Git",
-  review: "Review changes",
+  review: "Diff",
   preview: "Preview",
 };
-/** Files, Git, Review changes and Preview: one feature tab each, for one agent's folder. */
-export function Workspace(p: PaneProps & { view: WorkspaceView }) {
-  const agent = p.data.agents.find((a) => a.id === p.selected),
+/** Project files and Diff, plus Git and Preview as feature tabs for the selected workspace. */
+export function Workspace(
+  p: PaneProps & {
+    view: WorkspaceView;
+    openFileTarget?: {
+      agentId: string;
+      workspace: string;
+      path: string;
+    } | null;
+    onFileTargetHandled?: () => void;
+  },
+) {
+  const projectWorkspace = p.currentProject?.setup?.workspace;
+  const projectAgentId =
+    p.currentProject?.tasks
+      .map((task) => p.data.agents.find((agent) => agent.id === task.agentId))
+      .find((agent) =>
+        agent?.workspaces.some(
+          (workspace) => workspace.path === projectWorkspace,
+        ),
+      )?.id ??
+    p.currentProject?.tasks[0]?.agentId ??
+    p.currentProject?.ownerId;
+  const preferredAgentId = projectAgentId ?? p.selected;
+  const [workspaceAgentId, setWorkspaceAgentId] = useState(preferredAgentId);
+  const agent = p.data.agents.find((a) => a.id === workspaceAgentId),
     [root, setRoot] = useState(""),
     [path, setPath] = useState("."),
     [listing, setListing] = useState<any>(null),
@@ -1146,17 +1264,48 @@ export function Workspace(p: PaneProps & { view: WorkspaceView }) {
       y: number;
     } | null>(null);
   const tab = p.view;
+  const previewRef = useRef(preview);
+  previewRef.current = preview;
+  useEffect(() => setWorkspaceAgentId(preferredAgentId), [preferredAgentId]);
+  useEffect(() => {
+    if (p.openFileTarget && p.openFileTarget.agentId !== workspaceAgentId)
+      setWorkspaceAgentId(p.openFileTarget.agentId);
+  }, [p.openFileTarget, workspaceAgentId]);
   useEffect(() => {
     setRoot(
-      agent?.workspaces.find((w) => w.active)?.path ??
+      (projectWorkspace &&
+      agent?.workspaces.some((w) => w.path === projectWorkspace)
+        ? projectWorkspace
+        : undefined) ??
+        agent?.workspaces.find((w) => w.active)?.path ??
         agent?.workspaces[0]?.path ??
         "",
     );
     setPath(".");
-    setPreview(null);
+    if (!previewRef.current?.isNew) setPreview(null);
     setGit(null);
     setListing(null);
-  }, [p.selected, agent?.workspaces.map((w) => w.path).join("|")]);
+  }, [
+    workspaceAgentId,
+    projectWorkspace,
+    agent?.workspaces.map((w) => w.path).join("|"),
+  ]);
+  useEffect(() => {
+    const target = p.openFileTarget;
+    if (!target || agent?.id !== target.agentId) return;
+    if (
+      !agent.workspaces.some((workspace) => workspace.path === target.workspace)
+    ) {
+      p.onFileTargetHandled?.();
+      return;
+    }
+    const parts = target.path.split(/[\\/]/);
+    const name = parts.pop() ?? target.path;
+    setRoot(target.workspace);
+    setPath(parts.join("/") || ".");
+    setPreview({ path: target.path, name });
+    p.onFileTargetHandled?.();
+  }, [p.openFileTarget, agent?.id]);
   const load = async () => {
     if (!root || !agent) return;
     setListing(
@@ -1205,18 +1354,34 @@ export function Workspace(p: PaneProps & { view: WorkspaceView }) {
       <div className="section workspace-top">
         <div className="section-title">
           <h2>{VIEW_TITLE[tab]}</h2>
-          <button title="Add or change folders" onClick={() => p.edit(agent)}>
+          <button
+            title="Add a folder to this agent's file workspace"
+            onClick={() => p.edit(agent)}
+          >
             <Plus size={16} />
-            Folder
+            Add folder
           </button>
         </div>
         <div className="row workspace-pickers">
-          <AgentPicker {...p} />
+          <select
+            aria-label="Workspace agent"
+            value={workspaceAgentId}
+            onChange={(event) => {
+              if (canLeaveFileEditor()) setWorkspaceAgentId(event.target.value);
+            }}
+          >
+            {p.data.agents.map((workspaceAgent) => (
+              <option key={workspaceAgent.id} value={workspaceAgent.id}>
+                {workspaceAgent.name}
+              </option>
+            ))}
+          </select>
           {root && (
             <select
               aria-label="Workspace folder"
               value={root}
               onChange={(e) => {
+                if (!canLeaveFileEditor()) return;
                 setRoot(e.target.value);
                 setPath(".");
                 setPreview(null);
@@ -1232,15 +1397,57 @@ export function Workspace(p: PaneProps & { view: WorkspaceView }) {
           )}
         </div>
       </div>
-      {!root ? (
+      {preview?.isNew ? (
+        <div className="scroll section workspace-body">
+          {p.currentProject && (
+            <p className="workspace-project-context">
+              Current project: <b>{p.currentProject.name}</b>
+            </p>
+          )}
+          <TextEditor
+            key={agent.id + "new-file"}
+            agentId={agent.id}
+            workspace={root}
+            path={preview.path}
+            isNew
+            onCancel={() => setPreview(null)}
+            onSaved={() => {}}
+            onCreated={(createdPath) => {
+              const name = createdPath.split(/[\\/]/).pop() ?? createdPath;
+              setPreview({ path: createdPath, name });
+              setTick((value) => value + 1);
+              void p.act(load);
+            }}
+          />
+        </div>
+      ) : !root ? (
         <div className="empty">
           <FolderOpen size={34} />
-          <h3>No folders attached</h3>
-          <p>Add a folder to {agent.name} in its agent panel first.</p>
+          <h3>No project folder open</h3>
+          <p>
+            Open a blank file now, or add a folder to browse and save project
+            files.
+          </p>
+          <button
+            onClick={() =>
+              setPreview({
+                path: "untitled.txt",
+                name: "untitled.txt",
+                isNew: true,
+              })
+            }
+          >
+            <Plus size={15} /> New file
+          </button>
           <button onClick={() => p.edit(agent)}>Add a folder</button>
         </div>
       ) : (
         <div className="scroll section workspace-body">
+          {p.currentProject && (
+            <p className="workspace-project-context">
+              Current project: <b>{p.currentProject.name}</b>
+            </p>
+          )}
           {tab === "preview" ? (
             <DevServerPanel
               key={agent.id + root}
@@ -1264,6 +1471,7 @@ export function Workspace(p: PaneProps & { view: WorkspaceView }) {
                     title="Parent folder"
                     disabled={path === "."}
                     onClick={() => {
+                      if (!canLeaveFileEditor()) return;
                       const parts = path.split(/[\\/]/);
                       parts.pop();
                       setPath(parts.join("/") || ".");
@@ -1281,69 +1489,115 @@ export function Workspace(p: PaneProps & { view: WorkspaceView }) {
                 >
                   <RefreshCw size={15} />
                 </button>
+                <button
+                  className="primary"
+                  title={`Create a file in ${root}${path === "." ? "" : `/${path}`}`}
+                  onClick={() => {
+                    if (!canLeaveFileEditor()) return;
+                    const folder = path === "." ? "" : `${path}/`;
+                    setPreview({
+                      path: `${folder}untitled.txt`,
+                      name: "untitled.txt",
+                      isNew: true,
+                    });
+                  }}
+                >
+                  <Plus size={15} />
+                  New file
+                </button>
               </div>
-              <div className="file-list">
-                {listing?.entries.map((entry: any) => (
-                  <button
-                    key={entry.path}
-                    onClick={() =>
-                      void p.act(async () => {
-                        if (entry.type === "directory") {
-                          setPath(entry.path);
-                          setPreview(null);
-                        } else
-                          setPreview({
-                            path: entry.path,
-                            name: entry.name,
+              <div className="workspace-file-browser">
+                <aside
+                  className="workspace-file-tree"
+                  aria-label="Project files"
+                >
+                  <div className="file-list">
+                    {listing?.entries.map((entry: any) => (
+                      <button
+                        key={entry.path}
+                        aria-current={
+                          preview?.path === entry.path ? "page" : undefined
+                        }
+                        onClick={() => {
+                          if (
+                            preview?.path !== entry.path &&
+                            !canLeaveFileEditor()
+                          )
+                            return;
+                          void p.act(async () => {
+                            if (entry.type === "directory") {
+                              setPath(entry.path);
+                              setPreview(null);
+                            } else {
+                              setPreview({
+                                path: entry.path,
+                                name: entry.name,
+                              });
+                            }
                           });
-                      })
-                    }
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      setContext({
-                        path: entry.path,
-                        x: e.clientX,
-                        y: e.clientY,
-                      });
-                    }}
-                  >
-                    {entry.type === "directory" ? (
-                      <FolderOpen size={16} />
-                    ) : (
-                      <File size={16} />
-                    )}
-                    <span>{entry.name}</span>
-                    {entry.type === "directory" && <ChevronRight size={14} />}
-                  </button>
-                ))}
+                        }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          setContext({
+                            path: entry.path,
+                            x: e.clientX,
+                            y: e.clientY,
+                          });
+                        }}
+                      >
+                        {entry.type === "directory" ? (
+                          <FolderOpen size={16} />
+                        ) : (
+                          <File size={16} />
+                        )}
+                        <span>{entry.name}</span>
+                        {entry.type === "directory" && (
+                          <ChevronRight size={14} />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="row wrap workspace-file-actions">
+                    <button onClick={() => void p.act(() => open("."))}>
+                      Open project externally
+                    </button>
+                    <button
+                      onClick={() => void p.act(() => open(path, "finder"))}
+                    >
+                      Reveal folder
+                    </button>
+                    <OpenWith
+                      agentId={agent.id}
+                      workspace={root}
+                      path={path}
+                      project
+                    />
+                  </div>
+                </aside>
+                <section
+                  className="workspace-file-editor"
+                  aria-label="File editor"
+                >
+                  {preview ? (
+                    <FilePreview
+                      key={agent.id + root + preview.path}
+                      agentId={agent.id}
+                      workspace={root}
+                      path={preview.path}
+                      access={
+                        agent.workspaces.find((w) => w.path === root)?.access ??
+                        "read"
+                      }
+                      refreshKey={tick}
+                    />
+                  ) : (
+                    <div className="empty compact">
+                      <File size={30} />
+                      <p>Select a file to preview or edit it.</p>
+                    </div>
+                  )}
+                </section>
               </div>
-              <div className="row">
-                <button onClick={() => void p.act(() => open("."))}>
-                  Open project in editor
-                </button>
-                <button onClick={() => void p.act(() => open(path, "finder"))}>
-                  Reveal folder
-                </button>
-                <OpenWith
-                  agentId={agent.id}
-                  workspace={root}
-                  path={path}
-                  project
-                />
-              </div>
-              {preview && (
-                <FilePreview
-                  key={agent.id + root + preview.path}
-                  agentId={agent.id}
-                  workspace={root}
-                  path={preview.path}
-                  access={
-                    agent.workspaces.find((w) => w.path === root)?.access ??
-                    "read"
-                  }
-                  refreshKey={tick}
-                />
-              )}
             </>
           ) : (
             <>
@@ -1842,26 +2096,20 @@ function AccessView({
 }
 
 const PROJECT_PANEL: Record<
-  "limits" | "recovery" | "shared",
+  "recovery" | "shared",
   { title: string; hint: string }
 > = {
-  limits: {
-    title: "Limits",
-    hint: "Turn, time, retry and delegation limits per project. A project stopped by a limit resumes only after you raise it.",
-  },
   recovery: {
     title: "Recovery",
     hint: "Tasks interrupted by a restart or blocked on an uncertain effect, with the next safe step.",
   },
   shared: {
     title: "Shared state",
-    hint: "Typed fields the project’s agents share, their history, settings and saved artifacts.",
+    hint: "Durable project facts and registered outputs that agents can reuse across tasks. Chat history lives in Chat; this view is empty until a field or artifact is created.",
   },
 };
 /** Limits, Recovery and Shared state: one per-project panel for each of the team's projects. */
-export function ProjectPanels(
-  p: PaneProps & { kind: "limits" | "recovery" | "shared" },
-) {
+export function ProjectPanels(p: PaneProps & { kind: "recovery" | "shared" }) {
   const info = PROJECT_PANEL[p.kind];
   return (
     <div className="scroll section">
@@ -1892,9 +2140,6 @@ export function ProjectPanels(
               {w.status}
             </span>
           </div>
-          {p.kind === "limits" && (
-            <WorkflowLimits workflowId={w.id} act={p.act} />
-          )}
           {p.kind === "recovery" && (
             <WorkflowRecovery workflowId={w.id} act={p.act} />
           )}

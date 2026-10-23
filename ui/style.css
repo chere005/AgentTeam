@@ -475,6 +475,65 @@ summary:focus-visible {
 .message.user .message-text {
   color: #e1e8f2;
 }
+.markdown > :first-child {
+  margin-top: 0;
+}
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+.markdown p {
+  margin: 0 0 0.8em;
+  white-space: normal;
+}
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  margin: 0.8em 0 0.45em;
+  line-height: 1.35;
+}
+.markdown ul {
+  margin: 0.35em 0 0.8em;
+  padding-left: 1.4em;
+}
+.markdown li {
+  margin: 0.2em 0;
+}
+.markdown code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.92em;
+}
+.markdown pre {
+  max-width: 100%;
+  overflow: auto;
+  white-space: pre;
+  padding: 12px;
+  margin: 8px 0;
+  border: 1px solid #303b4d;
+  border-radius: 8px;
+  background: #101720;
+  line-height: 1.5;
+}
+.markdown-code > summary {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  color: #9cb3c8;
+  padding: 5px 8px;
+  border: 1px solid #303b4d;
+  border-radius: 6px;
+  font-size: 11px;
+  list-style: disclosure-closed;
+}
+.markdown-code[open] > summary {
+  list-style: disclosure-open;
+}
+.markdown-code > pre {
+  margin-top: 6px;
+}
+.message-text .markdown {
+  white-space: normal;
+}
 .thinking {
   display: flex;
   gap: 10px;
@@ -540,6 +599,79 @@ summary:focus-visible {
 .workflow > p {
   font-size: 12px;
   margin: 10px 0;
+}
+.project-card {
+  padding: 14px 16px;
+  margin: 10px 0;
+}
+.project-heading {
+  align-items: flex-start;
+  gap: 12px;
+}
+.project-heading-copy {
+  min-width: 0;
+}
+.project-heading-copy h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.project-heading-copy p {
+  margin: 5px 0 9px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.project-progress-row {
+  display: grid;
+  grid-template-columns: minmax(80px, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+  color: var(--muted);
+}
+.project-progress {
+  margin: 0;
+  height: 5px;
+}
+.project-progress-row small {
+  white-space: nowrap;
+  font-size: 11px;
+}
+.project-card > details {
+  border-top: 1px solid var(--line-soft);
+  margin-top: 8px;
+  padding-top: 6px;
+}
+.project-card > details > summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 30px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  list-style-position: inside;
+}
+.project-card > details > summary span {
+  color: var(--muted);
+  font-weight: 400;
+}
+.project-tasks > summary span {
+  margin-left: auto;
+  text-align: right;
+}
+.project-card .task {
+  margin-top: 4px;
+}
+.project-card .project-lifecycle {
+  margin: 5px 0;
+}
+.project-card .project-more .project-links {
+  padding: 8px 0 4px;
 }
 .progress {
   height: 4px;
@@ -713,6 +845,181 @@ summary:focus-visible {
 }
 .workspace-body {
   padding-top: 14px;
+}
+.workspace-project-context {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  margin-bottom: 12px;
+  font-size: 11px;
+}
+.workspace-project-context b {
+  color: var(--text);
+}
+.workspace-file-browser {
+  display: grid;
+  grid-template-columns: minmax(190px, 260px) minmax(0, 1fr);
+  gap: 12px;
+  min-height: 65vh;
+}
+.workspace-file-tree {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-1);
+  overflow: auto;
+}
+.workspace-file-tree .file-list {
+  flex: 1;
+  margin: 0;
+  padding: 5px;
+  border: 0;
+}
+.workspace-file-tree .file-list button[aria-current="page"] {
+  background: #293747;
+  color: var(--text);
+}
+.workspace-file-actions {
+  padding: 7px;
+  border-top: 1px solid var(--line);
+}
+.workspace-file-actions button {
+  font-size: 10px;
+  padding: 6px;
+}
+.workspace-file-editor {
+  min-width: 0;
+  min-height: 65vh;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #111722;
+  overflow: auto;
+}
+.workspace-file-editor .file-preview {
+  min-height: 100%;
+  margin: 0;
+  padding: 12px;
+  border: 0;
+}
+.workspace-file-editor .file-preview > .access-banner {
+  margin: 8px 0;
+}
+.file-edit-button {
+  margin: 8px 0;
+}
+.text-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 55vh;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #11151c;
+}
+.text-editor-toolbar,
+.text-editor-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-1);
+}
+.text-editor-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.text-editor-status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #6d7b8e;
+}
+.text-editor-status i.dirty {
+  background: #e6bb67;
+}
+.text-editor-new-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 180px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.text-editor-new-name input {
+  width: min(240px, 30vw);
+  padding: 5px 7px;
+  font-size: 11px;
+}
+.text-editor-toolbar button {
+  padding: 6px 9px;
+  font-size: 11px;
+}
+.text-editor-toolbar kbd {
+  margin-left: 4px;
+  font-size: 9px;
+  opacity: 0.75;
+}
+.text-editor-surface {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.text-editor-gutter {
+  flex: 0 0 48px;
+  max-height: none;
+  margin: 0;
+  padding: 12px 8px;
+  border-radius: 0;
+  background: #151b23;
+  color: #667588;
+  text-align: right;
+  user-select: none;
+  white-space: pre;
+  line-height: 1.55;
+}
+.text-editor-surface textarea {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  min-height: 55vh;
+  resize: none;
+  border: 0;
+  border-radius: 0;
+  padding: 12px;
+  background: transparent;
+  color: #d9e2ed;
+  font:
+    12px/1.55 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
+  white-space: pre;
+  tab-size: 2;
+}
+.text-editor-surface textarea:focus {
+  box-shadow: none;
+  outline: none;
+}
+.text-editor-footer {
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+.text-editor-error {
+  padding: 7px 10px;
+  margin: 0;
+  color: #f0b6a9;
 }
 .file-list {
   margin: 12px 0;
@@ -1779,6 +2086,28 @@ button.link {
 .team-switcher-text b {
   font-size: 13px;
 }
+.topbar-project {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+  min-width: 180px;
+  max-width: 300px;
+  margin: 0;
+  white-space: nowrap;
+}
+.topbar-project > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.topbar-project select {
+  min-width: 100px;
+  max-width: 230px;
+  padding: 6px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
 .team-dot {
   width: 8px;
   height: 8px;
@@ -1812,6 +2141,12 @@ button.link {
   font-size: 12.5px;
   padding: 7px 10px;
   border-radius: 7px 7px 0 0;
+}
+.view-shortcut {
+  margin-left: 9px;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 400;
 }
 .view-tab.active {
   background: #19212c;
@@ -2081,6 +2416,13 @@ button.link {
   }
   .topbar .brand b {
     display: none;
+  }
+  .topbar-project {
+    min-width: 0;
+    max-width: 240px;
+  }
+  .topbar-project select {
+    width: 135px;
   }
 }
 .topbar-attention.elsewhere {

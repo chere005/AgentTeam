@@ -1403,6 +1403,10 @@ test("chat runs answer every queued message: a message left queued while paused 
     const runs = new RunManager(service, true, process.cwd());
     const prompts: string[] = [];
     runs.execute = async (command, _env, onEvent) => {
+      const active = store.get<any>("session", session.id);
+      assert.equal(active.state, "running");
+      assert.ok(Number.isFinite(Date.parse(active.startedAt)));
+      assert.equal(active.timeoutMs, 3_600_000);
       const request = command.stdin.slice(
         command.stdin.lastIndexOf("User request:\n") + 14,
       );
@@ -1445,6 +1449,10 @@ test("chat runs answer every queued message: a message left queued while paused 
       .filter((e) => e.type === "session.started")
       .at(-1)!.data as { messageIds: string[] };
     assert.equal(started1.messageIds.length, 2);
+    const activeSession = store.get<any>("session", session.id);
+    assert.equal(activeSession.state, "idle");
+    assert.equal(activeSession.startedAt, undefined);
+    assert.equal(activeSession.timeoutMs, undefined);
     assert.deepEqual(
       messages().map((m) => [m.role, m.status]),
       [

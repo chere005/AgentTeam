@@ -139,10 +139,8 @@ export function TeamSettings(p: PaneProps) {
         </div>
       </div>
       <p className="hint">
-        The team is the persistent org of agents; projects you assign run on
-        these agents. Changes here never alter existing projects: they keep the
-        agents they were built on, and projects assigned later use the new
-        counts.
+        Set this team’s defaults. Existing projects keep their agents; new
+        projects use updated worker counts.
       </p>
       {error && (
         <p className="err" role="alert">
@@ -287,12 +285,9 @@ export function TeamSettings(p: PaneProps) {
           {countable.length > 0 ? (
             <>
               <p className="quiet">
-                Adding a worker copies the role’s preset (role type, model,
-                effort, tools, instructions, place in the org tree and
-                connections). Removing one is refused while it has unfinished
-                work, an uncertain external effect or a running chat; a worker
-                that finished project work is retired (kept for history, no
-                longer used by new projects).
+                New workers copy this role’s model and setup. Workers with
+                unfinished work cannot be removed; workers used by projects are
+                retired to preserve history.
               </p>
               <div className="row">
                 <button
@@ -370,8 +365,8 @@ export function TeamSettings(p: PaneProps) {
         <h3>Workspace access defaults</h3>
         <p className="quiet">
           {view.workspaceAccess.derived
-            ? "No mapping in a profile: each agent's access to a project workspace is derived from its role (reviewers and coordinators read)."
-            : `${view.workspaceAccess.label}: how a project's workspace is attached to each agent.`}
+            ? "Default folder access is based on agent role."
+            : `${view.workspaceAccess.label}: default access to project folders.`}
         </p>
         <ul className="ts-list">
           {view.workspaceAccess.agents.map((a) => (
@@ -402,8 +397,8 @@ export function TeamSettings(p: PaneProps) {
           </ul>
         ) : (
           <p className="quiet">
-            No explicit expectations: each agent is checked against the models
-            its runtime advertises.
+            No extra model requirements. Agents are checked against models their
+            runtime advertises.
           </p>
         )}
         <div className="row">

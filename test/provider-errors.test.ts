@@ -80,12 +80,15 @@ test("toProviderError tags message, keeps status, is idempotent", () => {
   );
 });
 
-test("provider limits defaults preserve prior chat behavior", () => {
+test("provider limits give chat and task runs a one-hour default window", () => {
   assert.deepEqual(providerLimits("chat", {}), {
-    timeoutMs: 180_000,
-    maxOutputBytes: 4_000_000,
+    timeoutMs: 3_600_000,
+    maxOutputBytes: 8_000_000,
   });
-  assert.ok(providerLimits("task", {}).timeoutMs > 180_000);
+  assert.deepEqual(providerLimits("task", {}), {
+    timeoutMs: 3_600_000,
+    maxOutputBytes: 16_000_000,
+  });
 });
 
 test("provider limits parse env and reject invalid values", () => {
@@ -102,6 +105,6 @@ test("provider limits parse env and reject invalid values", () => {
   assert.deepEqual(providerLimits("task", env), providerLimits("task", {}));
   assert.equal(
     providerLimits("chat", { AGENTTEAM_CHAT_TIMEOUT_SECONDS: "" }).timeoutMs,
-    180_000,
+    3_600_000,
   );
 });

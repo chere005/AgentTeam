@@ -78,7 +78,7 @@ export function handleToolRpc(
       serverInfo: { name: "agentteam-teammates", version: "1" },
     });
   if (rpc.method === "ping") return result({});
-  const tools = orchestration.tools();
+  const tools = orchestration.tools(ctx);
   if (rpc.method === "tools/list")
     return result({
       tools: tools.map(({ name, description, inputSchema }) => ({

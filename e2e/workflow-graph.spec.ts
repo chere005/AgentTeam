@@ -105,7 +105,7 @@ test("workflow graph: validation, command preview, branch on a failed check, hum
       [workspace, marker],
     );
 
-    await openFeature(page, "Workflow graphs");
+    await openFeature(page, "Step-by-step runs");
     const root = page.getByTestId("workflow-graphs");
     await expect(root.getByTestId("graph-item")).toHaveCount(2);
 
@@ -239,12 +239,12 @@ test("workflow graph: validation, command preview, branch on a failed check, hum
       .getByRole("button", { name: "Agent communication graph" })
       .click();
     await expect(
-      page.getByRole("tab", { name: "Canvas", exact: true }),
+      page.getByRole("tab", { name: "Layout", exact: true }),
     ).toHaveAttribute("aria-selected", "true");
     await expect(page.getByRole("toolbar", { name: "Canvas" })).toBeVisible();
     // The graphs view stays open as a tab next to the canvas.
     await page
-      .getByRole("tab", { name: "Workflow graphs", exact: true })
+      .getByRole("tab", { name: "Step-by-step runs", exact: true })
       .click();
     await expect(page.getByTestId("workflow-graphs")).toBeVisible();
     expect(errors).toEqual([]);

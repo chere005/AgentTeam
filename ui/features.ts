@@ -1,12 +1,13 @@
 /**
  * Feature registry for progressive disclosure (pure, no React/DOM; unit-tested in
- * test/ui-logic.test.ts). The app starts with the team canvas and chat only; every other view is a
- * "feature" opened on request (More menu, command palette, contextual buttons) as a closable tab.
+ * test/ui-logic.test.ts). Layout, Chat, Files and Diff are the permanent main views; other pages
+ * are features opened on request (More menu, command palette, contextual buttons) as closable tabs.
  */
 export const FEATURE_IDS = [
   "projects",
   "review",
   "graphs",
+  "trace",
   "assistant",
   "files",
   "git",
@@ -17,7 +18,7 @@ export const FEATURE_IDS = [
   "access",
   "inbox",
   "inspector",
-  "limits",
+  "usage",
   "recovery",
   "shared",
   "activity",
@@ -47,19 +48,27 @@ export const FEATURES: readonly Feature[] = [
   },
   {
     id: "review",
-    name: "Review changes",
+    name: "Diff",
     group: "Work",
-    description:
-      "Read an agent's file changes, comment, approve or ask for fixes.",
+    description: "Compare and review changes in the current project workspace.",
     keywords: "diff review changes comments approve",
   },
   {
     id: "graphs",
-    name: "Workflow graphs",
+    name: "Step-by-step runs",
     group: "Work",
     description:
-      "Step-by-step graphs inside a project: commands, checks, human input.",
-    keywords: "graph steps workflow run",
+      "Build a reusable sequence of agent tasks, approvals and checks.",
+    keywords: "workflow graphs graph steps commands approvals gates run",
+  },
+  {
+    id: "trace",
+    name: "Project trace",
+    group: "Work",
+    description:
+      "Explore project communications, events and produced files on one timeline.",
+    keywords:
+      "trace communication graph timeline quick look evaluation project",
   },
   {
     id: "assistant",
@@ -73,7 +82,8 @@ export const FEATURES: readonly Feature[] = [
     id: "files",
     name: "Files",
     group: "Workspace",
-    description: "Browse and preview the files in an agent's folders.",
+    description:
+      "Browse, preview and edit files in the current project workspace.",
     keywords: "workspace browse folder open editor",
   },
   {
@@ -136,12 +146,13 @@ export const FEATURES: readonly Feature[] = [
     keywords: "run inspector timeline waiting transfers playground diagnostics",
   },
   {
-    id: "limits",
-    name: "Limits",
+    id: "usage",
+    name: "Usage & limits",
     group: "Monitoring",
     description:
-      "Turn, time and retry limits per project; resume after a stop.",
-    keywords: "budget stop limits turns",
+      "Reported token use by project and agent, plus project limits and provider reporting status.",
+    keywords:
+      "tokens usage subscription quota provider limits cost agent project",
   },
   {
     id: "recovery",
@@ -182,7 +193,7 @@ export const isFeature = (v: unknown): v is FeatureId =>
   typeof v === "string" && (FEATURE_IDS as readonly string[]).includes(v);
 export const feature = (id: FeatureId) => FEATURES.find((f) => f.id === id)!;
 export const tabName = (id: TabId) =>
-  id === CANVAS ? "Canvas" : feature(id).name;
+  id === CANVAS ? "Layout" : feature(id).name;
 
 /**
  * Match score of `query` against a name (+ extra text); 0 = no match. Prefix of the name beats
@@ -216,7 +227,7 @@ export function searchFeatures(query: string): Feature[] {
     .map((x) => x.f);
 }
 
-/** Open feature tabs of one team. Canvas is always first and never stored. */
+/** Open feature tabs of one team. Layout is always first and never stored. */
 export type TabState = { tabs: FeatureId[]; active: TabId };
 export const startTabs: TabState = { tabs: [], active: CANVAS };
 export function sanitizeTabs(value: unknown): TabState {

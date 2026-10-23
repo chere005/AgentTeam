@@ -720,7 +720,7 @@ export function WorkflowGraphs({
   return (
     <div className="wg" data-testid="workflow-graphs">
       <div className="row between">
-        <b>Workflow graphs</b>
+        <b>Step-by-step runs</b>
         <button
           onClick={goCanvas}
           title="The agent communication graph: who may talk to whom"

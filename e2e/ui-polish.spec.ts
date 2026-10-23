@@ -8,7 +8,7 @@ import {
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openFeature } from "./helpers";
+import { openFeature, openSetup } from "./helpers";
 import { MIN_FIT_ZOOM } from "../ui/canvas-fit";
 
 // Canvas fit, edge declutter, unsaved-changes guard and the light theme (docs/ui-design.md).
@@ -133,6 +133,13 @@ test("canvas fit: fits the team, re-fits when the side panel opens/closes, offer
     await cardsInside(page);
     // Selecting an agent opens its panel: narrower canvas, fitted again.
     await page.locator(".react-flow__node", { hasText: "Writer" }).click();
+    const side = page.getByRole("complementary", { name: "Side panel" });
+    await expect(side).toBeVisible();
+    await expect(side.getByRole("tab", { name: "Chat" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await side.getByRole("tab", { name: "Agent setup" }).click();
     await expect(page.getByTestId("agent-panel")).toBeVisible();
     await expect.poll(() => transform(page)).not.toBe(wide);
     await settled(page);
@@ -182,9 +189,7 @@ test("wide teams at 1100 px with the side panel open: the automatic org chart re
           ),
       ).size;
     const wideRows = await ys();
-    await page
-      .locator(".react-flow__node", { hasText: "Backend Engineer" })
-      .click();
+    await openSetup(page, "Backend Engineer");
     await expect(page.getByTestId("agent-panel")).toBeVisible();
     await size(1100, 760);
     // Re-flowed into more rows (lines) and fitted: every card inside the canvas.
@@ -271,8 +276,7 @@ test("unsaved agent edits: close, switching agent and switching team ask Save / 
     await page.reload();
     const card = (name: string) =>
       page.locator(".react-flow__node", { hasText: name }).first();
-    await card("Writer").click();
-    const panel = page.getByTestId("agent-panel");
+    const panel = await openSetup(page, "Writer");
     const name = panel.getByLabel("Name", { exact: true });
     await name.fill("Writer 2");
     await expect(panel.getByTestId("agent-save")).toBeVisible();
@@ -335,7 +339,7 @@ test("unsaved agent edits: close, switching agent and switching team ask Save / 
     await expect(panel).toHaveCount(0);
     // Closing the window with unsaved edits: the page vetoes the unload (the desktop then asks
     // natively, Esc = keep editing); it is never a trap, and test mode lets the window close.
-    await card("Writer").click();
+    await openSetup(page, "Writer");
     await panel.getByLabel("Name", { exact: true }).fill("Writer 3");
     await expect(panel.getByTestId("agent-save")).toBeVisible();
     expect(
@@ -441,10 +445,7 @@ test("screenshots: empty team, example team with an agent selected, More, a feat
       await expect(page.locator(".agent-card")).toHaveCount(8);
       await settled(page);
       await shoot(t, "example-team");
-      await page
-        .locator(".react-flow__node", { hasText: "Backend Engineer" })
-        .click();
-      await expect(page.getByTestId("agent-panel")).toBeVisible();
+      await openSetup(page, "Backend Engineer");
       await settled(page);
       await shoot(t, "example-agent-selected");
       // Hover the Engineering Manager → Backend Engineer connector near its child end.
@@ -578,10 +579,7 @@ test("rendered text contrast meets WCAG AA in both themes (canvas, agent panel, 
       await page.reload();
       await expect(page.locator("html")).toHaveAttribute("data-theme", t);
       await expect(page.locator(".agent-card")).toHaveCount(8);
-      await page
-        .locator(".react-flow__node", { hasText: "Backend Engineer" })
-        .click();
-      await expect(page.getByTestId("agent-panel")).toBeVisible();
+      await openSetup(page, "Backend Engineer");
       await page.waitForTimeout(400);
       for (const f of ["Canvas", "Projects", "Team settings", "Settings"]) {
         await openFeature(page, f);

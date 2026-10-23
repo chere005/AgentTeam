@@ -11,6 +11,9 @@ import type { WorkspaceService } from "./workspaces.ts";
  * (all sit behind the bearer-token check in http.ts):
  *   GET/PUT /editors/settings                       editor executable paths + detection
  *   POST /agents/:id/files/inspect                  bounded typed preview
+ *   POST /agents/:id/files/read                     bounded UTF-8 editor read
+ *   POST /agents/:id/files/save                     guarded UTF-8 editor save
+ *   POST /agents/:id/files/create                   create a new UTF-8 file
  *   POST /agents/:id/files/{open,open-plan}         Open file / project / reveal / open with
  *   POST /agents/:id/editors/{open,plan}            same, explicit names
  *   POST /agents/:id/git/{state,branches,switch,fetch,pull,push,log,commit-info,
@@ -54,7 +57,7 @@ export class WorkspaceExtras {
       return undefined;
     }
     const m = path.match(
-      /^\/agents\/([^/]+)\/(files\/(?:inspect|open|open-plan)|editors\/(?:open|plan)|git\/(?:state|branches|switch|fetch|pull|push|log|commit-info|pr|pr\/open|pr\/record|conflicts|conflict-file|resolve|integrate|abort|continue|init)|watch\/(?:start|stop))$/,
+      /^\/agents\/([^/]+)\/(files\/(?:inspect|read|save|create|search|changes|changes\/reset|open|open-plan)|editors\/(?:open|plan)|git\/(?:state|branches|switch|fetch|pull|push|log|commit-info|pr|pr\/open|pr\/record|conflicts|conflict-file|resolve|integrate|abort|continue|init)|watch\/(?:start|stop))$/,
     );
     if (!m || method !== "POST") return undefined;
     const agentId = decodeURIComponent(m[1]),
@@ -64,6 +67,23 @@ export class WorkspaceExtras {
     switch (action) {
       case "files/inspect":
         return { data: await inspectFile(this.ws, agentId, body) };
+      case "files/read":
+        return { data: await this.ws.readText(agentId, body) };
+      case "files/save":
+        return { data: await this.ws.saveText(agentId, body) };
+      case "files/create":
+        return { data: await this.ws.createText(agentId, body), status: 201 };
+      case "files/search":
+        return { data: await this.ws.searchFiles(agentId, body) };
+      case "files/changes":
+        return {
+          data: await this.ws.review(agentId, {
+            ...(body as object),
+            staged: false,
+          }),
+        };
+      case "files/changes/reset":
+        return { data: await this.ws.resetChanges(agentId, body) };
       case "files/open":
       case "editors/open":
         return { data: await this.editors.open(agentId, body, true) };

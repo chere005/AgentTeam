@@ -1,0 +1,82 @@
+.topbar-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 9px;
+  color: var(--muted);
+  background: transparent;
+}
+.topbar-help:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+.help-menu {
+  width: min(820px, calc(100vw - 32px));
+  max-height: min(86vh, 900px);
+}
+.help-menu-content {
+  overflow: auto;
+  padding: 14px 20px 20px;
+}
+.help-intro {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.help-main-views,
+.help-feature-group {
+  margin: 0 0 16px;
+}
+.help-main-views article,
+.help-feature-group article {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 0;
+  border-top: 1px solid var(--line-soft);
+}
+.help-main-views article > div,
+.help-feature-group article > div {
+  flex: 1;
+  min-width: 0;
+}
+.help-main-views p,
+.help-feature-group p {
+  margin: 3px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.help-main-views small,
+.help-feature-group small {
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.45;
+}
+.help-feature-group h3 {
+  margin: 16px 0 4px;
+  font-size: 12px;
+  color: var(--accent);
+}
+.help-main-views button,
+.help-feature-group button {
+  flex: 0 0 auto;
+  padding: 5px 11px;
+  font-size: 11px;
+}
+.help-footer {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.help-footer kbd {
+  margin: 0 2px;
+}
+@media (max-width: 700px) {
+  .team-chat-sidebar {
+    width: 190px;
+    flex-basis: 190px;
+  }
+  .help-menu-content {
+    padding: 10px 14px;
+  }
+}

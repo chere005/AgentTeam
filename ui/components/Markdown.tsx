@@ -33,15 +33,31 @@ export function Markdown({ text }: { text: string }) {
     const line = lines[i];
     const key = "b" + i;
     if (line.startsWith("```")) {
+      const language = line.slice(3).trim().split(/\s+/, 1)[0];
       const code: string[] = [];
       i++;
       while (i < lines.length && !lines[i].startsWith("```"))
         code.push(lines[i++]);
       i++;
-      blocks.push(
-        <pre key={key}>
+      const body = (
+        <pre>
           <code>{code.join("\n")}</code>
-        </pre>,
+        </pre>
+      );
+      blocks.push(
+        code.length > 10 || code.join("\n").length > 600 ? (
+          <details className="markdown-code" key={key}>
+            <summary>
+              {language ? `${language} · ` : ""}
+              {code.length} lines of code
+            </summary>
+            {body}
+          </details>
+        ) : (
+          <div className="markdown-code" key={key}>
+            {body}
+          </div>
+        ),
       );
     } else if (/^#{1,6}\s/.test(line)) {
       const level = Math.min(line.match(/^#+/)![0].length + 2, 6);
@@ -76,4 +92,31 @@ export function Markdown({ text }: { text: string }) {
     }
   }
   return <div className="markdown">{blocks}</div>;
+}
+
+export function MessageMarkdown({
+  text,
+  collapsible = false,
+}: {
+  text: string;
+  collapsible?: boolean;
+}) {
+  const long = text.length > 2200 || text.split("\n").length > 32;
+  if (!collapsible || !long) return <Markdown text={text} />;
+  const preview = text
+    .replace(/```[\s\S]*?```/g, "[code block]")
+    .replace(/[`*_#>-]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const description =
+    preview.length > 180 ? preview.slice(0, 177) + "…" : preview;
+  return (
+    <details className="message-disclosure">
+      <summary>
+        <span>Long reply</span>
+        <span className="message-disclosure-preview">{description}</span>
+      </summary>
+      <Markdown text={text} />
+    </details>
+  );
 }

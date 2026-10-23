@@ -34,6 +34,7 @@ import { accessRoute } from "./access-routes.ts";
 import { pipelineRoute } from "./pipeline-routes.ts";
 import { capabilityRoute } from "./capability-routes.ts";
 import { orchestrationRoute } from "./orchestration.ts";
+import { GroupChats } from "./group-chat.ts";
 import { teamSpaceRoute, teamIdSchema } from "./team-spaces.ts";
 import { projectRoute } from "./projects.ts";
 import { projectLifecycleRoute } from "./project-lifecycle.ts";
@@ -84,6 +85,7 @@ export function createApi(
   discovery = new RuntimeDiscovery(),
 ) {
   const store = service.store;
+  const groupChats = new GroupChats(service);
   // Deterministic graph command steps obey the same live-execution switch as provider runs.
   service.graphs.enabled = () => runs.enabled;
   // Test mode never starts editors, file managers or browsers: launches are recorded instead and
@@ -866,6 +868,39 @@ export function createApi(
       }
       if (method === "GET" && path === "/sessions")
         return send(store.list("session"));
+      if (method === "GET" && path === "/group-chats")
+        return send(
+          groupChats.list(url.searchParams.get("teamId") ?? undefined),
+        );
+      if (method === "POST" && path === "/group-chats") {
+        const data = z
+          .object({ invocationId: z.string().min(1) })
+          .strict()
+          .parse(await body(req));
+        return send(groupChats.create(data.invocationId), 201);
+      }
+      if ((match = path.match(/^\/group-chats\/([^/]+)$/)) && method === "GET")
+        return send(groupChats.get(id(match[1])));
+      if (
+        (match = path.match(/^\/group-chats\/([^/]+)\/messages$/)) &&
+        method === "POST"
+      )
+        return send(
+          await groupChats.comment(id(match[1]), await body(req), (sessionId) =>
+            runs.start(sessionId),
+          ),
+          202,
+        );
+      if (
+        (match = path.match(/^\/group-chats\/([^/]+)\/participants$/)) &&
+        method === "POST"
+      )
+        return send(
+          await groupChats.invite(id(match[1]), await body(req), (sessionId) =>
+            runs.start(sessionId),
+          ),
+          202,
+        );
       if ((match = path.match(/^\/sessions\/([^/]+)\/messages$/))) {
         const sid = id(match[1]);
         store.get<Session>("session", sid);

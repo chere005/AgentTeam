@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld("agentteam", {
     ipcRenderer.invoke("set-theme", setting),
   saveDiagnostics: (format: "zip" | "json") =>
     ipcRenderer.invoke("save-diagnostics", format),
+  saveTextFile: (name: string, content: string) =>
+    ipcRenderer.invoke("save-text-file", name, content),
   openAgent: (id: string, mode: string) =>
     ipcRenderer.invoke("open-agent", id, mode),
   onEvent: (callback: (event: unknown) => void) => {

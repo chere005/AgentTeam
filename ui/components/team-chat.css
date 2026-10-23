@@ -1,0 +1,127 @@
+.team-chat-mode > .main-pane {
+  flex: 1;
+  min-width: 0;
+}
+.team-chat-view {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  background: var(--surface-0);
+}
+.team-chat-sidebar {
+  width: 250px;
+  flex: 0 0 250px;
+  overflow: auto;
+  padding: 14px 10px;
+  border-right: 1px solid var(--line);
+  background: var(--surface-1);
+}
+.team-chat-sidebar-title {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 9px 16px;
+}
+.team-chat-sidebar-title span,
+.team-chat-list-heading,
+.team-chat-empty-hint {
+  color: var(--muted);
+  font-size: 11px;
+}
+.team-chat-list-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 14px 9px 6px;
+  font-weight: 650;
+}
+.team-chat-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.team-chat-item:hover,
+.team-chat-item.active {
+  background: var(--surface-2);
+}
+.team-chat-avatar {
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  flex: 0 0 27px;
+  border-radius: 8px;
+  background: #29405c;
+  color: #c5dcf4;
+  font-size: 12px;
+  font-weight: 650;
+}
+.group-avatar {
+  background: #25483f;
+  color: #a6e6d1;
+}
+.team-chat-item-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 3px;
+}
+.team-chat-item-text b,
+.team-chat-item-text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.team-chat-item-text b {
+  font-size: 12px;
+}
+.team-chat-item-text small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.team-chat-empty-hint {
+  padding: 0 9px;
+  line-height: 1.5;
+}
+.team-chat-content {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.team-chat-content > .chat,
+.team-chat-content > .chat-pane,
+.team-chat-content > section.group-chat {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.team-chat-content > section.group-chat {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 18px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.team-chat-content .group-chat-heading {
+  padding: 5px 0 13px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.team-chat-content .group-chat-messages {
+  flex: 1;
+  max-height: none;
+  align-content: start;
+  padding: 12px 0;
+  overflow: auto;
+}

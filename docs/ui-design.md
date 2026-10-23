@@ -1,6 +1,6 @@
 # UI design: progressive disclosure
 
-User feedback (October 2026): the workspace was cluttered and it was hard to tell which page does what. Starting out it should show the team graph and the chat, plus how to give agents folders and skills; everything else should appear when navigated to or asked for.
+User feedback (October 2026): keep the workspace uncluttered and make the active project obvious. The four main viewer modes are Layout, Chat, Files and Diff; the top bar always names the current project (or says “No current project”).
 
 ## What was wrong (screenshots of the previous UI, default layout / agent selected / example team / 1100 px)
 
@@ -14,17 +14,17 @@ User feedback (October 2026): the workspace was cluttered and it was hard to tel
 
 ## Principles
 
-1. At start: the team canvas (centre) and the chat (right). Nothing else is on screen until it is needed.
+1. The main viewer order is Layout, Chat, Files, Diff. Switch with ⌘1–⌘4 (Ctrl+1–4 on Windows/Linux); the selected project stays in context.
 2. Setting up an agent is the main secondary task: select it on the canvas and a focused panel opens with plain sections.
-3. Every other feature is one search or one click away (More / Ctrl/Cmd+K) and opens as a closable tab. Contextual buttons open the right tab when something needs you.
+3. Other features are one search or one click away (More / Ctrl/Cmd+K) and open as closable tabs. Contextual buttons open the right feature when something needs you.
 4. Fewer borders, one type scale (11.5/12.5/13/16/18 px), muted secondary text, headings that say what a section is for.
 5. Keyboard and screen-reader parity: landmarks (banner, main, side panel, agent setup), visible focus, palette with arrow keys / Enter / Esc and focus return, dialog focus trap (`ui/components/A11y.tsx`).
 
 ## Information architecture
 
-**Top bar** (`ui/App.tsx`): logo mark and name · team switcher · "Assign project" (only when the team has agents) · "Execution paused" (only while paused; opens Settings) · attention button (only when something needs you; count of the active team, "in other teams" otherwise) · **More** (Ctrl/Cmd+K) · Settings gear. A screen-reader-only status says "Workspace connected".
+**Top bar** (`ui/App.tsx`): logo mark and name · team switcher · **Current project** picker (per team; explicitly shows “No current project” when empty) · "Assign project" (only when the team has agents) · "Execution paused" (only while paused; opens Settings) · attention button (only when something needs you) · **More** (Ctrl/Cmd+K) · Settings gear.
 
-**Main area**: the canvas. Opened views appear as tabs ("Canvas" is always first and cannot be closed); with no feature open there is no tab strip at all. Tabs are remembered per team (`agentteam.tabs[.team-<id>]`); first run and new teams start with Canvas only.
+**Main area**: four permanent tabs, in order: Layout, Chat, Files, Diff. Layout is the team graph; Chat is the conversation-first team view; Files is a project file browser with preview and a bounded text/Markdown editor; Diff is the side-by-side review viewer. Feature tabs appear after these and are remembered per team. The current-project choice is remembered per team and does not change when switching views.
 
 **Side panel** (right, resizable, Ctrl/Cmd+\\ hides it): "Chat" and, when an agent is selected, "Agent setup". The agent panel can instead be shown as its own column beside the chat (toggle in the panel header or Settings → Agent panel).
 
@@ -37,10 +37,10 @@ User feedback (October 2026): the workspace was cluttered and it was hard to tel
 | Group      | Feature (tab)                                                                  | What it is for                                                                                                           |
 | ---------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
 | Work       | Projects                                                                       | Assign work to the team; tasks, gates, routing rules                                                                     |
-| Work       | Review changes                                                                 | Diffs, comments, approve / request changes                                                                               |
+| Work       | Diff                                                                            | Side-by-side project changes, comments, approve / request changes                                                        |
 | Work       | Workflow graphs                                                                | Step graphs inside a project                                                                                             |
 | Work       | Assistant changes                                                              | Approve or reject Team Assistant proposals                                                                               |
-| Workspace  | Files · Git · Preview                                                          | One agent folder: browse, Git and worktrees, dev server preview                                                          |
+| Workspace  | Git · Preview                                                                  | Git and worktrees, dev server preview                                                                                    |
 | Team setup | Team library                                                                   | Example teams, saved teams, team packs                                                                                   |
 | Team setup | Team settings                                                                  | The active team's profile: roles, worker counts, model check, name and description                                       |
 | Team setup | Skills, tools & knowledge                                                      | Skill library, tool grants, knowledge                                                                                    |
@@ -53,8 +53,8 @@ User feedback (October 2026): the workspace was cluttered and it was hard to tel
 | Before                                                                        | Now                                                                                                                                             |
 | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | Left navigation (13 panes + agent list)                                       | Removed. Panes are features in More / Ctrl+K; agents are on the canvas, in the chat picker and in the palette                                   |
-| Pane dropdowns, swap panes, nav toggle, Layouts button                        | Removed. Tabs + side panel; Layouts are in Settings (presets: Canvas & chat, Coding, Review, Monitoring, plus your own; they open sets of tabs) |
-| Workspace pane with Access / Files / Git / Review / Preview tabs              | Files, Git, Review changes, Preview tabs; Access joined Resources (+ Cooperation) as "Access & resources"                                       |
+| Pane dropdowns, swap panes, nav toggle, Layouts button                        | Removed. Four main view tabs + side panel; other features are closable tabs. Layout presets are in Settings.                                  |
+| Workspace pane with Access / Files / Git / Review / Preview tabs              | Files and Diff are main viewer modes; Git and Preview remain feature tabs. Access joined Resources (+ Cooperation) as "Access & resources"     |
 | Skills library pane (add skill to agent)                                      | Agent panel → Skills → Add skill; the catalog itself is in "Skills, tools & knowledge"                                                          |
 | Agent editor modal (Profile / Instructions / Skills / Workspace tabs)         | Agent panel sections; New agent dialog uses the same sections                                                                                   |
 | Limits, Recovery, Shared state (+ state editor) inside every project card     | Their own tabs (per project); project cards link to them                                                                                        |
@@ -63,7 +63,7 @@ User feedback (October 2026): the workspace was cluttered and it was hard to tel
 | Chat: ownership bar and Chat/CLI/Native app always shown                      | Behind "Conversation options" (shown automatically when someone other than the team drives the agent)                                           |
 | Status bar footer, top status line                                            | Removed (execution state is a top-bar chip only while paused)                                                                                   |
 
-Layout presets that only juggled the old pane list (Planning) were replaced by "Canvas & chat". Ctrl/Cmd+B (navigation toggle) is gone; Ctrl/Cmd+K now opens the palette instead of the agent filter.
+The default layout preset is "Layout & chat". Ctrl/Cmd+B (navigation toggle) is gone; Ctrl/Cmd+K opens the palette instead of the agent filter.
 
 ## Theme
 

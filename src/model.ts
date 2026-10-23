@@ -21,8 +21,30 @@ export const workspaceSchema = z
       .optional(),
     /** Grant only the listed rules (explicit files/folders), not the whole folder. */
     explicitOnly: z.boolean().optional(),
+    /** Permission to share file contents from this resource through agent conversations. */
+    sharing: z
+      .object({
+        scope: z.enum(["nobody", "selected", "team", "all"]).default("nobody"),
+        agentIds: z.array(z.string()).max(200).default([]),
+      })
+      .strict()
+      .optional(),
+    /** More-specific file/folder sharing rules; deepest matching path wins. */
+    shareRules: z
+      .array(
+        z
+          .object({
+            path: z.string().min(1).max(500),
+            scope: z.enum(["nobody", "selected", "team", "all"]),
+            agentIds: z.array(z.string()).max(200).default([]),
+          })
+          .strict(),
+      )
+      .max(200)
+      .optional(),
   })
   .strict();
+export type Workspace = z.infer<typeof workspaceSchema>;
 export const ROLE_TYPES = [
   "coordinator",
   "implementer",
@@ -148,6 +170,8 @@ export const routeSchema = z
   .strict();
 export const workflowSchema = z
   .object({
+    /** Internal conversation runs are task contexts, not user-created projects. */
+    kind: z.enum(["project", "conversation"]).default("project"),
     name: z.string().min(1),
     goal: z.string().min(1),
     ownerId: z.string(),
@@ -225,10 +249,16 @@ export type Session = {
   agentId: string;
   providerSessionId: string | null;
   state: "idle" | "running";
+  /** Set while a provider run is active; optional for compatibility with older stores. */
+  startedAt?: string;
+  /** Provider run deadline in milliseconds, for visible elapsed-time feedback. */
+  timeoutMs?: number;
 };
 export type Message = {
   id: string;
   sessionId: string;
+  /** Links a provider reply to a shared, user-created group conversation. */
+  groupChatId?: string;
   role: "user" | "assistant";
   text: string;
   status: "queued" | "processing" | "delivered" | "failed";
