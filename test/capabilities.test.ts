@@ -658,7 +658,11 @@ test("knowledge: confined to attached folders, bounded index, citations, stalene
     join(outside, "leak.md"),
     "flux capacitor outside OUTSIDE-MARKER\n",
   );
-  await symlink(outside, join(ws, "docs", "link"));
+  await symlink(
+    outside,
+    join(ws, "docs", "link"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
   const agent = await service.saveAgent({
     name: "K",
     environment: "codex",

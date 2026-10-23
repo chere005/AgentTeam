@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { filesystemPolicy } from "./filesystem-policy.ts";
 import { realpath, stat } from "node:fs/promises";
 import { basename, isAbsolute } from "node:path";
 import { z } from "zod";
@@ -766,6 +767,7 @@ export class TeamTemplates {
         try {
           if (!isAbsolute(raw))
             throw new Error("Workspace paths must be absolute");
+          filesystemPolicy(this.service.store).assertPath(raw);
           const real = await realpath(raw);
           if (!(await stat(real)).isDirectory())
             throw new Error("Workspace must be a directory");

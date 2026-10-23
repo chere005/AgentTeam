@@ -305,7 +305,7 @@ export async function createWolframProject(
   input: unknown,
 ) {
   const o = projectSchema.parse(input);
-  const workspace = await resolveProjectWorkspace(o.workspace);
+  const workspace = await resolveProjectWorkspace(o.workspace, service.store);
   const id = service.store.transaction(() => {
     const profile = teamProfile(service.store, teamId);
     assert(

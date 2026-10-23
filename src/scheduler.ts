@@ -128,6 +128,8 @@ export class Scheduler {
     let effectId: string | null = null;
     try {
       this.runs.assertRuntimeReady(plan);
+      // Reject an unsupported access contract before recording a possibly mutating provider effect.
+      commandFor(plan, null, "", this.runs.cwd);
       const agent = this.service.store.get<Agent>("agent", task.agentId);
       await Promise.all(
         (plan.providerRoots ?? plan.workspaces)
@@ -253,18 +255,27 @@ export class Scheduler {
       });
     } catch (error) {
       if (effectId) this.service.recovery.failRun(task, effectId, error);
+      const abnormal = this.service.limits.finishAbnormal(
+        task,
+        controller.signal.aborted,
+        error instanceof Error ? error.message : "Execution failed",
+        result,
+      );
       this.service.transitionTask(
         task.id,
-        this.service.limits.finishAbnormal(
-          task,
-          controller.signal.aborted,
-          error instanceof Error ? error.message : "Execution failed",
-          result,
-        ),
+        this.runs.executionInterrupts.has("task:" + task.id)
+          ? {
+              status: "interrupted",
+              result: (
+                "Paused immediately. Resume from Recovery after checking any uncertain effects.\n" +
+                result
+              ).slice(0, 100000),
+            }
+          : abnormal,
       );
     } finally {
       this.service.approvals.cancelAgent(task.agentId);
-      this.runs.active.delete("task:" + task.id);
+      this.runs.finishActive("task:" + task.id);
     }
   }
 }

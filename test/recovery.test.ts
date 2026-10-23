@@ -19,6 +19,16 @@ import type { Message, Session, Task } from "../src/model.ts";
 type Provider = ConstructorParameters<typeof Scheduler>[2];
 const hang: Provider = () => new Promise(() => undefined);
 const flush = () => new Promise((r) => setImmediate(r));
+async function waitFor(check: () => boolean) {
+  const deadline = Date.now() + 4000;
+  while (!check()) {
+    assert.ok(
+      Date.now() < deadline,
+      "recovery fixture did not reach its boundary",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
 
 /** A provider that signals when the ledger has started it, then remains in flight. */
 function hangingProvider() {
@@ -220,7 +230,7 @@ test("uncertain mutating effect blocks the task until the user decides", async (
   assert.equal(statusOf(b, t.id), "interrupted");
   b.service.recovery.requeue(t.id);
   await b.scheduler.tick();
-  await flush();
+  await waitFor(() => statusOf(b, t.id) === "completed");
   assert.equal(calls, 1);
   assert.equal(statusOf(b, t.id), "completed");
   b.store.close();
@@ -291,7 +301,7 @@ test("user can mark an uncertain run applied (no provider call) or abandon it", 
   });
   b.service.recovery.requeue(t1.id);
   await b.scheduler.tick();
-  await flush();
+  await waitFor(() => statusOf(b, t1.id) === "completed");
   assert.equal(
     calls,
     0,
@@ -949,7 +959,7 @@ test("limit resume skips a limit-stopped task whose aborted mutating run is unce
   b.service.limits.trip(w.wf.id, "turns", "test trip", 5, 5, {
     abortRunning: true,
   });
-  for (let i = 0; i < 20 && statusOf(b, t.id) === "running"; i++) await flush();
+  await waitFor(() => statusOf(b, t.id) !== "running");
   assert.equal(statusOf(b, t.id), "failed");
   assert.equal(b.service.recovery.ledger.uncertainFor(t.id).length, 1);
   const resumed = b.service.limits.resume(w.wf.id, {

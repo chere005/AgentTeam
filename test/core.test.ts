@@ -255,7 +255,11 @@ test("skill discovery handles provenance, duplicate names, bad YAML and symlinks
   await writeFile(join(dir, "a/SKILL.md"), text);
   await writeFile(join(dir, "b/SKILL.md"), text);
   await writeFile(join(dir, "bad/SKILL.md"), "not yaml");
-  await symlink(join(dir, "a"), join(dir, "linked"));
+  await symlink(
+    join(dir, "a"),
+    join(dir, "linked"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
   const cat = new SkillCatalog([
     { path: dir, environment: "claude", label: "Claude" },
   ]);
@@ -417,12 +421,12 @@ test("provider file tools are limited to the attached workspace and assigned acc
     [root, secondRoot],
   );
   const scopedCommand = commandFor(scopedPlan, null, "Write", process.cwd());
-  assert.deepEqual(
-    scopedCommand.args.flatMap((arg, i, all) =>
-      arg === "--add-dir" ? [all[i + 1]] : [],
-    ),
-    [secondRoot],
-  );
+  const scopedGrants = scopedCommand.args.find((arg) =>
+    arg.startsWith("permissions.agentteam-task.filesystem="),
+  )!;
+  assert.ok(scopedGrants.includes(`${JSON.stringify(root)}="write"`));
+  assert.ok(scopedGrants.includes(`${JSON.stringify(secondRoot)}="write"`));
+  assert.equal(scopedCommand.args.includes("--add-dir"), false);
 
   const mixed = await service.saveAgent({
     name: "Mixed access builder",
@@ -442,10 +446,12 @@ test("provider file tools are limited to the attached workspace and assigned acc
     resourcePaths: [root, secondRoot],
   });
   const mixedPlan = await service.launchPlan(mixed.id, mixedTask.id);
-  assert.throws(
-    () => commandFor(mixedPlan, null, "Review", process.cwd()),
-    code("resource_scope_mixed_access"),
-  );
+  const mixedCommand = commandFor(mixedPlan, null, "Review", process.cwd());
+  const mixedGrants = mixedCommand.args.find((arg) =>
+    arg.startsWith("permissions.agentteam-task.filesystem="),
+  )!;
+  assert.ok(mixedGrants.includes(`${JSON.stringify(root)}="write"`));
+  assert.ok(mixedGrants.includes(`${JSON.stringify(secondRoot)}="read"`));
 
   const restricted = await service.saveAgent({
     name: "Rule-restricted builder",
@@ -513,7 +519,8 @@ if (args.includes("--json")) {
   });
   const plan = await service.launchPlan(manager.id);
   const command = commandFor(plan, null, "Delegate a task", root);
-  command.executable = fixturePath;
+  command.executable = process.execPath;
+  command.args.unshift(fixturePath);
   command.teammateTools = {
     url: "http://127.0.0.1:4317/mcp",
     token: "run-scoped-test-token",
@@ -529,7 +536,7 @@ if (args.includes("--json")) {
   );
   const payload = JSON.parse(output);
   assert.equal(payload.token, "run-scoped-test-token");
-  assert.equal(payload.configMode, "600");
+  if (process.platform !== "win32") assert.equal(payload.configMode, "600");
   assert.deepEqual(payload.config.mcpServers.agentteam.headers, {
     Authorization: "Bearer ${AGENTTEAM_TOOL_TOKEN}",
   });
@@ -555,7 +562,8 @@ if (args.includes("--json")) {
     "Write a file",
     root,
   );
-  codexCommand.executable = fixturePath;
+  codexCommand.executable = process.execPath;
+  codexCommand.args.unshift(fixturePath);
   codexCommand.teammateTools = {
     url: "http://127.0.0.1:4317/mcp",
     token: "codex-run-token",

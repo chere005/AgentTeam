@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, realpath, rm, writeFile, symlink } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  realpath,
+  rm,
+  writeFile,
+  symlink,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../src/store.ts";
@@ -87,9 +94,19 @@ test("file excerpts cross agent conversations only with recipient access or an e
   await mkdir(folder);
   await writeFile(join(folder, "notes.md"), "shared note");
   await writeFile(join(folder, "private.md"), "private note");
-  const outside = join(root, "outside.md");
+  const outsideFolder = join(root, "outside");
+  await mkdir(outsideFolder);
+  const outside = join(outsideFolder, "notes.md");
   await writeFile(outside, "outside secret");
-  await symlink(outside, join(folder, "escape.md"));
+  // Directory junctions exercise canonical-path escapes on Windows without requiring
+  // Developer Mode or administrator-only file-symlink privileges.
+  const escapePath =
+    process.platform === "win32" ? "escape/notes.md" : "escape.md";
+  await symlink(
+    process.platform === "win32" ? outsideFolder : outside,
+    join(folder, process.platform === "win32" ? "escape" : "escape.md"),
+    process.platform === "win32" ? "junction" : "file",
+  );
   const { agent } = setup();
   const owner = await agent("Owner", {
     workspaces: [
@@ -125,7 +142,7 @@ test("file excerpts cross agent conversations only with recipient access or an e
   );
   owner.workspaces[0].sharing = { scope: "all", agentIds: [] };
   assert.equal(
-    mayShareExcerpt(owner, recipient, attachedPath, "escape.md"),
+    mayShareExcerpt(owner, recipient, attachedPath, escapePath),
     false,
     "a shared symlink must not let a recipient read outside its attached folder",
   );

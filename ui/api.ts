@@ -35,6 +35,11 @@ export type Snapshot = {
   sessions: Session[];
   activity: Activity[];
   liveExecution: boolean;
+  execution?: {
+    mode: "running" | "draining" | "stopping" | "paused";
+    active: number;
+    readyToClose: boolean;
+  };
   /** Every team with counts (src/team-spaces.ts); the snapshot itself is unfiltered. */
   teams: TeamSummary[];
   activeTeamId: string;

@@ -189,7 +189,7 @@ test("main view shortcuts keep the current project and Files can edit a text fil
     await files.getByRole("button", { name: "README.md" }).click();
     await page.getByRole("button", { name: "Edit file" }).click();
     const editor = page.getByRole("textbox", { name: "File contents" });
-    await expect(editor).toHaveValue("# Pi demo\n");
+    await expect(editor).toHaveText("# Pi demo");
     await editor.fill("# Pi demo\n\nEdited in AgentTeam.\n");
     await page.getByRole("button", { name: /Save/ }).click();
     await expect(page.getByText(/Saved /)).toBeVisible();

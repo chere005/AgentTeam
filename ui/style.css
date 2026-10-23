@@ -968,47 +968,35 @@ summary:focus-visible {
   opacity: 0.75;
 }
 .text-editor-surface {
-  display: flex;
+  display: block;
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
 }
-.text-editor-gutter {
-  flex: 0 0 48px;
-  max-height: none;
-  margin: 0;
-  padding: 12px 8px;
-  border-radius: 0;
-  background: #151b23;
-  color: #667588;
-  text-align: right;
-  user-select: none;
-  white-space: pre;
-  line-height: 1.55;
-}
-.text-editor-surface textarea {
-  flex: 1;
+.code-editor {
   width: 100%;
   min-width: 0;
-  min-height: 55vh;
-  resize: none;
-  border: 0;
-  border-radius: 0;
-  padding: 12px;
-  background: transparent;
-  color: #d9e2ed;
-  font:
-    12px/1.55 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Consolas,
-    monospace;
-  white-space: pre;
-  tab-size: 2;
+  height: clamp(320px, 58vh, 900px);
 }
-.text-editor-surface textarea:focus {
-  box-shadow: none;
-  outline: none;
+.text-editor-shortcuts {
+  position: relative;
+  font-size: 11px;
+  color: var(--muted);
+}
+.text-editor-shortcuts summary {
+  cursor: pointer;
+}
+.text-editor-shortcuts > div {
+  position: absolute;
+  right: 0;
+  top: 22px;
+  z-index: 20;
+  min-width: 300px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-1);
+  box-shadow: 0 8px 28px #0005;
 }
 .text-editor-footer {
   border-top: 1px solid var(--line);
@@ -2042,6 +2030,21 @@ button.link {
   border-color: transparent;
   color: var(--faint);
   font-size: 12px !important;
+}
+.topbar-execution {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.topbar-execution button {
+  font-size: 11px;
+  padding: 6px 8px;
+}
+.topbar-execution-status {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
 }
 .topbar-attention {
   background: #3a2f1c;

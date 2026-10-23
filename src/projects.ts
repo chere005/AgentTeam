@@ -170,7 +170,7 @@ export async function createFreeFormProject(
 ) {
   const o = freeFormSchema.parse(input);
   const { deps, order } = planTaskOrder(o.tasks, o.sequential);
-  const workspace = await resolveProjectWorkspace(o.workspace);
+  const workspace = await resolveProjectWorkspace(o.workspace, service.store);
   const store = service.store;
   const id = store.transaction(() => {
     const agents = teamAgents(service, teamId);

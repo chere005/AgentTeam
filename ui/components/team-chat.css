@@ -9,12 +9,70 @@
   background: var(--surface-0);
 }
 .team-chat-sidebar {
-  width: 250px;
-  flex: 0 0 250px;
+  width: 280px;
+  flex: 0 0 280px;
   overflow: auto;
   padding: 14px 10px;
   border-right: 1px solid var(--line);
   background: var(--surface-1);
+}
+.team-chat-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 6px 8px;
+  color: var(--text);
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.team-chat-tree-row:hover,
+.team-chat-tree-row.active {
+  background: var(--surface-2);
+}
+.team-chat-tree [role="treeitem"]:focus {
+  outline: none;
+}
+.team-chat-tree [role="treeitem"]:focus-visible > .team-chat-tree-row {
+  outline: 1px solid #8cddc2;
+  outline-offset: -1px;
+}
+.team-chat-tree-toggle {
+  display: grid;
+  place-items: center;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 20px;
+  border: 0;
+  border-radius: 3px;
+  padding: 0;
+  background: transparent;
+  color: var(--muted);
+}
+.team-chat-tree-spacer {
+  flex: 0 0 16px;
+}
+.team-chat-picker-avatar {
+  display: grid;
+  place-items: center;
+  flex: 0 0 25px;
+  width: 25px;
+  height: 25px;
+  border-radius: 50%;
+  background: #34516b;
+  color: #d5e7fa;
+  font-size: 11px;
+  font-weight: 600;
+}
+.team-chat-tree-row.active .team-chat-picker-avatar {
+  background: #296958;
+  color: #c5f7e9;
+}
+.team-chat-tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .team-chat-sidebar-title {
   display: flex;

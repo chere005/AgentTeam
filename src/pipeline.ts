@@ -10,6 +10,7 @@
 // immutable handoff notes (src/handoffs.ts). Creating a team or project never starts a provider;
 // a project stays paused until models and parallel resource access were verified (`prepare`).
 import { execFile } from "node:child_process";
+import { filesystemPolicy } from "./filesystem-policy.ts";
 import { stat, realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
@@ -960,6 +961,7 @@ export async function createPipelineProject(
   input: unknown,
 ) {
   const o = pipelineProjectSchema.parse(input);
+  filesystemPolicy(service.store).assertPath(o.workspace);
   const before = teamProfile(service.store, teamId);
   assert(
     before?.type === "pipeline",
@@ -1006,6 +1008,7 @@ export async function createPipelineSample(
   input: unknown,
 ) {
   const o = pipelineOptionsSchema.parse(input);
+  filesystemPolicy(service.store).assertPath(o.workspace);
   const { workspace, paths } = await resolvePipelineWorkspace({
     ...o,
     need: Math.max(o.implementationWorkers, o.fixWorkers),

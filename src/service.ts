@@ -19,7 +19,8 @@ import { ParallelWork } from "./parallel.ts";
 import { HandoffNotes } from "./handoffs.ts";
 import { PipelineService } from "./pipeline.ts";
 import { TeamSpaces } from "./team-spaces.ts";
-import { taskProviderRoots } from "./project-worktrees.ts";
+import { taskFilesystem } from "./provider-filesystem.ts";
+import { filesystemPolicy } from "./filesystem-policy.ts";
 import { withRoleDefaults } from "./roles.ts";
 import { Store } from "./store.ts";
 import { SkillCatalog } from "./skills.ts";
@@ -78,6 +79,7 @@ export class TeamService {
     this.store = store;
     this.approvals = new Approvals(store);
     this.skills = skills;
+    this.skills.assertPath = (path) => filesystemPolicy(store).assertPath(path);
     this.resources = new ResourceCoordinator(store);
     this.validation = new ValidationService(store, this.resources);
     this.limits = new LimitsService(this);
@@ -138,6 +140,7 @@ export class TeamService {
       }
     }
     for (const ws of data.workspaces) {
+      filesystemPolicy(this.store).assertPath(ws.path);
       assert(
         isAbsolute(ws.path),
         "invalid_path",
@@ -572,7 +575,11 @@ export class TeamService {
       data.dependsOn.push(workflow.coordination.planTaskId);
     const assignee = this.store.get<Agent>("agent", data.agentId);
     this.assertNotRetired(assignee);
-    const declared = canonicalDeclaredPaths(assignee, data.resourcePaths);
+    const declared = canonicalDeclaredPaths(
+      assignee,
+      data.resourcePaths,
+      (path) => filesystemPolicy(this.store).assertPath(path),
+    );
     if (declared) data.resourcePaths = declared;
     else delete data.resourcePaths;
     if (data.invokedBy) {
@@ -632,25 +639,28 @@ export class TeamService {
       waitReason:
         task.status !== "queued"
           ? null
-          : wf.paused
-            ? "workflow-paused"
-            : agent.control === "human"
-              ? "human-control"
-              : blockers.length
-                ? "dependencies"
-                : this.orchestration.blockingReviews(task).length
-                  ? "review-required"
-                  : !this.validation.gate(task).open
-                    ? "validation-required"
-                    : task.invokedBy && !this.capacity(task.invokedBy).available
-                      ? "invocation-limit"
-                      : this.resources.conflicts(
-                            task.agentId,
-                            task.workflowId,
-                            task.id,
-                          ).length
-                        ? "resource-busy"
-                        : null,
+          : filesystemPolicy(this.store).blocks().length
+            ? "global-filesystem-block"
+            : wf.paused
+              ? "workflow-paused"
+              : agent.control === "human"
+                ? "human-control"
+                : blockers.length
+                  ? "dependencies"
+                  : this.orchestration.blockingReviews(task).length
+                    ? "review-required"
+                    : !this.validation.gate(task).open
+                      ? "validation-required"
+                      : task.invokedBy &&
+                          !this.capacity(task.invokedBy).available
+                        ? "invocation-limit"
+                        : this.resources.conflicts(
+                              task.agentId,
+                              task.workflowId,
+                              task.id,
+                            ).length
+                          ? "resource-busy"
+                          : null,
     };
   }
   transitionTask(id: string, input: unknown) {
@@ -1109,6 +1119,7 @@ export class TeamService {
   }
   /** `taskId`: the task about to run; its declared paths select the working folder. */
   async launchPlan(agentId: string, taskId?: string) {
+    filesystemPolicy(this.store).assertConfinedExecution();
     const agent = this.store.get<Agent>("agent", agentId);
     await this.skills.scan();
     const loaded = agent.skills.map((assignment) => {
@@ -1136,20 +1147,19 @@ export class TeamService {
       persist: true,
     });
     const decisions = decideSkills(entries, undefined);
-    const sections = composeSections(agent, entries, decisions, adapter);
-    const scopedRoots = taskProviderRoots(this.store, agent, taskId);
-    const providerRoots =
-      scopedRoots ??
-      agent.workspaces.map((workspace) => ({
-        path: workspace.path,
-        access: workspace.access,
-        active: workspace.active,
-        restricted: !!workspace.explicitOnly || !!workspace.rules?.length,
-      }));
+    const filesystem = await taskFilesystem(this.store, agent, taskId);
+    const runAgent = filesystem
+      ? { ...agent, workspaces: filesystem.workspaces }
+      : agent;
+    const sections = composeSections(runAgent, entries, decisions, adapter);
+    const providerRoots = runAgent.workspaces.map((workspace) => ({
+      path: workspace.path,
+      access: workspace.access,
+      active: workspace.active,
+      restricted: !!workspace.explicitOnly || !!workspace.rules?.length,
+    }));
     const cwd =
-      scopedRoots?.[0]?.path ??
-      agent.workspaces.find((w) => w.active)?.path ??
-      null;
+      filesystem?.cwd ?? agent.workspaces.find((w) => w.active)?.path ?? null;
     if (cwd) {
       const canonical = await realpath(cwd);
       assert(
@@ -1165,7 +1175,7 @@ export class TeamService {
       model: agent.model,
       effort: agent.effort,
       cwd,
-      taskScoped: scopedRoots !== null,
+      taskScoped: filesystem !== null,
       instructions: sectionsText(sections),
       skills: loaded.map(({ mode, skill }, i) => ({
         id: skill.id,
@@ -1178,7 +1188,7 @@ export class TeamService {
         state: decisions[i].state,
         reason: decisions[i].reason,
       })),
-      workspaces: agent.workspaces,
+      workspaces: filesystem?.workspaces ?? agent.workspaces,
       providerRoots,
       tools: agent.tools,
       warnings: [
@@ -1191,7 +1201,7 @@ export class TeamService {
       ],
     };
     return attachContext(plan, {
-      agent,
+      agent: runAgent,
       entries,
       adapter,
       baseInstructions: plan.instructions,

@@ -13,6 +13,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { TeamService } from "./service.ts";
 import { WorkspaceService, parseWorktrees } from "./workspaces.ts";
+import { filesystemPolicy } from "./filesystem-policy.ts";
 import { overlaps } from "./resources.ts";
 import {
   AppError,
@@ -222,6 +223,7 @@ export class WorktreeService {
       : null;
   }
   private async repo(agentId: string, workspace: string, write: boolean) {
+    filesystemPolicy(this.team.store).assertConfinedExecution();
     const loc = await this.ws.location(agentId, { workspace }, write);
     const top = await must(
       loc.root,
@@ -605,6 +607,7 @@ export class WorktreeService {
     return agent;
   }
   runSetup(agentId: string, worktreeId: string, input?: unknown) {
+    filesystemPolicy(this.store).assertConfinedExecution();
     const rec = this.record(worktreeId);
     this.authorize(agentId, rec);
     assert(

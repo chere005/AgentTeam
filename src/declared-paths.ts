@@ -26,7 +26,11 @@ function canonicalize(path: string) {
  * inside `.git`, and not excluded by that attachment's access rules. Returns undefined when the
  * task declares nothing, which keeps the default of leasing every attached folder.
  */
-export function canonicalDeclaredPaths(agent: Agent, raw?: string[]) {
+export function canonicalDeclaredPaths(
+  agent: Agent,
+  raw?: string[],
+  assertPath?: (path: string) => void,
+) {
   if (!raw?.length) return undefined;
   const out = new Set<string>();
   for (const p of raw) {
@@ -36,7 +40,9 @@ export function canonicalDeclaredPaths(agent: Agent, raw?: string[]) {
         "invalid_resource_path",
         `Declared resource path "${p}" must be absolute`,
       );
+    assertPath?.(p);
     const real = canonicalize(p);
+    assertPath?.(real);
     const ws = agent.workspaces
       .filter((w) => contains(w.path, real))
       .sort((a, b) => b.path.length - a.path.length)[0];

@@ -7,6 +7,7 @@ import { overlaps, contains } from "./resources.ts";
 import { priorityName } from "./priorities.ts";
 import { invocationSummary } from "./invocation-view.ts";
 import { Redactor } from "./redact.ts";
+import { filesystemPolicy } from "./filesystem-policy.ts";
 import type { Event } from "./store.ts";
 import type { TeamService } from "./service.ts";
 import type { Agent, Edge, Session, Task, Workflow } from "./model.ts";
@@ -702,6 +703,14 @@ function explainTask(
     });
   }
   // ---- queued: assemble every cause, not just the first one the scheduler would report ------
+  if (filesystemPolicy(store).blocks().length)
+    push({
+      code: "global-filesystem-block",
+      blocking: true,
+      title: "Global filesystem policy blocks execution",
+      detail:
+        "Permanent drive or folder blocks are configured. Provider execution stays blocked until its sandbox can enforce every denial; approvals cannot override this policy.",
+    });
   const trip = service.limits.status(wf.id);
   if (trip.trip)
     push({

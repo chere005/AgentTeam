@@ -149,7 +149,7 @@ test("connection changes never reuse session IDs from another transport", () => 
         "task",
         process.cwd(),
       ),
-    /Task resource folders require a direct Claude or Codex CLI run/,
+    { code: "provider_access_unsupported" },
   );
   assert.throws(
     () => commandFor(plan, "direct-session", "hello", process.cwd()),

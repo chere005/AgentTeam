@@ -37,6 +37,7 @@ export type SaveDeps = {
   defaultDirectory: string;
   testMode?: boolean;
   record?: (record: SaveRecord) => void;
+  assertPath?: (path: string) => void;
 };
 
 export type SaveResult =
@@ -169,7 +170,9 @@ export async function saveDiagnosticBundle(
   });
   if (picked.canceled || !picked.filePath)
     return { saved: false, canceled: true };
+  deps.assertPath?.(picked.filePath);
   const path = await validateChosenPath(picked.filePath, format);
+  deps.assertPath?.(path);
   // O_NOFOLLOW: a link planted at the path after validation is not followed (POSIX).
   await writeFile(path, bytes, {
     mode: 0o600,

@@ -24,6 +24,7 @@ import type { WorktreeRecord } from "./worktrees.ts";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { mkdir, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { filesystemPolicy } from "./filesystem-policy.ts";
 
 function pathKey(path: string) {
   if (process.platform === "win32") {
@@ -245,6 +246,7 @@ export async function prepareTaskResourceFolders(
     .list<{ id: string; resourcePaths?: string[] }>("task")
     .find((t) => t.id === taskId);
   for (const path of task?.resourcePaths ?? []) {
+    filesystemPolicy(store).assertPath(path);
     const workspace = agent.workspaces
       .filter((w) => contains(w.path, path))
       .sort((a, b) => b.path.length - a.path.length)[0];
@@ -254,6 +256,7 @@ export async function prepareTaskResourceFolders(
       `${agent.name} no longer has a folder containing ${path}, which this task declares; attach it again or change the task`,
       409,
     );
+    filesystemPolicy(store).assertPath(workspace.path);
     try {
       const info = await stat(path);
       assert(

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { filesystemPolicy } from "./filesystem-policy.ts";
 import { z } from "zod";
 import type { TeamService } from "./service.ts";
 import type { ApprovalRecord } from "./approvals.ts";
@@ -165,6 +166,12 @@ export class WorkflowGraphService {
   /** Wired to the live-execution switch by createApi; command steps never start while it is off. */
   enabled: () => boolean = () => true;
   private live = new Map<string, AbortController>();
+  activeCommandCount() {
+    return this.live.size;
+  }
+  interruptCommands() {
+    for (const controller of this.live.values()) controller.abort();
+  }
   private inflight = new Set<Promise<void>>();
   private advancing = false;
   private again = false;
@@ -1268,6 +1275,7 @@ export class WorkflowGraphService {
     let effect: Effect | undefined;
     let began = false;
     try {
+      filesystemPolicy(this.service.store).assertConfinedExecution();
       const plan = await planCommand(node, agent, args);
       const begun = ledger.begin({
         taskId: stepKey,

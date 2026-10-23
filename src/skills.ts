@@ -62,6 +62,7 @@ function declaredExtras(meta: Record<string, unknown>) {
   return { ...(version ? { version } : {}), ...(triggers ? { triggers } : {}) };
 }
 export class SkillCatalog {
+  assertPath?: (path: string) => void;
   roots: SkillRoot[];
   items = new Map<string, Skill>();
   warnings: { path: string; message: string }[] = [];
@@ -83,6 +84,7 @@ export class SkillCatalog {
       }
       let entries;
       try {
+        this.assertPath?.(directory);
         entries = await readdir(directory, { withFileTypes: true });
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code !== "ENOENT")
@@ -103,6 +105,7 @@ export class SkillCatalog {
         if (!e.isFile() || e.name !== "SKILL.md") continue;
         try {
           const canonical = await realpath(path);
+          this.assertPath?.(canonical);
           if (seen.has(canonical)) continue;
           seen.add(canonical);
           if ((await stat(path)).size > 512_000)
@@ -183,6 +186,7 @@ export class SkillCatalog {
         "skill_not_found",
         `Skill ${id} is not in the catalog`,
       );
+    this.assertPath?.(skill.path);
     return skill;
   }
   grouped(origin?: "installed" | "bundled") {

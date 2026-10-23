@@ -13,6 +13,7 @@ import { promisify } from "node:util";
 import { z } from "zod";
 import { openCommand } from "./native.ts";
 import { attachedRepoGitConfig, SAFE_GIT_CONFIG } from "./git-config.ts";
+import { filesystemPolicy } from "./filesystem-policy.ts";
 import { applyStaging } from "./git-stage.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { ResourceCoordinator } from "./resources.ts";
@@ -93,6 +94,7 @@ export class WorkspaceService {
     opts: { traverse?: boolean } = {},
   ) {
     const data = requestSchema.parse(input);
+    filesystemPolicy(this.store).assertPath(data.workspace);
     const agent = this.store.get<Agent>("agent", agentId);
     const ws = agent.workspaces.find((w) => w.path === data.workspace);
     assert(
@@ -178,6 +180,7 @@ export class WorkspaceService {
   }
   /** Staging/resolving names paths directly: each must be writable under the attachment's rules. */
   async assertPathsWritable(agentId: string, root: string, paths: string[]) {
+    filesystemPolicy(this.store).assertPath(root);
     const agent = this.store.get<Agent>("agent", agentId);
     const ws = agent.workspaces.find((w) => w.path === root);
     if (!ws || !hasRestrictions(ws)) return;
@@ -506,6 +509,7 @@ export class WorkspaceService {
     }
   }
   private async git(root: string, args: string[]) {
+    filesystemPolicy(this.store).assertConfinedExecution();
     try {
       return (
         await exec(
@@ -1094,6 +1098,7 @@ export class WorkspaceService {
     return this.store.put("settings", { id: "user", ...data });
   }
   async openExternal(agentId: string, input: unknown, execute = false) {
+    if (execute) filesystemPolicy(this.store).assertConfinedExecution();
     const data = z
       .object({
         workspace: z.string(),

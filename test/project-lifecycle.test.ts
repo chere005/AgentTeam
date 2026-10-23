@@ -724,8 +724,13 @@ test("launchPlan never runs a task outside its declared folders: a detached decl
     completionCriteria: "done",
     resourcePaths: [join(repo, "a")],
   });
-  assert.equal((await w.service.launchPlan(id, task.id)).cwd, join(repo, "a"));
-  // paths over two folders: the active folder holds one of them
+  const scoped = await w.service.launchPlan(id, task.id);
+  assert.equal(scoped.cwd, join(repo, "a"));
+  assert.deepEqual(
+    scoped.workspaces.map((w) => w.path),
+    [join(repo, "a")],
+  );
+  // Every declared root is propagated; the unrelated active attachment never selects cwd.
   const spread = w.service.task({
     workflowId: wf.id,
     agentId: id,
@@ -734,9 +739,11 @@ test("launchPlan never runs a task outside its declared folders: a detached decl
     completionCriteria: "done",
     resourcePaths: [join(repo, "a"), join(repo2, "b")],
   });
-  assert.equal(
-    (await w.service.launchPlan(id, spread.id)).cwd,
-    join(repo, "a"),
+  const spreadPlan = await w.service.launchPlan(id, spread.id);
+  assert.equal(spreadPlan.cwd, join(repo, "a"));
+  assert.deepEqual(
+    spreadPlan.workspaces.map((w) => w.path),
+    [join(repo, "a"), join(repo2, "b")],
   );
   // A declared output directory may be new. The scheduler prepares it inside its attached root
   // before launch, so the provider can start in the exact leased directory.

@@ -204,7 +204,12 @@ test("deleted directory trees list every file; untracked trees are expanded", as
 
 test("unusual file names (spaces, quotes, unicode, leading dash, newline) review correctly", async (t) => {
   const { root, agent, ws } = await fixture(t);
-  const names = ["sp ace.txt", "ünï-ço∂e.txt", "-dash.txt", "[glob]*.txt"];
+  const names = [
+    "sp ace.txt",
+    "ünï-ço∂e.txt",
+    "-dash.txt",
+    process.platform === "win32" ? "[glob].txt" : "[glob]*.txt",
+  ];
   if (process.platform !== "win32") names.push('quo"te.txt');
   if (process.platform !== "win32") names.push("new\nline.txt");
   for (const n of names) await writeFile(join(root, n), "v1\n");

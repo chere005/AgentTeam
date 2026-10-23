@@ -7,6 +7,7 @@ import { decide, traversable } from "./access.ts";
 import { AppError, assert, type Agent } from "./model.ts";
 import { Redactor } from "./redact.ts";
 import type { Store } from "./store.ts";
+import { filesystemPolicy } from "./filesystem-policy.ts";
 
 /**
  * Knowledge sources: reference material (not instructions, not actions) from folders already attached
@@ -146,7 +147,9 @@ export class KnowledgeBase {
     this.store = store;
   }
   private agent(id: string) {
-    return this.store.get<Agent>("agent", id);
+    const agent = this.store.get<Agent>("agent", id);
+    filesystemPolicy(this.store).assertAgent(agent);
+    return agent;
   }
   sources() {
     return this.store.list<KnowledgeSource>("knowledge-source");
@@ -182,6 +185,14 @@ export class KnowledgeBase {
   }
   /** Whether `agent` may use `source` right now. */
   async access(agent: Agent, source: KnowledgeSource) {
+    try {
+      filesystemPolicy(this.store).assertPath(source.folder);
+    } catch {
+      return {
+        ok: false as const,
+        reason: "Blocked by global filesystem policy",
+      };
+    }
     if (source.scope.kind === "agent" && source.scope.agentId !== agent.id)
       return { ok: false as const, reason: "Owned by another agent" };
     let folder: string;
@@ -215,6 +226,7 @@ export class KnowledgeBase {
     );
     let folder: string;
     try {
+      filesystemPolicy(this.store).assertPath(data.folder);
       folder = await realpath(data.folder);
       assert(
         (await stat(folder)).isDirectory(),

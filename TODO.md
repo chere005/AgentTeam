@@ -57,7 +57,9 @@ Implemented and verified on macOS (`src/devserver*.ts`, `ui/components/DevServer
 
 ## 2 Finish the requested agent editor changes — P0
 
-No open items. Invocation-limit display, installation-validated model/effort choices and unavailable-model warnings are implemented and covered by `e2e/runtime-settings.spec.ts`; this heading is kept so section numbers stay stable.
+Invocation-limit display, installation-validated model/effort choices and unavailable-model warnings are implemented and covered by `e2e/runtime-settings.spec.ts`.
+
+- [ ] Add user-assigned agent nicknames and custom avatars, persisted across reload and team template import/export. Show them consistently in chat, canvas and agent selectors, with initials fallback and the canonical name/ID retained for routing. Add backend validation/persistence and desktop editing/display coverage. Requested October 22; not yet implemented.
 
 ## 3 Provider installations and useful agent execution — P0
 
@@ -92,7 +94,8 @@ References: [ACP protocol](https://agentclientprotocol.com/protocol/overview), [
 - [ ] Validate CLI flags and model/effort discovery against actual supported provider versions.
 - [ ] Verify constrained provider file access against supported live Codex/Claude versions. Built-in file tools currently require an attached unrestricted workspace; Codex remains read-only without a role grant, Claude file tools are confined by restricted mode, and both are disabled for per-file/explicit-only attachment rules. Codex may still read outside attached folders.
 - [ ] Implement provider permission/approval handling and expose pending approvals in the UI.
-- [ ] Map attached folders and read/write settings to real provider restrictions where supported; state remaining limits clearly.
+- [ ] Validate task-scoped provider permissions against real supported sandboxes: exact roots, mixed read/write paths, sibling reads/writes and symlink escapes. Launch-plan/CLI contract fixtures now pass; Codex's legacy Windows sandbox requires broad read access and MXC is unavailable on the current executor. Scoped launches must refuse unsupported configurations; do not reopen broad access to make tests pass.
+- [ ] Add enforceable OS sandbox support for external processes under permanent global filesystem blocks. For now global blocks deny unconfined provider/kernel/Git/command/editor launches entirely while in-app access to unblocked workspaces remains available.
 - [ ] Validate Wolfram execution with a configured local installation, evaluator selection, error handling, and session context.
 - [ ] Preserve provider session identity and verify resume after restart, model changes, and human takeover.
 - [ ] Provide a guided first-run check that does not require an Enable execution checkbox and does not unexpectedly drain old queued work.

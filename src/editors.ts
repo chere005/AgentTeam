@@ -7,6 +7,7 @@ import { locate } from "./locate.ts";
 import { planSpawn } from "./runtime-spawn.ts";
 import type { Store } from "./store.ts";
 import type { WorkspaceService } from "./workspaces.ts";
+import { filesystemPolicy } from "./filesystem-policy.ts";
 
 /**
  * External editors and file-manager launching.
@@ -372,6 +373,7 @@ export class EditorService {
     return this.settings();
   }
   async open(agentId: string, input: unknown, execute: boolean) {
+    if (execute) filesystemPolicy(this.store).assertConfinedExecution();
     const data = openSchema.parse(input);
     const loc = await locate(this.ws, agentId, {
       workspace: data.workspace,

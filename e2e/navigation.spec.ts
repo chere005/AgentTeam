@@ -94,7 +94,7 @@ test("first run shows four main views, a useful empty state and a slim top bar",
     );
     // The chip appears once the backend reports ready; on a slow runner that is after first paint.
     await expect(
-      bar.getByRole("button", { name: "Execution paused" }),
+      bar.getByRole("button", { name: "Resume execution" }),
     ).toBeVisible();
     const labels = await bar
       .getByRole("button")
@@ -108,7 +108,7 @@ test("first run shows four main views, a useful empty state and a slim top bar",
     expect(labels).toHaveLength(5);
     expect(labels[0]).toMatch(/^Active team: Main team/);
     expect(labels.slice(1)).toEqual([
-      "Execution paused",
+      "Resume execution",
       "Help and feature guide",
       "More",
       "Settings",
@@ -143,6 +143,9 @@ test("first run shows four main views, a useful empty state and a slim top bar",
 });
 
 test("the More menu lists every feature by group with a description, and the palette opens each one", async () => {
+  // This walks all feature pages in one Electron session; Windows needs more than
+  // the ordinary single-workflow budget, while each locator keeps its own timeout.
+  test.setTimeout(30_000 + FEATURES.length * 5_000);
   await withApp(async ({ start }) => {
     const { page, errors } = await start();
     await api(page, "POST", "/agents", { name: "Alpha", environment: "codex" });

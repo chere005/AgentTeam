@@ -4,6 +4,7 @@ import { limitsPatchSchema } from "./limits-schema.ts";
 import { Store } from "./store.ts";
 import { withRoleDefaults } from "./roles.ts";
 import { TeamService } from "./service.ts";
+import { SkillCatalog } from "./skills.ts";
 import { canonical, issueLines, sha256 } from "./shared-common.ts";
 import {
   AppError,
@@ -818,7 +819,14 @@ async function dryRun(service: TeamService, ops: Op[]) {
       id: "active-team",
       teamId: service.teamSpaces.active(),
     });
-    const sandbox = new TeamService(sandboxStore, service.skills);
+    for (const block of service.store.list<{ id: string }>("filesystem-block"))
+      sandboxStore.put("filesystem-block", block);
+    // A service owns its catalog's filesystem guard. Sharing the live instance would
+    // replace that guard with one bound to this temporary store, which closes below.
+    const catalog = new SkillCatalog([...service.skills.roots]);
+    catalog.items = new Map(service.skills.items);
+    catalog.warnings = [...service.skills.warnings];
+    const sandbox = new TeamService(sandboxStore, catalog);
     // Stop at the first failure: later ops usually depend on earlier ones.
     let index = 0;
     try {

@@ -99,6 +99,8 @@ async function openTaskSettings(page: Page, title: string) {
 }
 
 test("task completion checks and validation requirement: validate, save, persist, backend errors, locked while running", async () => {
+  // Includes a reload and multiple check editors, each exercised through the UI.
+  test.setTimeout(90_000);
   await withApp(async (page) => {
     const { first, third } = await fixture(page);
     await api(page, "POST", `/tasks/${third.id}/status`, {

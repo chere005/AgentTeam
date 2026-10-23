@@ -22,6 +22,7 @@ import { WorkflowStateEditor } from "./StateEditor";
 import { TaskSettings } from "./TaskSettings";
 import { RuleEditor } from "./RuleEditor";
 import { HarnessSettings } from "./HarnessSettings";
+import { FilesystemSettings } from "./FilesystemSettings";
 import { GitWorkflowPanel } from "./GitWorkflow";
 import { FilePreview, OpenWith } from "./FilePreview";
 import { TextEditor } from "./TextEditor";
@@ -1841,6 +1842,7 @@ export function Preferences(
         </p>
       </section>
       <HarnessSettings act={p.act} />
+      <FilesystemSettings act={p.act} />
       <section className="settings-card">
         <h3>Default text editor</h3>
         <p>Applies to files and project directories opened from Workspace.</p>

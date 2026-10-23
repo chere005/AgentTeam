@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import { filesystemPolicy } from "./filesystem-policy.ts";
 import { tmpdir } from "node:os";
 import { z } from "zod";
 import { AppError, type Agent } from "./model.ts";
@@ -267,6 +268,7 @@ export class ToolRegistry {
    * `tools/list` (paged), then stop it. Never sends `tools/call`.
    */
   async test(id: string, options: TestOptions = {}): Promise<ToolConnection> {
+    filesystemPolicy(this.store).assertConfinedExecution();
     const server = this.server(id);
     if (this.testing.has(id))
       throw new AppError(

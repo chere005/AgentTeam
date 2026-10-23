@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
+import { editorNotices } from "./editor-notices.mjs";
 
 const root = new URL("..", import.meta.url).pathname.replace(
   /^\/([A-Za-z]:)/,
@@ -15,6 +16,17 @@ const json = (...p) => JSON.parse(readFileSync(at(...p), "utf8"));
 const failures = [];
 const notes = [];
 const fail = (m) => failures.push(m);
+try {
+  if (
+    readFileSync(at("assets/licenses/EDITOR-LICENSES.txt"), "utf8") !==
+    editorNotices()
+  )
+    fail(
+      "Editor dependency notices are stale; run node scripts/editor-notices.mjs --write",
+    );
+} catch (error) {
+  fail(`Editor notices: ${error.message}`);
+}
 
 // Licenses acceptable for distributed production dependencies (SPDX ids, "OR" expressions allowed).
 const allowed = new Set([

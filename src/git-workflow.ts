@@ -14,6 +14,7 @@ import {
 import { ResourceCoordinator, overlaps } from "./resources.ts";
 import type { Store } from "./store.ts";
 import type { WorkspaceService } from "./workspaces.ts";
+import { filesystemPolicy } from "./filesystem-policy.ts";
 import { withRepoLockFor as withRepoLock } from "./repo-lock.ts";
 import { launch, type OpenPlan } from "./editors.ts";
 import { applyStaging, resolveGitPath } from "./git-stage.ts";
@@ -206,6 +207,7 @@ export class GitWorkflow {
     write: boolean,
     allowRestricted = false,
   ) {
+    filesystemPolicy(this.store).assertConfinedExecution();
     const loc = await this.ws.location(
       agentId,
       { workspace, path: "." },
@@ -369,6 +371,7 @@ export class GitWorkflow {
       repository: string | null;
     }
   > {
+    filesystemPolicy(this.store).assertConfinedExecution();
     const data = z.object(common).strict().parse(input);
     const loc = await this.ws.location(agentId, {
       workspace: data.workspace,
@@ -1585,6 +1588,7 @@ export class GitWorkflow {
 
   // ---- new repositories -----------------------------------------------------
   async init(agentId: string, input: unknown): Promise<ActionResult> {
+    filesystemPolicy(this.store).assertConfinedExecution();
     const data = z
       .object({ ...common, branch: branchName.default("main") })
       .strict()

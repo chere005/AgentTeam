@@ -12,6 +12,12 @@
   --text: #1d2633;
   --muted: #556274;
   --faint: #636f80;
+  --editor-keyword: #7f3193;
+  --editor-string: #735300;
+  --editor-number: #9c471b;
+  --editor-function: #006e65;
+  --editor-selection: #789ec44d;
+  --surface-0: #ffffff;
   background: #f4f6f9;
   color: #1d2633;
 }

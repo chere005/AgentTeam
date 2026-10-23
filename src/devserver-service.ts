@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { filesystemPolicy } from "./filesystem-policy.ts";
 import { readFile, stat, readdir } from "node:fs/promises";
 import { join, dirname, basename, resolve } from "node:path";
 import { z } from "zod";
@@ -217,6 +218,7 @@ export class DevServerService {
     return record;
   }
   async start(agentId: string, input: unknown) {
+    filesystemPolicy(this.team.store).assertConfinedExecution();
     const body = (input ?? {}) as Record<string, unknown>;
     const saved = "command" in body ? await this.save(agentId, body) : null;
     const { workspace } = z

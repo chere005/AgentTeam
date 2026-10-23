@@ -15,6 +15,7 @@ import {
 import { allowedFor, sha256, type Actor } from "./shared-common.ts";
 import { taskInputHash } from "./validation.ts";
 import type { TeamService } from "./service.ts";
+import { filesystemPolicy } from "./filesystem-policy.ts";
 
 export const ARTIFACT_KINDS = [
   "file",
@@ -258,6 +259,7 @@ export class ArtifactRegistry {
       "`root` must be one of the agent's attached workspace paths",
       400,
     );
+    filesystemPolicy(this.store).assertPath(root.path);
     const loc = await confineToWorkspace(root.path, input.path!);
     // Exclusions and explicit-only rules apply to artifact registration like to file browsing.
     const access = decideBoth(root, lexicalRelative(input.path!), loc.rel);
@@ -507,6 +509,7 @@ export class ArtifactRegistry {
         );
       }
     }
+    filesystemPolicy(this.store).assertPath(src.root);
     const loc = await confineToWorkspace(src.root, src.path);
     assert(
       loc.real === src.realPath,

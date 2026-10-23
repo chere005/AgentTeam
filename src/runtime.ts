@@ -25,6 +25,7 @@ import { assistantContext } from "./assistant-context.ts";
 import { ToolSessions } from "./tool-endpoint.ts";
 import { GroupChats } from "./group-chat.ts";
 import { ensureWorkspaceBaseline } from "./workspace-changes.ts";
+import { codexTaskPermissions } from "./provider-filesystem.ts";
 
 /** Provider file access is available only inside the current unrestricted attachment. */
 function workspaceCapabilities(plan: LaunchPlan) {
@@ -91,19 +92,23 @@ export function commandFor(
   const cwd = plan.cwd ?? fallbackCwd;
   const roots = providerRoots(plan);
   assert(
-    !plan.taskScoped ||
-      (plan.connection?.transport !== "acp" &&
-        (plan.environment === "claude" || plan.environment === "codex")),
-    "resource_scope_unsupported",
-    "Task resource folders require a direct Claude or Codex CLI run; this connection cannot enforce them.",
-    409,
-  );
-  assert(
     !plan.taskScoped || !roots.some((root) => root.restricted),
     "resource_scope_unsupported",
     "This provider cannot enforce file-level access rules inside a task folder. Remove the rules or use an unrestricted folder attachment.",
     409,
   );
+  if (plan.taskScoped) {
+    assert(
+      plan.connection?.transport !== "acp" &&
+        (plan.environment === "claude" || plan.environment === "codex"),
+      "provider_access_unsupported",
+      "This provider adapter cannot enforce task-scoped filesystem access",
+      409,
+    );
+    // A resumed session can carry old directories and file contents from a broader grant.
+    // Recovery still receives its bounded continuation note, but starts a fresh provider session.
+    sessionId = null;
+  }
   if (plan.connection?.transport === "acp") {
     const prefix = acpSessionPrefix(
       plan.connection.executable,
@@ -155,6 +160,13 @@ export function commandFor(
     // so attachments with rules remain unavailable to those tools.
     const capabilities = workspaceCapabilities(plan);
     const fileTools = claudeFileTools(plan);
+    if (plan.taskScoped)
+      assert(
+        new Set(roots.map((w) => w.access)).size === 1,
+        "provider_access_unsupported",
+        "Claude cannot enforce mixed read/write task directories; split this task into separate assignments",
+        409,
+      );
     const args = [
       "--print",
       "--output-format",
@@ -173,6 +185,17 @@ export function commandFor(
       "--append-system-prompt",
       plan.instructions,
     ];
+    if (plan.taskScoped) {
+      args.push(
+        "--settings",
+        JSON.stringify({
+          permissions: {
+            additionalDirectories: [],
+            blockReadsOutsideWorkingDirectories: true,
+          },
+        }),
+      );
+    }
     const extraRoots = roots
       .map((root) => root.path)
       .filter((path) => path !== cwd);
@@ -187,13 +210,6 @@ export function commandFor(
       cwd,
     };
   }
-  const accessLevels = new Set(roots.map((root) => root.access));
-  assert(
-    !plan.taskScoped || accessLevels.size <= 1,
-    "resource_scope_mixed_access",
-    "Codex cannot safely give one task both read-only and writable folders. Split it into separate tasks with matching access.",
-    409,
-  );
   const writable = workspaceCapabilities(plan).write;
   const args = [
     "exec",
@@ -201,14 +217,23 @@ export function commandFor(
     "--skip-git-repo-check",
     "--ignore-user-config",
     "--ignore-rules",
-    "-c",
-    `sandbox_mode=${JSON.stringify(
-      writable ? "workspace-write" : "read-only",
-    )}`,
+    ...(plan.taskScoped
+      ? [
+          "--strict-config",
+          "--ephemeral",
+          ...codexTaskPermissions(roots, plan.tools).flatMap((setting) => [
+            "-c",
+            setting,
+          ]),
+        ]
+      : [
+          "-c",
+          `sandbox_mode=${JSON.stringify(writable ? "workspace-write" : "read-only")}`,
+        ]),
     "-c",
     'approval_policy="never"',
   ];
-  if (writable)
+  if (writable && !plan.taskScoped)
     for (const root of roots)
       if (root.path !== cwd) args.push("--add-dir", root.path);
   if (plan.model !== "default") args.push("--model", plan.model);
@@ -504,6 +529,100 @@ export class RunManager {
   enabled: boolean;
   cwd: string;
   active = new Map<string, AbortController>();
+  private pauseMode: "draining" | "stopping" | "paused" = "paused";
+  readonly executionInterrupts = new Set<string>();
+  executionState() {
+    const active =
+      this.active.size +
+      this.service.graphs.activeCommandCount() +
+      this.service.validation.active.size;
+    if (!this.enabled && !active && this.pauseMode !== "paused") {
+      this.pauseMode = "paused";
+      this.service.store.put("settings", {
+        id: "execution",
+        enabled: false,
+        mode: "paused",
+      });
+    }
+    return {
+      mode: this.enabled ? ("running" as const) : this.pauseMode,
+      active,
+      readyToClose: !this.enabled && active === 0,
+    };
+  }
+  changeExecution(action: "resume" | "wrap-up" | "pause-now") {
+    const store = this.service.store;
+    assert(
+      action === "pause-now" ||
+        this.pauseMode !== "stopping" ||
+        this.executionState().active === 0,
+      "execution_stopping",
+      "Wait for interrupted processes to stop before resuming",
+      409,
+    );
+    this.enabled = action === "resume";
+    if (action !== "resume")
+      this.pauseMode = action === "wrap-up" ? "draining" : "stopping";
+    if (action === "pause-now") {
+      for (const [id, controller] of this.active) {
+        this.executionInterrupts.add(id);
+        store.put("execution-interrupted", {
+          id,
+          kind: id.startsWith("task:") ? "task" : "chat",
+          createdAt: new Date().toISOString(),
+        });
+        controller.abort();
+      }
+      this.service.graphs.interruptCommands();
+      for (const run of this.service.validation.activeRuns())
+        this.service.validation.cancel(run.runId);
+    }
+    if (action === "resume") {
+      for (const record of store.list<{ id: string; kind: string }>(
+        "execution-interrupted",
+      )) {
+        if (record.kind !== "task") continue;
+        const taskId = record.id.slice(5);
+        try {
+          const task = store.get<Task>("task", taskId);
+          if (
+            task.status === "interrupted" &&
+            !this.service.recovery.ledger.uncertainFor(taskId).length
+          )
+            this.service.recovery.requeue(taskId);
+          if (
+            ["queued", "completed", "cancelled"].includes(
+              store.get<Task>("task", taskId).status,
+            )
+          )
+            store.remove("execution-interrupted", record.id);
+        } catch {
+          /* Recovery keeps tasks whose effects or gates need an explicit decision. */
+        }
+      }
+    }
+    const execution = this.executionState();
+    store.put("settings", {
+      id: "execution",
+      enabled: this.enabled,
+      mode: execution.mode,
+    });
+    store.emit("execution.changed", "execution", {
+      enabled: this.enabled,
+      ...execution,
+      action,
+    });
+    return { enabled: this.enabled, ...execution };
+  }
+  finishActive(id: string) {
+    this.active.delete(id);
+    this.executionInterrupts.delete(id);
+    if (!this.enabled)
+      this.service.store.emit("execution.changed", "execution", {
+        enabled: false,
+        ...this.executionState(),
+      });
+  }
   readonly toolSessions = new ToolSessions();
   /** Resolved from the bound loopback HTTP server only while building a provider run. */
   teammateToolsUrl?: () => string | null;
@@ -518,6 +637,7 @@ export class RunManager {
     this.service = service;
     this.enabled = enabled;
     this.cwd = cwd;
+    this.service.graphs.enabled = () => this.enabled;
   }
   recover() {
     const store = this.service.store;
@@ -723,7 +843,7 @@ export class RunManager {
       plan,
       controller,
       conversationTask,
-    ).finally(() => this.active.delete(sessionId));
+    ).finally(() => this.finishActive(sessionId));
     return { sessionId, messageId: message.id, status: "running" };
   }
   /** Throws `runtime_resolving` (retryable) or `runtime_unavailable` for direct-CLI plans. */
@@ -826,10 +946,27 @@ export class RunManager {
         });
     } catch (e) {
       if (effectId) this.service.recovery.failEffect(effectId, e);
+      if (this.executionInterrupts.has(id) && text.trim()) {
+        store.put("message", {
+          id: randomUUID(),
+          sessionId: id,
+          ...(message.groupChatId ? { groupChatId: message.groupChatId } : {}),
+          role: "assistant",
+          text:
+            "Paused immediately — partial response. Check any changes before continuing.\n\n" +
+            text.slice(0, 100000),
+          status: "delivered",
+          createdAt: new Date().toISOString(),
+        });
+      }
       if (conversationTask) {
         try {
           this.service.transitionTask(conversationTask.id, {
-            status: controller.signal.aborted ? "cancelled" : "failed",
+            status: this.executionInterrupts.has(id)
+              ? "interrupted"
+              : controller.signal.aborted
+                ? "cancelled"
+                : "failed",
             result:
               e instanceof Error
                 ? e.message.slice(0, 100000)

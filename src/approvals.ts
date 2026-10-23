@@ -5,6 +5,7 @@ import type {
 } from "@agentclientprotocol/sdk";
 import { Store } from "./store.ts";
 import { assert } from "./model.ts";
+import { filesystemPolicy } from "./filesystem-policy.ts";
 export type Approval = {
   id: string;
   agentId: string;
@@ -96,6 +97,8 @@ export class Approvals {
     signal: AbortSignal,
     taskId?: string,
   ) {
+    if (filesystemPolicy(this.store).blocks().length)
+      return Promise.resolve({ outcome: { outcome: "cancelled" as const } });
     const fingerprint = approvalFingerprint(agentId, taskId, request);
     // An answer given after a restart is applied once to the identical request of the resumed run.
     // Only task runs resume; a chat request without a task id never inherits another run's answer.
@@ -156,6 +159,8 @@ export class Approvals {
     });
   }
   respond(id: string, optionId: string | null) {
+    if (optionId !== null)
+      filesystemPolicy(this.store).assertConfinedExecution();
     const pending = this.pending.get(id);
     if (!pending) return this.respondRestored(id, optionId);
     assert(
@@ -175,6 +180,8 @@ export class Approvals {
   }
   /** Answers an approval whose provider process did not survive a restart; recorded for the resumed run. */
   private respondRestored(id: string, optionId: string | null) {
+    if (optionId !== null)
+      filesystemPolicy(this.store).assertConfinedExecution();
     let record: ApprovalRecord | undefined;
     try {
       record = this.store.get<ApprovalRecord>("approval", id);

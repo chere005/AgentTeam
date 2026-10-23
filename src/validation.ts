@@ -4,6 +4,7 @@
 // whose kernel run produced a version, output and all-passing assertions can be "pass".
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import { filesystemPolicy } from "./filesystem-policy.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -315,6 +316,7 @@ export class ValidationService {
 
   /** Begin a validation attempt. Resolves `done` with the immutable record once finished. */
   start(taskId: string, input: unknown) {
+    filesystemPolicy(this.store).assertConfinedExecution();
     const spec = validationSpecSchema.parse(input);
     const task = this.store.get<Task>("task", taskId);
     const inputHash = taskInputHash(this.store, task);

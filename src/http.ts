@@ -41,6 +41,7 @@ import { projectLifecycleRoute } from "./project-lifecycle.ts";
 import { teamSettingsRoute } from "./team-settings.ts";
 import { ExampleTeams } from "./example-teams.ts";
 import { handleToolRpc } from "./tool-endpoint.ts";
+import { FilesystemPolicy } from "./filesystem-policy.ts";
 import {
   AppError,
   type Agent,
@@ -85,6 +86,9 @@ export function createApi(
   discovery = new RuntimeDiscovery(),
 ) {
   const store = service.store;
+  const filesystemPolicy = new FilesystemPolicy(store);
+  discovery.store = store;
+  service.skills.assertPath = (path) => filesystemPolicy.assertPath(path);
   const groupChats = new GroupChats(service);
   // Deterministic graph command steps obey the same live-execution switch as provider runs.
   service.graphs.enabled = () => runs.enabled;
@@ -153,6 +157,7 @@ export function createApi(
         runs.readiness?.(environment) ?? { state: "ready" },
     },
   });
+  let filesystemOperations = 0;
   const server = createServer(async (req, res) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Cache-Control", "no-store");
@@ -214,6 +219,51 @@ export function createApi(
           "Local API bearer token required",
         );
       let match: RegExpMatchArray | null;
+      if (
+        ![
+          "/events",
+          "/snapshot",
+          "/health",
+          "/filesystem-policy/blocks",
+        ].includes(path)
+      ) {
+        filesystemOperations++;
+        let released = false;
+        const release = () => {
+          if (!released) {
+            released = true;
+            filesystemOperations--;
+          }
+        };
+        res.once("finish", release);
+        res.once("close", release);
+      }
+      if (path === "/filesystem-policy" && method === "GET")
+        return send({ blocks: filesystemPolicy.blocks() });
+      if (path === "/filesystem-policy/blocks" && method === "POST") {
+        if (
+          runs.active.size ||
+          filesystemOperations ||
+          service.validation.active.size ||
+          service.graphs.activeCommandCount() ||
+          store.list<any>("lease").some((lease) => lease.draining) ||
+          discovery.scanning ||
+          [...devservers.runner.entries.values()].some((entry) =>
+            ["ready", "starting", "stopping"].includes(entry.info.state),
+          ) ||
+          store
+            .list<any>("worktree")
+            .some((record) => record.setup?.state === "running")
+        )
+          throw new AppError(
+            409,
+            "filesystem_policy_busy",
+            "Stop active processes and discovery before adding a global block",
+          );
+        const result = filesystemPolicy.add(await body(req));
+        extras.watch.close();
+        return send(result);
+      }
       if (
         path === "/worktrees/settings" &&
         (method === "GET" || method === "PUT")
@@ -474,19 +524,29 @@ export function createApi(
             .list<Agent>("agent")
             .map((a) => service.activity(a.id)),
           liveExecution: runs.enabled,
+          execution: runs.executionState(),
           teams: spaces.summaries(),
           activeTeamId: spaces.active(),
         });
       }
       if (method === "PUT" && path === "/execution") {
         const data = z
-          .object({ enabled: z.boolean() })
-          .strict()
+          .union([
+            z.object({ enabled: z.boolean() }).strict(),
+            z
+              .object({ action: z.enum(["resume", "wrap-up", "pause-now"]) })
+              .strict(),
+          ])
           .parse(await body(req));
-        runs.enabled = data.enabled;
-        store.put("settings", { id: "execution", ...data });
-        store.emit("execution.changed", "execution", data);
-        return send(data);
+        return send(
+          runs.changeExecution(
+            "action" in data
+              ? data.action
+              : data.enabled
+                ? "resume"
+                : "wrap-up",
+          ),
+        );
       }
       if (
         method === "DELETE" &&

@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../api";
 import { FILE_EDITOR_LEAVE_EVENT } from "../file-editor-guard";
+import { CodeEditor, editorLanguage, type EditorStatus } from "./CodeEditor";
 
 type Document = { content: string; hash: string; access: string };
 const saveShortcut = /Mac/i.test(navigator.platform) ? "⌘S" : "Ctrl+S";
@@ -28,7 +29,13 @@ export function TextEditor({
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState("");
   const [newPath, setNewPath] = useState(path);
-  const textarea = useRef<HTMLTextAreaElement>(null);
+  const [wrap, setWrap] = useState(false);
+  const [cursor, setCursor] = useState<EditorStatus>({
+    line: 1,
+    column: 1,
+    selections: 1,
+    selected: 0,
+  });
   const dirty = doc !== null && draft !== doc.content;
   const cancel = () => {
     if (dirty && !window.confirm("Discard your unsaved file changes?")) return;
@@ -136,6 +143,27 @@ export function TextEditor({
           </span>
         )}
         <div className="row">
+          <button
+            aria-pressed={wrap}
+            title="Wrap long lines"
+            onClick={() => setWrap((value) => !value)}
+          >
+            Word wrap
+          </button>
+          <details className="text-editor-shortcuts">
+            <summary>Shortcuts</summary>
+            <div role="note">
+              <p>Ctrl/Cmd+D · select next occurrence</p>
+              <p>Ctrl/Cmd+Shift+D · duplicate line</p>
+              <p>Ctrl/Cmd+L · select line</p>
+              <p>Ctrl/Cmd+/ · toggle comment</p>
+              <p>Ctrl/Cmd+F · find and replace</p>
+              <p>Ctrl+G · go to line</p>
+              <p>Tab / Shift+Tab · indent / unindent</p>
+              <p>Ctrl/Cmd+Z · undo · Shift+Ctrl/Cmd+Z · redo</p>
+              <p>Escape, then Tab · leave the editor with the keyboard</p>
+            </div>
+          </details>
           {isNew && (
             <button
               onClick={async () => {
@@ -181,39 +209,14 @@ export function TextEditor({
         <div className="empty compact">Opening file…</div>
       ) : (
         <div className="text-editor-surface">
-          <pre className="text-editor-gutter" aria-hidden="true">
-            {Array.from(
-              { length: Math.max(1, draft.split("\n").length) },
-              (_, i) => i + 1,
-            ).join("\n")}
-          </pre>
-          <textarea
-            ref={textarea}
-            aria-label="File contents"
-            spellCheck={false}
-            wrap="off"
-            readOnly={doc?.access !== "write"}
+          <CodeEditor
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (
-                (event.metaKey || event.ctrlKey) &&
-                event.key.toLowerCase() === "s"
-              ) {
-                event.preventDefault();
-                void save();
-              } else if (event.key === "Tab") {
-                event.preventDefault();
-                const target = event.currentTarget;
-                const start = target.selectionStart;
-                const end = target.selectionEnd;
-                const next = draft.slice(0, start) + "  " + draft.slice(end);
-                setDraft(next);
-                requestAnimationFrame(() => {
-                  target.selectionStart = target.selectionEnd = start + 2;
-                });
-              }
-            }}
+            path={newPath}
+            readOnly={doc?.access !== "write"}
+            wrap={wrap}
+            onChange={setDraft}
+            onSave={() => void save()}
+            onStatus={setCursor}
           />
         </div>
       )}
@@ -224,6 +227,13 @@ export function TextEditor({
             : "Writable folder · UTF-8"
           : "Read-only folder"}
         <span>
+          Ln {cursor.line}, Col {cursor.column}
+          {cursor.selections > 1
+            ? ` · ${cursor.selections} selections`
+            : cursor.selected
+              ? ` · ${cursor.selected} selected`
+              : ""}{" "}
+          · {editorLanguage(newPath).name} · Spaces: 2 ·{" "}
           {draft.split("\n").length} lines ·{" "}
           {new TextEncoder().encode(draft).length.toLocaleString()} bytes
         </span>

@@ -72,6 +72,7 @@ export function prepareRunContext(
     skills?: unknown[];
     providerRoots?: { path: string }[];
     taskScoped?: boolean;
+    workspaces?: { path: string }[];
   },
   request: string,
   subjectId: string,
@@ -86,7 +87,7 @@ export function prepareRunContext(
     plan.agentId,
     request,
     plan.taskScoped
-      ? (plan.providerRoots ?? []).map((root) => root.path)
+      ? (plan.providerRoots ?? plan.workspaces ?? []).map((root) => root.path)
       : undefined,
   )
     .catch(() => ({ citations: [] as Citation[], text: "" }))

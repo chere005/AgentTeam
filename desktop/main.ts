@@ -11,6 +11,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdir, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
+import { filesystemPolicy } from "../src/filesystem-policy.ts";
 import { execFile } from "node:child_process";
 import { RuntimeDiscovery } from "../src/discovery.ts";
 import { Store } from "../src/store.ts";
@@ -73,7 +74,12 @@ async function start() {
   if (process.env.AGENTTEAM_TEST !== "1")
     void discovery
       .refresh()
-      .then(() => store.emit("runtimes.discovered", "runtimes"));
+      .then(() => store.emit("runtimes.discovered", "runtimes"))
+      .catch((error) =>
+        store.emit("runtimes.discovery_blocked", "runtimes", {
+          message: String(error?.message ?? error),
+        }),
+      );
   const token = randomBytes(32).toString("hex"),
     server = createApi(service, token, runs, discovery);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -146,6 +152,7 @@ async function start() {
       defaultPath: join(app.getPath("downloads"), name),
     });
     if (picked.canceled || !picked.filePath) return null;
+    filesystemPolicy(store).assertPath(picked.filePath, false);
     await writeFile(picked.filePath, content, { encoding: "utf8" });
     return { path: picked.filePath };
   });
@@ -159,6 +166,7 @@ async function start() {
         testMode: process.env.AGENTTEAM_TEST === "1",
         record: (r) => void server.launches.push(r),
         defaultDirectory: app.getPath("downloads"),
+        assertPath: (path) => filesystemPolicy(store).assertPath(path, false),
         showSaveDialog: (options) => dialog.showSaveDialog(win, options),
         fetchBundle: async (f) => {
           const response = await fetch(base + "/inspector/bundle", {
@@ -195,6 +203,7 @@ async function start() {
   });
   ipcMain.handle("open-agent", async (event, id, mode) => {
     trusted(event);
+    filesystemPolicy(store).assertConfinedExecution();
     const agent = store.get<Agent>("agent", id),
       session = store.list<Session>("session").find((s) => s.agentId === id);
     if (mode === "native") {

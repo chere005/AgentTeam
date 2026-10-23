@@ -13,6 +13,7 @@ import { AppError, assert, type Agent, type Session } from "./model.ts";
 import type { ModelCheck, ModelExpectation } from "./samples.ts";
 import type { TeamTemplate } from "./teams.ts";
 import type { Store } from "./store.ts";
+import { filesystemPolicy } from "./filesystem-policy.ts";
 
 export const PROJECT_TYPES = [
   "pipeline",
@@ -176,7 +177,8 @@ export function assertPlainPath(p: string, what: string) {
  * A project workspace: an existing absolute directory, no traversal, never a .git directory (also
  * after resolving symlinks). Returns the real path. Async: call it before the transaction.
  */
-export async function resolveProjectWorkspace(raw: string) {
+export async function resolveProjectWorkspace(raw: string, store?: Store) {
+  if (store) filesystemPolicy(store).assertPath(raw);
   assert(
     typeof raw === "string" && isAbsolute(raw) && !raw.includes("\0"),
     "invalid_path",
@@ -188,6 +190,7 @@ export async function resolveProjectWorkspace(raw: string) {
     throw new AppError(400, "invalid_path", "Workspace folder does not exist");
   });
   assertPlainPath(real, "Workspace");
+  if (store) filesystemPolicy(store).assertPath(real);
   assert(
     (await stat(real)).isDirectory(),
     "invalid_path",
@@ -210,6 +213,7 @@ export function attachProjectWorkspaceInTx(
   access: Record<string, "read" | "write">,
   path: string,
 ): ProjectAttachment[] {
+  filesystemPolicy(store).assertPath(path);
   const added: ProjectAttachment[] = [];
   const at = new Date().toISOString();
   const running = new Set(

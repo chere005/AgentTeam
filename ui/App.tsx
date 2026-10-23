@@ -12,6 +12,8 @@ import {
   PanelRightOpen,
   PanelRightClose,
   Pause,
+  Play,
+  Square,
   CircleHelp,
 } from "lucide-react";
 import {
@@ -879,15 +881,72 @@ export default function App() {
           </button>
         )}
         <div className="grow" />
-        {ready && !data.liveExecution && (
-          <button
-            className="topbar-chip"
-            title="New runs are held. Resume in Settings."
-            onClick={() => openFeature("settings")}
+        {ready && (
+          <div
+            className="topbar-execution"
+            aria-label="Global execution controls"
           >
-            <Pause size={13} />
-            Execution paused
-          </button>
+            {data.liveExecution ? (
+              <>
+                <button
+                  title="Stop starting new work, finish current requests, then pause so you can close the app"
+                  onClick={() =>
+                    void act(() =>
+                      api("/execution", "PUT", { action: "wrap-up" }),
+                    )
+                  }
+                >
+                  <Pause size={13} />
+                  Wrap up &amp; pause
+                </button>
+                <button
+                  title="Interrupt active requests immediately. Partial work is saved; uncertain changes may need Recovery"
+                  onClick={() =>
+                    void act(() =>
+                      api("/execution", "PUT", { action: "pause-now" }),
+                    )
+                  }
+                >
+                  <Square size={12} />
+                  Pause immediately
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="topbar-execution-status" role="status">
+                  {data.execution?.mode === "draining"
+                    ? `Finishing ${data.execution.active}…`
+                    : data.execution?.mode === "stopping"
+                      ? `Stopping ${data.execution.active}…`
+                      : "Paused · ready to close"}
+                </span>
+                {data.execution?.mode === "draining" && (
+                  <button
+                    onClick={() =>
+                      void act(() =>
+                        api("/execution", "PUT", { action: "pause-now" }),
+                      )
+                    }
+                  >
+                    <Square size={12} />
+                    Pause immediately
+                  </button>
+                )}
+                <button
+                  disabled={data.execution?.mode === "stopping"}
+                  title="Resume queued work across all teams. Interrupted tasks with uncertain effects stay in Recovery"
+                  onClick={() =>
+                    void act(() =>
+                      api("/execution", "PUT", { action: "resume" }),
+                    )
+                  }
+                >
+                  <Play size={13} />
+                  Resume execution
+                </button>
+              </>
+            )}
+          </div>
         )}
         {(inbox.items.length > 0 || inbox.others.length > 0) && (
           <button

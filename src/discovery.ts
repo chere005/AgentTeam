@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { join, delimiter, dirname } from "node:path";
 import type { Store } from "./store.ts";
+import { filesystemPolicy } from "./filesystem-policy.ts";
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { killPlanned, planSpawn, executableNames } from "./runtime-spawn.ts";
@@ -272,6 +273,7 @@ export const systemScanDeps: ScanDeps = {
   version: probeVersion,
 };
 export class RuntimeDiscovery {
+  store?: Store;
   runtimes = structuredClone(defaults);
   scanning = false;
   /** True once a scan has finished for the current overrides; queued work waits until then. */
@@ -281,6 +283,7 @@ export class RuntimeDiscovery {
   private inflight: Promise<DetectedRuntime[]> | undefined;
   private dirty = false;
   constructor(store?: Store, deps: ScanDeps = systemScanDeps) {
+    this.store = store;
     this.deps = deps;
     if (store)
       try {
@@ -317,6 +320,13 @@ export class RuntimeDiscovery {
   }
   /** Rescan. A request that arrives mid-scan triggers one more full pass so it never returns stale results. */
   refresh(): Promise<DetectedRuntime[]> {
+    if (this.store) {
+      try {
+        filesystemPolicy(this.store).assertConfinedExecution();
+      } catch (error) {
+        return Promise.reject(error);
+      }
+    }
     this.dirty = true;
     if (this.inflight) return this.inflight;
     this.scanning = true;
