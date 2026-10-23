@@ -223,6 +223,62 @@ test("main view shortcuts keep the current project and Files can edit a text fil
   });
 });
 
+test("Files sidebar groups attached folders by agent and opens the selected folder", async () => {
+  await withApp(async ({ directory, start }) => {
+    const { page, errors } = await start();
+    const cppRoot = join(directory, "cpp-workspace");
+    const pythonRoot = join(directory, "python-workspace");
+    await mkdir(cppRoot);
+    await mkdir(pythonRoot);
+    await writeFile(join(cppRoot, "main.cpp"), "int main() { return 0; }\n");
+    await writeFile(join(pythonRoot, "README.md"), "# Python workspace\n");
+    await api(page, "POST", "/agents", {
+      name: "C++ Builder",
+      environment: "codex",
+      workspaces: [{ path: cppRoot, access: "write", active: true }],
+    });
+    await api(page, "POST", "/agents", {
+      name: "Python Builder",
+      environment: "claude",
+      workspaces: [{ path: pythonRoot, access: "read", active: true }],
+    });
+    await page.reload();
+    await expect(
+      page.getByText("Workspace connected", { exact: true }),
+    ).toBeVisible();
+    await tab(page, "Files").click();
+    const folders = page.getByRole("tree", { name: "Agent folders" });
+    const cppAgent = folders.getByRole("treeitem", {
+      name: "C++ Builder",
+      exact: true,
+    });
+    const pythonAgent = folders.getByRole("treeitem", {
+      name: "Python Builder",
+      exact: true,
+    });
+    await expect(
+      cppAgent.getByRole("treeitem", { name: /cpp-workspace/ }),
+    ).toBeVisible();
+    await expect(
+      pythonAgent.getByRole("treeitem", { name: /python-workspace/ }),
+    ).toBeVisible();
+    await expect(
+      pythonAgent.getByRole("treeitem", { name: /Read/ }),
+    ).toBeVisible();
+    await pythonAgent
+      .getByRole("treeitem", { name: /python-workspace/ })
+      .click();
+    const files = page.getByRole("complementary", { name: "Project files" });
+    await expect(
+      files.getByRole("button", { name: "README.md" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("combobox", { name: "Workspace agent" }),
+    ).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+});
+
 test("Cmd+P finds chats and project files; Cmd+Shift+P stays the command palette", async () => {
   await withApp(async ({ directory, start }) => {
     const { page, errors } = await start();

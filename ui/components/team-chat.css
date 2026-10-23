@@ -74,6 +74,31 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.team-chat-side-chat {
+  min-height: 42px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.team-chat-side-chat-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+.team-chat-side-chat-text b,
+.team-chat-side-chat-text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.team-chat-side-chat-text b {
+  font-size: 11px;
+  font-weight: 600;
+}
+.team-chat-side-chat-text small {
+  color: var(--muted);
+  font-size: 10px;
+}
 .team-chat-sidebar-title {
   display: flex;
   flex-direction: column;

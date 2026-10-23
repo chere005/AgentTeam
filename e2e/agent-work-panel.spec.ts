@@ -98,10 +98,23 @@ test("an agent's Chat pane shows who assigned its work and the exact instruction
       page.getByRole("navigation", { name: "Team conversations" }),
     ).toBeVisible();
     await expect(
-      page.getByText("Agent conversations", { exact: true }),
+      page
+        .getByRole("treeitem", { name: "Manager", exact: true })
+        .getByRole("treeitem", { name: /Write the Python Pi program/ }),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByRole("treeitem", { name: "Python Builder", exact: true })
+        .getByRole("treeitem", { name: /Write the Python Pi program/ }),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByRole("treeitem", { name: "Code Reviewer", exact: true })
+        .getByRole("treeitem", { name: /Write the Python Pi program/ }),
     ).toBeVisible();
     await page
-      .getByRole("button", { name: /Write the Python Pi program/ })
+      .getByRole("treeitem", { name: "Python Builder", exact: true })
+      .getByRole("treeitem", { name: /Write the Python Pi program/ })
       .click();
     await expect(
       page.getByRole("region", { name: "Agent group chat" }),

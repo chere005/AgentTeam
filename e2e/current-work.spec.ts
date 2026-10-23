@@ -127,7 +127,7 @@ test("editor supports Sublime-style multiple selections, duplicate line, undo af
   });
 });
 
-test("chat picker indents the org tree and global pause controls remain available and persist", async () => {
+test("team Chat makes every person a root and global pause controls remain available", async () => {
   await withApp(async (page) => {
     const lead = await api(page, "POST", "/agents", {
       name: "Lead",
@@ -154,10 +154,10 @@ test("chat picker indents the org tree and global pause controls remain availabl
     ).toHaveAttribute("aria-level", "1");
     await expect(
       tree.getByRole("treeitem", { name: "Worker", exact: true }),
-    ).toHaveAttribute("aria-level", "2");
+    ).toHaveAttribute("aria-level", "1");
     await expect(
       tree.getByRole("treeitem", { name: "Child", exact: true }),
-    ).toHaveAttribute("aria-level", "3");
+    ).toHaveAttribute("aria-level", "1");
     const leadX = (await tree
       .getByRole("treeitem", { name: "Lead", exact: true })
       .locator(":scope > .team-chat-tree-row .team-chat-picker-avatar")
@@ -166,19 +166,15 @@ test("chat picker indents the org tree and global pause controls remain availabl
       .getByRole("treeitem", { name: "Child", exact: true })
       .locator(":scope > .team-chat-tree-row .team-chat-picker-avatar")
       .boundingBox())!.x;
-    expect(childX - leadX).toBe(36);
-    await tree
-      .getByRole("button", { name: "Collapse Worker", exact: true })
-      .click();
+    expect(childX).toBe(leadX);
+    await tree.getByRole("treeitem", { name: "Worker", exact: true }).click();
+    const conversation = page.getByRole("region", { name: "Conversation" });
     await expect(
-      tree.getByRole("treeitem", { name: "Child", exact: true }),
-    ).toHaveCount(0);
-    await tree
-      .getByRole("button", { name: "Expand Worker", exact: true })
-      .click();
-    await expect(
-      tree.getByRole("treeitem", { name: "Child", exact: true }),
+      conversation.getByRole("heading", { name: "Talk to Worker" }),
     ).toBeVisible();
+    await expect(conversation.getByLabel("Agent", { exact: true })).toHaveValue(
+      worker.id,
+    );
     const bar = page.getByRole("banner");
     await bar
       .getByRole("button", { name: "Resume execution", exact: true })

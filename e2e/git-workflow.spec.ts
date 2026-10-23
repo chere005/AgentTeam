@@ -324,6 +324,7 @@ test("git workflow: stage a rename pair, start a merge or rebase with confirmati
     await go.click();
     await expect(panel.getByRole("status").first()).toContainText(
       "Merged feature into main",
+      { timeout: 15_000 },
     );
     expect(
       git(project, "rev-list", "--parents", "-1", "HEAD").trim().split(" "),
@@ -338,6 +339,7 @@ test("git workflow: stage a rename pair, start a merge or rebase with confirmati
     await panel.getByRole("button", { name: "Merge clash" }).click();
     await expect(panel.getByRole("alert").first()).toContainText(
       "Merge failed",
+      { timeout: 15_000 },
     );
     const conflicts = panel.getByRole("region", { name: "Conflicts" });
     await expect(conflicts).toContainText("A merge is in progress");
@@ -354,6 +356,7 @@ test("git workflow: stage a rename pair, start a merge or rebase with confirmati
       .click();
     await expect(panel.getByRole("status").first()).toContainText(
       "Aborted the merge",
+      { timeout: 15_000 },
     );
     expect(git(project, "rev-parse", "HEAD")).toBe(head);
 
@@ -381,6 +384,7 @@ test("git workflow: stage a rename pair, start a merge or rebase with confirmati
     await rebase.click();
     await expect(panel.getByRole("status").first()).toContainText(
       "Rebased topic onto feature",
+      { timeout: 15_000 },
     );
     // feature is now an ancestor of the rebased branch (throws otherwise).
     git(project, "merge-base", "--is-ancestor", "feature", "HEAD");

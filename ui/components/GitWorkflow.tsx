@@ -59,7 +59,7 @@ export function GitWorkflowPanel({
   /** Run an action that returns {ok, summary, failure?}; surface the outcome explicitly. */
   const run = async (label: string, body: () => Promise<any>) => {
     setBusy(true);
-    setFeedback(null);
+    setFeedback({ ok: true, text: `${label} in progress…` });
     try {
       const r = await body();
       if (r && r.ok === false)

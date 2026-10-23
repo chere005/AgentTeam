@@ -62,6 +62,7 @@ import {
   MessageSquare,
   FolderOpen,
   File,
+  ChevronDown,
   ChevronRight,
   ArrowLeft,
   RefreshCw,
@@ -1269,6 +1270,13 @@ export function Workspace(
     p.currentProject?.ownerId;
   const preferredAgentId = projectAgentId ?? p.selected;
   const [workspaceAgentId, setWorkspaceAgentId] = useState(preferredAgentId);
+  const pendingWorkspaceSelection = useRef<{
+    agentId: string;
+    path: string;
+  } | null>(null);
+  const [collapsedFolderAgents, setCollapsedFolderAgents] = useState<
+    Set<string>
+  >(() => new Set());
   const agent = p.data.agents.find((a) => a.id === workspaceAgentId),
     [root, setRoot] = useState(""),
     [path, setPath] = useState("."),
@@ -1291,11 +1299,16 @@ export function Workspace(
       setWorkspaceAgentId(p.openFileTarget.agentId);
   }, [p.openFileTarget, workspaceAgentId]);
   useEffect(() => {
+    const pending = pendingWorkspaceSelection.current;
+    const selectedPath =
+      pending && pending.agentId === agent?.id ? pending.path : null;
+    if (selectedPath) pendingWorkspaceSelection.current = null;
     setRoot(
-      (projectWorkspace &&
-      agent?.workspaces.some((w) => w.path === projectWorkspace)
-        ? projectWorkspace
-        : undefined) ??
+      selectedPath ??
+        (projectWorkspace &&
+        agent?.workspaces.some((w) => w.path === projectWorkspace)
+          ? projectWorkspace
+          : undefined) ??
         agent?.workspaces.find((w) => w.active)?.path ??
         agent?.workspaces[0]?.path ??
         "",
@@ -1358,6 +1371,24 @@ export function Workspace(
       ...(application ? { application } : {}),
     });
   }
+  const selectFolder = (agentId: string, folderPath: string) => {
+    if (!canLeaveFileEditor()) return;
+    pendingWorkspaceSelection.current = { agentId, path: folderPath };
+    setWorkspaceAgentId(agentId);
+    setRoot(folderPath);
+    setPath(".");
+    setPreview(null);
+    setGit(null);
+  };
+  const toggleFolderAgent = (agentId: string) =>
+    setCollapsedFolderAgents((previous) => {
+      const next = new Set(previous);
+      if (next.has(agentId)) next.delete(agentId);
+      else next.add(agentId);
+      return next;
+    });
+  const folderName = (folderPath: string) =>
+    folderPath.split(/[\\/]/).filter(Boolean).at(-1) || folderPath;
   if (!agent)
     return (
       <div className="empty">
@@ -1382,20 +1413,23 @@ export function Workspace(
           </button>
         </div>
         <div className="row workspace-pickers">
-          <select
-            aria-label="Workspace agent"
-            value={workspaceAgentId}
-            onChange={(event) => {
-              if (canLeaveFileEditor()) setWorkspaceAgentId(event.target.value);
-            }}
-          >
-            {p.data.agents.map((workspaceAgent) => (
-              <option key={workspaceAgent.id} value={workspaceAgent.id}>
-                {workspaceAgent.name}
-              </option>
-            ))}
-          </select>
-          {root && (
+          {tab !== "files" && (
+            <select
+              aria-label="Workspace agent"
+              value={workspaceAgentId}
+              onChange={(event) => {
+                if (canLeaveFileEditor())
+                  setWorkspaceAgentId(event.target.value);
+              }}
+            >
+              {p.data.agents.map((workspaceAgent) => (
+                <option key={workspaceAgent.id} value={workspaceAgent.id}>
+                  {workspaceAgent.name}
+                </option>
+              ))}
+            </select>
+          )}
+          {tab !== "files" && root && (
             <select
               aria-label="Workspace folder"
               value={root}
@@ -1439,7 +1473,7 @@ export function Workspace(
             }}
           />
         </div>
-      ) : !root ? (
+      ) : !root && tab !== "files" ? (
         <div className="empty">
           <FolderOpen size={34} />
           <h3>No project folder open</h3>
@@ -1483,115 +1517,231 @@ export function Workspace(
             />
           ) : tab === "files" ? (
             <>
-              <div className="row between">
-                <div className="row">
+              {root && (
+                <div className="row between">
+                  <div className="row">
+                    <button
+                      className="icon"
+                      title="Parent folder"
+                      disabled={path === "."}
+                      onClick={() => {
+                        if (!canLeaveFileEditor()) return;
+                        const parts = path.split(/[\\/]/);
+                        parts.pop();
+                        setPath(parts.join("/") || ".");
+                        setPreview(null);
+                      }}
+                    >
+                      <ArrowLeft size={16} />
+                    </button>
+                    <code>{path === "." ? "Project root" : path}</code>
+                  </div>
                   <button
                     className="icon"
-                    title="Parent folder"
-                    disabled={path === "."}
+                    title="Refresh files"
+                    onClick={() => void p.act(load)}
+                  >
+                    <RefreshCw size={15} />
+                  </button>
+                  <button
+                    className="primary"
+                    title={`Create a file in ${root}${path === "." ? "" : `/${path}`}`}
                     onClick={() => {
                       if (!canLeaveFileEditor()) return;
-                      const parts = path.split(/[\\/]/);
-                      parts.pop();
-                      setPath(parts.join("/") || ".");
-                      setPreview(null);
+                      const folder = path === "." ? "" : `${path}/`;
+                      setPreview({
+                        path: `${folder}untitled.txt`,
+                        name: "untitled.txt",
+                        isNew: true,
+                      });
                     }}
                   >
-                    <ArrowLeft size={16} />
+                    <Plus size={15} />
+                    New file
                   </button>
-                  <code>{path === "." ? "Project root" : path}</code>
                 </div>
-                <button
-                  className="icon"
-                  title="Refresh files"
-                  onClick={() => void p.act(load)}
-                >
-                  <RefreshCw size={15} />
-                </button>
-                <button
-                  className="primary"
-                  title={`Create a file in ${root}${path === "." ? "" : `/${path}`}`}
-                  onClick={() => {
-                    if (!canLeaveFileEditor()) return;
-                    const folder = path === "." ? "" : `${path}/`;
-                    setPreview({
-                      path: `${folder}untitled.txt`,
-                      name: "untitled.txt",
-                      isNew: true,
-                    });
-                  }}
-                >
-                  <Plus size={15} />
-                  New file
-                </button>
-              </div>
+              )}
               <div className="workspace-file-browser">
+                <aside
+                  className="workspace-agent-folders"
+                  aria-label="Agent folders"
+                >
+                  <h3>Agent folders</h3>
+                  <div role="tree" aria-label="Agent folders">
+                    {p.data.agents.map((folderAgent) => {
+                      const expanded = !collapsedFolderAgents.has(
+                        folderAgent.id,
+                      );
+                      const isCurrentAgent =
+                        folderAgent.id === workspaceAgentId;
+                      return (
+                        <div
+                          key={folderAgent.id}
+                          className="workspace-agent-folder-group"
+                          role="treeitem"
+                          aria-label={agentSelectorLabel(folderAgent)}
+                          aria-level={1}
+                          aria-expanded={
+                            folderAgent.workspaces.length ? expanded : undefined
+                          }
+                          aria-selected={isCurrentAgent}
+                        >
+                          <div className="workspace-agent-folder-person">
+                            {folderAgent.workspaces.length > 0 ? (
+                              <button
+                                className="icon workspace-folder-toggle"
+                                title={`${expanded ? "Collapse" : "Expand"} ${agentDisplayName(folderAgent)} folders`}
+                                aria-label={`${expanded ? "Collapse" : "Expand"} ${agentSelectorLabel(folderAgent)} folders`}
+                                onClick={() =>
+                                  toggleFolderAgent(folderAgent.id)
+                                }
+                              >
+                                {expanded ? (
+                                  <ChevronDown size={14} />
+                                ) : (
+                                  <ChevronRight size={14} />
+                                )}
+                              </button>
+                            ) : (
+                              <span className="workspace-folder-spacer" />
+                            )}
+                            <button
+                              className={`workspace-agent-folder-name${isCurrentAgent ? " active" : ""}`}
+                              onClick={() => {
+                                if (!canLeaveFileEditor()) return;
+                                setWorkspaceAgentId(folderAgent.id);
+                              }}
+                              title={agentSelectorLabel(folderAgent)}
+                            >
+                              <AgentAvatar
+                                name={folderAgent.name}
+                                nickname={folderAgent.nickname}
+                                avatar={folderAgent.avatar}
+                                environment={folderAgent.environment}
+                                className="workspace-agent-folder-avatar"
+                              />
+                              <span>{agentDisplayName(folderAgent)}</span>
+                            </button>
+                          </div>
+                          {expanded && folderAgent.workspaces.length > 0 && (
+                            <div role="group">
+                              {folderAgent.workspaces.map((workspace) => {
+                                const active =
+                                  isCurrentAgent && workspace.path === root;
+                                return (
+                                  <button
+                                    key={workspace.path}
+                                    className={`workspace-folder-node${active ? " active" : ""}`}
+                                    role="treeitem"
+                                    aria-level={2}
+                                    aria-selected={active}
+                                    onClick={() =>
+                                      selectFolder(
+                                        folderAgent.id,
+                                        workspace.path,
+                                      )
+                                    }
+                                    title={`${workspace.path} · ${workspace.access}`}
+                                  >
+                                    <FolderOpen size={15} />
+                                    <span className="workspace-folder-node-label">
+                                      <b>{folderName(workspace.path)}</b>
+                                      <small>{workspace.path}</small>
+                                    </span>
+                                    <small className="workspace-folder-access">
+                                      {workspace.access === "write"
+                                        ? "Write"
+                                        : "Read"}
+                                    </small>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                          {expanded && folderAgent.workspaces.length === 0 && (
+                            <p className="workspace-agent-no-folders">
+                              No folders
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </aside>
                 <aside
                   className="workspace-file-tree"
                   aria-label="Project files"
                 >
                   <div className="file-list">
-                    {listing?.entries.map((entry: any) => (
-                      <button
-                        key={entry.path}
-                        aria-current={
-                          preview?.path === entry.path ? "page" : undefined
-                        }
-                        onClick={() => {
-                          if (
-                            preview?.path !== entry.path &&
-                            !canLeaveFileEditor()
-                          )
-                            return;
-                          void p.act(async () => {
-                            if (entry.type === "directory") {
-                              setPath(entry.path);
-                              setPreview(null);
-                            } else {
-                              setPreview({
-                                path: entry.path,
-                                name: entry.name,
-                              });
-                            }
-                          });
-                        }}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          setContext({
-                            path: entry.path,
-                            x: e.clientX,
-                            y: e.clientY,
-                          });
-                        }}
-                      >
-                        {entry.type === "directory" ? (
-                          <FolderOpen size={16} />
-                        ) : (
-                          <File size={16} />
-                        )}
-                        <span>{entry.name}</span>
-                        {entry.type === "directory" && (
-                          <ChevronRight size={14} />
-                        )}
+                    {!root ? (
+                      <p className="workspace-no-folder">
+                        Choose an agent folder to browse its files.
+                      </p>
+                    ) : (
+                      listing?.entries.map((entry: any) => (
+                        <button
+                          key={entry.path}
+                          aria-current={
+                            preview?.path === entry.path ? "page" : undefined
+                          }
+                          onClick={() => {
+                            if (
+                              preview?.path !== entry.path &&
+                              !canLeaveFileEditor()
+                            )
+                              return;
+                            void p.act(async () => {
+                              if (entry.type === "directory") {
+                                setPath(entry.path);
+                                setPreview(null);
+                              } else {
+                                setPreview({
+                                  path: entry.path,
+                                  name: entry.name,
+                                });
+                              }
+                            });
+                          }}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            setContext({
+                              path: entry.path,
+                              x: e.clientX,
+                              y: e.clientY,
+                            });
+                          }}
+                        >
+                          {entry.type === "directory" ? (
+                            <FolderOpen size={16} />
+                          ) : (
+                            <File size={16} />
+                          )}
+                          <span>{entry.name}</span>
+                          {entry.type === "directory" && (
+                            <ChevronRight size={14} />
+                          )}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                  {root && (
+                    <div className="row wrap workspace-file-actions">
+                      <button onClick={() => void p.act(() => open("."))}>
+                        Open project externally
                       </button>
-                    ))}
-                  </div>
-                  <div className="row wrap workspace-file-actions">
-                    <button onClick={() => void p.act(() => open("."))}>
-                      Open project externally
-                    </button>
-                    <button
-                      onClick={() => void p.act(() => open(path, "finder"))}
-                    >
-                      Reveal folder
-                    </button>
-                    <OpenWith
-                      agentId={agent.id}
-                      workspace={root}
-                      path={path}
-                      project
-                    />
-                  </div>
+                      <button
+                        onClick={() => void p.act(() => open(path, "finder"))}
+                      >
+                        Reveal folder
+                      </button>
+                      <OpenWith
+                        agentId={agent.id}
+                        workspace={root}
+                        path={path}
+                        project
+                      />
+                    </div>
+                  )}
                 </aside>
                 <section
                   className="workspace-file-editor"
@@ -1612,7 +1762,24 @@ export function Workspace(
                   ) : (
                     <div className="empty compact">
                       <File size={30} />
-                      <p>Select a file to preview or edit it.</p>
+                      <p>
+                        {root
+                          ? "Select a file to preview or edit it."
+                          : "Open a folder or start with a new file."}
+                      </p>
+                      {!root && (
+                        <button
+                          onClick={() =>
+                            setPreview({
+                              path: "untitled.txt",
+                              name: "untitled.txt",
+                              isNew: true,
+                            })
+                          }
+                        >
+                          <Plus size={15} /> New file
+                        </button>
+                      )}
                     </div>
                   )}
                 </section>

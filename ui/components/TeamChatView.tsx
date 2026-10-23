@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, MessageSquare, Users } from "lucide-react";
-import { chatTree, type ChatTreeNode } from "../chat-tree";
 import type { Agent, Snapshot, TeamEvent } from "../api";
 import { api } from "../api";
 import { agentDisplayName, agentSelectorLabel } from "../agent-identity";
@@ -16,6 +15,29 @@ type ChatSummary = {
   participantIds: string[];
   lastMessage: { text: string; createdAt: string } | null;
 };
+
+function moveTreeFocus(event: KeyboardEvent<HTMLElement>) {
+  const item = event.currentTarget;
+  const rows = [
+    ...(item
+      .closest('[role="tree"]')
+      ?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? []),
+  ];
+  const index = rows.indexOf(item);
+  const next =
+    event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? rows.length - 1
+        : Math.max(
+            0,
+            Math.min(
+              rows.length - 1,
+              index + (event.key === "ArrowDown" ? 1 : -1),
+            ),
+          );
+  rows[next]?.focus();
+}
 
 export function TeamChatView({
   data,
@@ -37,9 +59,9 @@ export function TeamChatView({
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [groupChatId, setGroupChatId] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
-  const agents = data.teamView?.allAgents ?? data.agents;
+  const allAgents = data.teamView?.allAgents ?? data.agents;
   const names = new Map(
-    agents.map((agent) => [agent.id, agentDisplayName(agent)]),
+    allAgents.map((agent) => [agent.id, agentDisplayName(agent)]),
   );
   useEffect(() => {
     let alive = true;
@@ -71,6 +93,21 @@ export function TeamChatView({
   useEffect(() => {
     if (!requestedGroupChatId) setGroupChatId("");
   }, [selected]);
+
+  // Keep the navigation in the selected team context. An outside-team participant appears by
+  // name in each shared chat, but unrelated agent roots stay out of this team's sidebar.
+  const people = data.agents;
+  const agentById = new Map(people.map((agent) => [agent.id, agent]));
+  const chatsByAgent = new Map<string, ChatSummary[]>();
+  for (const chat of chats) {
+    for (const id of chat.participantIds) {
+      if (!agentById.has(id)) continue;
+      chatsByAgent.set(id, [...(chatsByAgent.get(id) ?? []), chat]);
+    }
+  }
+  const unattachedChats = chats.filter(
+    (chat) => !chat.participantIds.some((id) => agentById.has(id)),
+  );
   const activeGroup = chats.find((chat) => chat.id === groupChatId);
   const toggle = (id: string) =>
     setCollapsed((previous) => {
@@ -83,10 +120,67 @@ export function TeamChatView({
     setGroupChatId("");
     setSelected(id);
   };
-  const agentNode = (
-    { agent, children }: ChatTreeNode<Agent>,
-    depth = 1,
-  ): React.ReactNode => {
+  const openGroup = (id: string) => setGroupChatId(id);
+
+  const renderChatNode = (
+    chat: ChatSummary,
+    parentAgentId?: string,
+  ): ReactNode => {
+    const participantNames = chat.participantIds
+      .map((id) => names.get(id))
+      .filter(Boolean)
+      .join(", ");
+    const primaryAgentId = people.find((person) =>
+      chat.participantIds.includes(person.id),
+    )?.id;
+    const active = groupChatId === chat.id;
+    return (
+      <div
+        key={`${parentAgentId ?? "unattached"}:${chat.id}`}
+        role="treeitem"
+        aria-label={`${chat.title}${participantNames ? ` — ${participantNames}` : ""}`}
+        aria-level={parentAgentId ? 2 : 1}
+        aria-current={active ? "page" : undefined}
+        tabIndex={active && parentAgentId === primaryAgentId ? 0 : -1}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return;
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            openGroup(chat.id);
+          } else if (event.key === "ArrowLeft") {
+            event.preventDefault();
+            event.currentTarget.parentElement
+              ?.closest<HTMLElement>('[role="treeitem"]')
+              ?.focus();
+          } else if (
+            ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)
+          ) {
+            event.preventDefault();
+            moveTreeFocus(event);
+          }
+        }}
+      >
+        <div
+          className={`team-chat-tree-row team-chat-side-chat${active ? " active" : ""}`}
+          onClick={() => openGroup(chat.id)}
+        >
+          <span className="team-chat-tree-spacer" />
+          <span className="team-chat-avatar group-avatar">
+            <Users size={14} />
+          </span>
+          <span className="team-chat-side-chat-text">
+            <b title={chat.title}>{chat.title}</b>
+            {participantNames && (
+              <small title={participantNames}>{participantNames}</small>
+            )}
+          </span>
+        </div>
+      </div>
+    );
+  };
+
+  const agentNode = (agent: Agent): ReactNode => {
+    const sideChats = chatsByAgent.get(agent.id) ?? [];
     const expanded = !collapsed.has(agent.id);
     const active = !groupChatId && selected === agent.id;
     const displayName = agentDisplayName(agent);
@@ -95,10 +189,10 @@ export function TeamChatView({
         key={agent.id}
         role="treeitem"
         aria-label={agentSelectorLabel(agent)}
-        aria-level={depth}
-        aria-expanded={children.length ? expanded : undefined}
+        aria-level={1}
+        aria-expanded={sideChats.length ? expanded : undefined}
         aria-selected={active}
-        tabIndex={active || (!selected && depth === 1) ? 0 : -1}
+        tabIndex={active || (!selected && agent === people[0]) ? 0 : -1}
         onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return;
           const item = event.currentTarget;
@@ -107,7 +201,7 @@ export function TeamChatView({
             openAgent(agent.id);
           } else if (event.key === "ArrowRight") {
             event.preventDefault();
-            if (children.length && !expanded) toggle(agent.id);
+            if (sideChats.length && !expanded) toggle(agent.id);
             else
               item
                 .querySelector<HTMLElement>(
@@ -116,43 +210,20 @@ export function TeamChatView({
                 ?.focus();
           } else if (event.key === "ArrowLeft") {
             event.preventDefault();
-            if (children.length && expanded) toggle(agent.id);
-            else
-              item.parentElement
-                ?.closest<HTMLElement>('[role="treeitem"]')
-                ?.focus();
+            if (sideChats.length && expanded) toggle(agent.id);
           } else if (
             ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)
           ) {
             event.preventDefault();
-            const rows = [
-              ...(item
-                .closest('[role="tree"]')
-                ?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? []),
-            ];
-            const index = rows.indexOf(item);
-            const next =
-              event.key === "Home"
-                ? 0
-                : event.key === "End"
-                  ? rows.length - 1
-                  : Math.max(
-                      0,
-                      Math.min(
-                        rows.length - 1,
-                        index + (event.key === "ArrowDown" ? 1 : -1),
-                      ),
-                    );
-            rows[next]?.focus();
+            moveTreeFocus(event);
           }
         }}
       >
         <div
           className={`team-chat-tree-row${active ? " active" : ""}`}
-          style={{ paddingLeft: 8 + (depth - 1) * 18 }}
           onClick={() => openAgent(agent.id)}
         >
-          {children.length ? (
+          {sideChats.length ? (
             <button
               className="team-chat-tree-toggle"
               tabIndex={-1}
@@ -182,14 +253,15 @@ export function TeamChatView({
             {displayName}
           </span>
         </div>
-        {children.length > 0 && expanded && (
+        {sideChats.length > 0 && expanded && (
           <div role="group">
-            {children.map((child) => agentNode(child, depth + 1))}
+            {sideChats.map((chat) => renderChatNode(chat, agent.id))}
           </div>
         )}
       </div>
     );
   };
+
   return (
     <div className="team-chat-view">
       <nav className="team-chat-sidebar" aria-label="Team conversations">
@@ -198,37 +270,38 @@ export function TeamChatView({
           <span>Chats</span>
         </div>
         <div className="team-chat-list-heading">
-          <Users size={14} /> Agents
+          <Users size={14} /> People
         </div>
         <div role="tree" aria-label="Agent chats" className="team-chat-tree">
-          {chatTree(data.agents).map((node) => agentNode(node))}
+          {people.map((agent) => agentNode(agent))}
         </div>
-        <div className="team-chat-list-heading">
-          <MessageSquare size={14} /> Agent conversations
-        </div>
-        {chats.map((chat) => (
-          <button
-            key={chat.id}
-            className={`team-chat-item group${groupChatId === chat.id ? " active" : ""}`}
-            onClick={() => setGroupChatId(chat.id)}
-          >
-            <span className="team-chat-avatar group-avatar">
-              <Users size={14} />
-            </span>
-            <span className="team-chat-item-text">
-              <b>{chat.title}</b>
-              <small>
-                {chat.participantIds
-                  .map((id) => names.get(id) ?? "Agent")
-                  .join(", ")}
-              </small>
-            </span>
-          </button>
-        ))}
-        {!chats.length && (
-          <p className="team-chat-empty-hint">
-            Open a handoff in an agent’s chat to start a shared conversation.
-          </p>
+        {unattachedChats.length > 0 && (
+          <>
+            <div className="team-chat-list-heading">
+              <MessageSquare size={14} /> Other conversations
+            </div>
+            {unattachedChats.map((chat) => {
+              const participantNames = chat.participantIds
+                .map((id) => names.get(id))
+                .filter(Boolean)
+                .join(", ");
+              return (
+                <button
+                  key={chat.id}
+                  className={`team-chat-item group${groupChatId === chat.id ? " active" : ""}`}
+                  onClick={() => openGroup(chat.id)}
+                >
+                  <span className="team-chat-avatar group-avatar">
+                    <Users size={14} />
+                  </span>
+                  <span className="team-chat-item-text">
+                    <b>{chat.title}</b>
+                    <small>{participantNames || "No team participants"}</small>
+                  </span>
+                </button>
+              );
+            })}
+          </>
         )}
       </nav>
       <section className="team-chat-content" aria-label="Conversation">
@@ -236,7 +309,7 @@ export function TeamChatView({
           <GroupChatPanel
             key={activeGroup.id}
             chatId={activeGroup.id}
-            agents={agents as Agent[]}
+            agents={allAgents}
             title={activeGroup.title}
           />
         ) : (
