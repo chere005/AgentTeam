@@ -82,7 +82,10 @@ export function HelpMenu({
             <article>
               <div>
                 <b>Chat</b>
-                <p>Chat with agents or follow shared handoff conversations.</p>
+                <p>
+                  Your shared chats appear first; agent roots open direct chats
+                  and nest their side chats.
+                </p>
                 <small>
                   Try: open an agent chat, expand a handoff, then invite a
                   teammate.
