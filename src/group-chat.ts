@@ -50,7 +50,13 @@ export class GroupChats {
           .list<GroupChatMessage>("group-chat-message")
           .filter((message) => message.chatId === chat.id)
           .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-        return { ...chat, lastMessage: messages.at(-1) ?? null };
+        return {
+          ...chat,
+          lastMessage: messages.at(-1) ?? null,
+          humanParticipated: messages.some(
+            (message) => message.role === "human",
+          ),
+        };
       });
   }
 

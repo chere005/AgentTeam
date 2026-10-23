@@ -51,6 +51,7 @@ test("invocation group chat fans human comments to participants and records repl
   const groupChats = new GroupChats(service);
   const chat = groupChats.create(handoff.childTaskId);
   assert.equal(groupChats.list(workflow.teamId).length, 1);
+  assert.equal(groupChats.list(workflow.teamId)[0].humanParticipated, false);
   const started: string[] = [];
   const result = await groupChats.comment(
     chat.id,
@@ -63,6 +64,7 @@ test("invocation group chat fans human comments to participants and records repl
     groupChats.get(chat.id).messages[0].text,
     "Please explain the design choice.",
   );
+  assert.equal(groupChats.list(workflow.teamId)[0].humanParticipated, true);
   const hiddenMessages = store
     .list<any>("message")
     .filter((message) => message.groupChatId === chat.id);

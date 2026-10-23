@@ -97,6 +97,11 @@ test("an agent's Chat pane shows who assigned its work and the exact instruction
     await expect(
       page.getByRole("navigation", { name: "Team conversations" }),
     ).toBeVisible();
+    const yourChats = page.getByRole("group", { name: "Your chats" });
+    await expect(
+      yourChats.getByRole("button", { name: /Write the Python Pi program/ }),
+    ).toBeVisible();
+    await expect(page.getByText("Your chats", { exact: true })).toBeVisible();
     await expect(
       page
         .getByRole("treeitem", { name: "Manager", exact: true })

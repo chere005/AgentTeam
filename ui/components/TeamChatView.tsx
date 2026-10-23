@@ -14,6 +14,7 @@ type ChatSummary = {
   title: string;
   participantIds: string[];
   lastMessage: { text: string; createdAt: string } | null;
+  humanParticipated: boolean;
 };
 
 function moveTreeFocus(event: KeyboardEvent<HTMLElement>) {
@@ -108,6 +109,7 @@ export function TeamChatView({
   const unattachedChats = chats.filter(
     (chat) => !chat.participantIds.some((id) => agentById.has(id)),
   );
+  const myChats = chats.filter((chat) => chat.humanParticipated);
   const activeGroup = chats.find((chat) => chat.id === groupChatId);
   const toggle = (id: string) =>
     setCollapsed((previous) => {
@@ -270,7 +272,44 @@ export function TeamChatView({
           <span>Chats</span>
         </div>
         <div className="team-chat-list-heading">
-          <Users size={14} /> People
+          <MessageSquare size={14} /> Your chats
+        </div>
+        <div
+          className="team-chat-personal-chats"
+          role="group"
+          aria-label="Your chats"
+        >
+          {myChats.length ? (
+            myChats.map((chat) => {
+              const participantNames = chat.participantIds
+                .map((id) => names.get(id))
+                .filter(Boolean)
+                .join(", ");
+              return (
+                <button
+                  key={chat.id}
+                  className={`team-chat-item group${groupChatId === chat.id ? " active" : ""}`}
+                  onClick={() => openGroup(chat.id)}
+                >
+                  <span className="team-chat-avatar group-avatar">
+                    <Users size={14} />
+                  </span>
+                  <span className="team-chat-item-text">
+                    <b>{chat.title}</b>
+                    <small>{participantNames}</small>
+                  </span>
+                </button>
+              );
+            })
+          ) : (
+            <div className="team-chat-empty-hint">
+              Group chats you join appear here.
+            </div>
+          )}
+        </div>
+        <div className="team-chat-sidebar-divider" />
+        <div className="team-chat-list-heading">
+          <Users size={14} /> Agents
         </div>
         <div role="tree" aria-label="Agent chats" className="team-chat-tree">
           {people.map((agent) => agentNode(agent))}
