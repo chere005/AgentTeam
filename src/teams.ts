@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { MAX_TEAM_AVATAR_DATA_URL_CHARS } from "./agent-avatar.ts";
 import { filesystemPolicy } from "./filesystem-policy.ts";
 import { realpath, stat } from "node:fs/promises";
 import { basename, isAbsolute } from "node:path";
@@ -6,6 +7,7 @@ import { z } from "zod";
 import {
   AppError,
   ROLE_TYPES,
+  agentAvatarSchema,
   agentSchema,
   edgeSchema,
   environment,
@@ -28,11 +30,10 @@ export const TEAM_TEMPLATE_FORMAT = "agentteam.team-template";
 /**
  * Highest schema version this build can read and the one it writes.
  * v2 (additive) adds optional `groups` (canvas selection groups). v1 envelopes still read; groups default to [].
- * v3 (additive) adds optional agent `roleType` and the optional template `project` profile (what
- * kind of project the team can be assigned, which agent plays which project role, the project
- * workspace access per agent and model expectations). v1/v2 envelopes still read unchanged.
+ * v3 (additive) adds optional agent `roleType` and the optional template `project` profile. v4
+ * (additive) adds optional user-assigned agent nicknames and raster avatars. v1-v3 still read.
  */
-export const TEAM_TEMPLATE_SCHEMA_VERSION = 3;
+export const TEAM_TEMPLATE_SCHEMA_VERSION = 4;
 
 const kindEnum = z.enum(["delegate", "consult", "review", "notify"]);
 const key = z.string().min(1).max(64);
@@ -42,6 +43,15 @@ const templateAgent = z
   .object({
     key,
     name: z.string().trim().min(1).max(120),
+    nickname: z
+      .string()
+      .trim()
+      .max(40)
+      .refine((value) => !/[\u0000-\u001f\u007f]/.test(value), {
+        message: "Nickname cannot contain control characters",
+      })
+      .optional(),
+    avatar: agentAvatarSchema.optional(),
     role: z.string().max(4000).default(""),
     /** Role preset (src/roles.ts); absent = custom (schema v3). */
     roleType: z.enum(ROLE_TYPES).optional(),
@@ -192,6 +202,11 @@ export const teamTemplateSchema = z
       }
     }
     if (keys.size !== t.agents.length) bad("Duplicate agent keys");
+    if (
+      t.agents.reduce((size, agent) => size + (agent.avatar?.length ?? 0), 0) >
+      MAX_TEAM_AVATAR_DATA_URL_CHARS
+    )
+      bad("Team template avatars exceed the combined size limit");
     const parents = new Map(t.agents.map((a) => [a.key, a.parentKey]));
     for (const a of t.agents) {
       if (a.parentKey && !keys.has(a.parentKey))
@@ -404,6 +419,8 @@ export class TeamTemplates {
       return {
         key: k,
         name: a.name,
+        ...(a.nickname ? { nickname: a.nickname } : {}),
+        ...(a.avatar ? { avatar: a.avatar } : {}),
         role: a.role,
         ...(a.roleType && a.roleType !== "custom"
           ? { roleType: a.roleType }
@@ -871,6 +888,8 @@ export class TeamTemplates {
       const agents: Agent[] = t.agents.map((a) => {
         const data = agentSchema.parse({
           name: a.name,
+          nickname: a.nickname ?? "",
+          avatar: a.avatar ?? null,
           role: a.role,
           ...(a.roleType ? { roleType: a.roleType } : {}),
           kind: "agent",

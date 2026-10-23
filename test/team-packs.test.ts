@@ -656,9 +656,9 @@ test("update retains notices and requires acknowledging license or revision chan
   );
 });
 
-test("team templates persist group membership additively (schema v2, current v3) and v1 files still import", async (t) => {
+test("team templates persist group membership and agent identity additively (v4); v1-v3 files still import", async (t) => {
   const { service, teams, store, project } = await setup(t);
-  assert.equal(TEAM_TEMPLATE_SCHEMA_VERSION, 3);
+  assert.equal(TEAM_TEMPLATE_SCHEMA_VERSION, 4);
   const a = await service.saveAgent({
     name: "A",
     environment: "codex",
@@ -676,7 +676,7 @@ test("team templates persist group membership additively (schema v2, current v3)
   });
   assert.deepEqual(saved.groups, [{ name: "Core", agentKeys: ["a1", "a2"] }]);
   const env = JSON.parse(JSON.stringify(teams.export(saved.id)));
-  assert.equal(env.schemaVersion, 3);
+  assert.equal(env.schemaVersion, 4);
   const result = await teams.insert({
     envelope: env,
     workspaces: { "a1/w1": project },
@@ -690,8 +690,19 @@ test("team templates persist group membership additively (schema v2, current v3)
   const v1 = clone(env);
   v1.schemaVersion = 1;
   delete v1.template.groups;
+  for (const agent of v1.template.agents) {
+    delete agent.nickname;
+    delete agent.avatar;
+  }
   const imported = teams.import(v1);
   assert.deepEqual(teams.get(imported.id).groups ?? [], []);
+  const v3 = clone(env);
+  v3.schemaVersion = 3;
+  for (const agent of v3.template.agents) {
+    delete agent.nickname;
+    delete agent.avatar;
+  }
+  assert.equal(teams.import(v3).agents.length, 2);
   // Bad group data is rejected by the schema.
   const broken = clone(env);
   broken.template.groups = [{ name: "X", agentKeys: ["nope"] }];

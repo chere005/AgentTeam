@@ -250,6 +250,13 @@ summary:focus-visible {
   width: 25px;
   font-size: 11px;
 }
+.agent-avatar-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
 .dot {
   display: inline-block;
   flex-shrink: 0;
@@ -363,6 +370,19 @@ summary:focus-visible {
   font-weight: 600;
   padding: 0 20px 0 0;
   max-width: 270px;
+}
+.agent-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.agent-picker-avatar {
+  overflow: hidden;
+  border-radius: 50%;
+}
+.agent-picker select {
+  min-width: 0;
 }
 .chat-toolbar .eyebrow {
   color: #8395ab;

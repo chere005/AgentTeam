@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type Agent, type Snapshot } from "../api";
 import { ContextCost } from "./ContextCost";
+import { agentSelectorLabel } from "../agent-identity";
 import "./capabilities.css";
 
 /** Encodes every character the desktop IPC path filter rejects (".", "_") as well as reserved ones. */
@@ -41,7 +42,7 @@ export function Capabilities(p: Props) {
         >
           {p.data.agents.map((a) => (
             <option key={a.id} value={a.id}>
-              {a.name}
+              {agentSelectorLabel(a)}
             </option>
           ))}
         </select>

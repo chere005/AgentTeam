@@ -6,7 +6,6 @@ import {
   readFile,
   readdir,
   rm,
-  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -18,6 +17,10 @@ import {
   type SaveRecord,
 } from "../src/diagnostic-save.ts";
 import type { Bundle } from "../src/diagnostics.ts";
+import {
+  createFileSymlink,
+  WINDOWS_FILE_SYMLINK_SKIP_REASON,
+} from "./fixtures/filesystem-links.ts";
 
 const redaction = {
   literalsRemoved: 1,
@@ -173,11 +176,21 @@ test("chosen paths must be absolute regular files with the bundle's extension", 
     code("invalid_path"),
   );
   await writeFile(join(s.dir, "real.txt"), "keep");
-  await symlink(join(s.dir, "real.txt"), join(s.dir, "link.zip"));
-  await assert.rejects(
-    validateChosenPath(join(s.dir, "link.zip"), "zip"),
-    code("invalid_path"),
-  );
+  await t.test("chosen file symlinks are rejected", async (st) => {
+    if (
+      !(await createFileSymlink(
+        join(s.dir, "real.txt"),
+        join(s.dir, "link.zip"),
+      ))
+    ) {
+      st.skip(WINDOWS_FILE_SYMLINK_SKIP_REASON);
+      return;
+    }
+    await assert.rejects(
+      validateChosenPath(join(s.dir, "link.zip"), "zip"),
+      code("invalid_path"),
+    );
+  });
   assert.equal(await readFile(join(s.dir, "real.txt"), "utf8"), "keep");
   assert.equal(
     await validateChosenPath(join(s.dir, "ok.ZIP"), "zip"),

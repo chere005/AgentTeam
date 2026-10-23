@@ -104,7 +104,11 @@ export const empty: Snapshot = {
 };
 export function agentInput(agent: Agent) {
   const { id, createdAt, control, ...input } = agent;
-  return input;
+  return {
+    ...input,
+    nickname: agent.nickname ?? "",
+    avatar: agent.avatar ?? null,
+  };
 }
 export function saved<T>(key: string, fallback: T): T {
   try {

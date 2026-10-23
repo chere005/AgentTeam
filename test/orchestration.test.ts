@@ -794,7 +794,9 @@ test("tool definitions and per-run-token JSON-RPC endpoint", async () => {
   });
   assert.equal(unknownRecipient.result.isError, true);
   assert.ok(
-    JSON.parse(unknownRecipient.result.content[0].text).message.includes(w.name),
+    JSON.parse(unknownRecipient.result.content[0].text).message.includes(
+      w.name,
+    ),
   );
   // Forged identity in arguments is rejected; permission errors surface as tool errors.
   const forged = rpc("tools/call", {

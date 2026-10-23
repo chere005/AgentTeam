@@ -1,13 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
-  mkdtemp,
-  mkdir,
-  writeFile,
-  rm,
-  realpath,
-  symlink,
-} from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync, spawn } from "node:child_process";
@@ -22,6 +15,7 @@ import { buildQueue } from "../src/queue.ts";
 import { explainWaiting } from "../src/inspector.ts";
 import { externalDrivers } from "../src/sharing.ts";
 import type { Task } from "../src/model.ts";
+import { createDirectoryAlias } from "./fixtures/filesystem-links.ts";
 
 const ctx = { liveEnabled: () => true };
 const code = (p: Promise<unknown> | (() => unknown)) =>
@@ -120,7 +114,7 @@ test("declared paths must be inside an attached, non-excluded folder (symlinks r
   const root = await w.dir("repo"),
     other = await w.dir("other");
   await mkdir(join(root, "secrets"));
-  await symlink(other, join(root, "escape"));
+  await createDirectoryAlias(other, join(root, "escape"));
   const a = await w.agent("A", [], {
     workspaces: [
       {

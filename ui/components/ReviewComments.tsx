@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ConversationLink } from "./ConversationExtras";
 import { api, type Agent } from "../api";
+import { agentSelectorLabel } from "../agent-identity";
 
 /** Which diff the review applies to: staged/unstaged, or a branch comparison. */
 export type ReviewScope = {
@@ -174,7 +175,7 @@ export function ReviewComments({
         >
           {agents.map((a) => (
             <option key={a.id} value={a.id}>
-              {a.name}
+              {agentSelectorLabel(a)}
             </option>
           ))}
         </select>

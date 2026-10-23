@@ -124,6 +124,15 @@ export class TeamService {
         "agent_busy",
         "Stop the active session before changing its configuration",
       );
+    if (id)
+      assert(
+        !this.store
+          .list<Task>("task")
+          .some((task) => task.agentId === id && task.status === "running"),
+        "agent_busy",
+        "Stop the active task before changing its configuration",
+        409,
+      );
     if (data.parentId) {
       let parent: Agent | null = this.store.get<Agent>("agent", data.parentId);
       const visited = new Set<string>();
@@ -240,6 +249,24 @@ export class TeamService {
       ),
     );
     return this.store.transaction(() => {
+      if (id) {
+        assert(
+          !this.store
+            .list<Session>("session")
+            .some((s) => s.agentId === id && s.state === "running"),
+          "agent_busy",
+          "Stop the active session before changing its configuration",
+          409,
+        );
+        assert(
+          !this.store
+            .list<Task>("task")
+            .some((task) => task.agentId === id && task.status === "running"),
+          "agent_busy",
+          "Stop the active task before changing its configuration",
+          409,
+        );
+      }
       this.store.put("agent", agent);
       this.store.emit(previous ? "agent.updated" : "agent.created", agent.id);
       return agent;
@@ -1121,6 +1148,10 @@ export class TeamService {
   async launchPlan(agentId: string, taskId?: string) {
     filesystemPolicy(this.store).assertConfinedExecution();
     const agent = this.store.get<Agent>("agent", agentId);
+    const agentSnapshot = JSON.stringify(agent);
+    const taskSnapshot = taskId
+      ? JSON.stringify(this.store.get<Task>("task", taskId))
+      : null;
     await this.skills.scan();
     const loaded = agent.skills.map((assignment) => {
       const skill = this.skills.get(assignment.id);
@@ -1200,12 +1231,30 @@ export class TeamService {
           .map((d) => `${d.name}: ${d.reason}`),
       ],
     };
-    return attachContext(plan, {
+    const readyPlan = attachContext(plan, {
       agent: runAgent,
       entries,
       adapter,
       baseInstructions: plan.instructions,
     });
+    assert(
+      JSON.stringify(this.store.get<Agent>("agent", agentId)) === agentSnapshot,
+      "agent_changed",
+      "Agent configuration changed while preparing the launch; retry the task",
+      409,
+    );
+    if (taskId)
+      assert(
+        JSON.stringify(this.store.get<Task>("task", taskId)) === taskSnapshot,
+        "task_changed",
+        "Task changed while preparing the launch; retry it",
+        409,
+      );
+    // Close the window in which a permanent block could be added while launch preparation awaits
+    // skills or filesystem metadata. The scheduler marks the task running immediately afterwards,
+    // which then prevents adding a global block during execution.
+    filesystemPolicy(this.store).assertConfinedExecution();
+    return readyPlan;
   }
 }
 export type LaunchPlan = Awaited<ReturnType<TeamService["launchPlan"]>>;

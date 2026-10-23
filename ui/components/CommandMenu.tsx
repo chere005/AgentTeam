@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Search, X, Bot, Zap } from "lucide-react";
+import { Search, X, Zap } from "lucide-react";
 import {
   FEATURE_GROUPS,
   FEATURES,
@@ -7,6 +7,7 @@ import {
   searchFeatures,
   type FeatureId,
 } from "../features";
+import { AgentAvatar } from "./AgentAvatar";
 import "./command-menu.css";
 
 export type PaletteAction = {
@@ -16,7 +17,14 @@ export type PaletteAction = {
   keywords?: string;
   run: () => void;
 };
-export type PaletteAgent = { id: string; name: string; detail: string };
+export type PaletteAgent = {
+  id: string;
+  name: string;
+  nickname?: string;
+  avatar?: string | null;
+  environment?: string;
+  detail: string;
+};
 type Entry =
   | { type: "feature"; id: FeatureId; name: string; description: string }
   | {
@@ -26,7 +34,15 @@ type Entry =
       description: string;
       shortcut: string;
     }
-  | { type: "agent"; id: string; name: string; description: string }
+  | {
+      type: "agent";
+      id: string;
+      name: string;
+      canonicalName: string;
+      avatar?: string | null;
+      environment?: string;
+      description: string;
+    }
   | {
       type: "action";
       id: string;
@@ -133,15 +149,24 @@ export function CommandMenu({
         description: f.description,
       }));
     const people: Entry[] = agents
-      .map((a) => ({ a, s: matchScore(query, a.name, a.detail) }))
+      .map((a) => ({
+        a,
+        s: matchScore(query, `${a.nickname ?? ""} ${a.name}`, a.detail),
+      }))
       .filter((x) => x.s > 0)
       .sort((x, y) => y.s - x.s)
       .slice(0, 8)
       .map(({ a }) => ({
         type: "agent",
         id: a.id,
-        name: a.name,
-        description: a.detail,
+        name: a.nickname?.trim() || a.name,
+        canonicalName: a.name,
+        avatar: a.avatar,
+        environment: a.environment,
+        description:
+          a.nickname?.trim() && a.nickname.trim() !== a.name
+            ? `${a.name} · ${a.detail}`
+            : a.detail,
       }));
     const acts: Entry[] = actions
       .map((a) => ({
@@ -269,13 +294,23 @@ export function CommandMenu({
                   data-index={i}
                   role="option"
                   aria-selected={i === cursor}
-                  aria-label={e.type === "agent" ? `${e.name} (agent)` : e.name}
+                  aria-label={
+                    e.type === "agent"
+                      ? `${e.name}${e.name === e.canonicalName ? "" : ` (${e.canonicalName})`} (agent)`
+                      : e.name
+                  }
                   className={"palette-option" + (i === cursor ? " active" : "")}
                   onMouseMove={() => setCursor(i)}
                   onClick={() => choose(e)}
                 >
                   {e.type === "agent" ? (
-                    <Bot size={15} aria-hidden="true" />
+                    <AgentAvatar
+                      name={e.canonicalName}
+                      nickname={e.name === e.canonicalName ? "" : e.name}
+                      avatar={e.avatar}
+                      environment={e.environment}
+                      className={`avatar small ${e.environment ?? "codex"}`}
+                    />
                   ) : e.type === "action" ? (
                     <Zap size={15} aria-hidden="true" />
                   ) : null}

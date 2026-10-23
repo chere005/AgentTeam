@@ -13,7 +13,10 @@ import { TeamTemplates } from "../src/teams.ts";
 import { pipelineTeamTemplate, type PipelineRecord } from "../src/pipeline.ts";
 import { wolframTeamTemplate } from "../src/samples.ts";
 import { productFeatureTemplate } from "../src/example-teams.ts";
-import type { TeamProfile } from "../src/team-profiles.ts";
+import {
+  attachProjectWorkspaceInTx,
+  type TeamProfile,
+} from "../src/team-profiles.ts";
 import type { Agent, Edge, Rule, Task, Workflow } from "../src/model.ts";
 
 // Team vs project: example teams are inserted as teams only; projects are assigned to a team's
@@ -79,6 +82,36 @@ async function api(t: any) {
 
 const roots = (agents: Agent[]) =>
   agents.filter((a) => !a.parentId || !agents.some((b) => b.id === a.parentId));
+
+test("a project cannot attach a new workspace to an agent with a running task", async (t) => {
+  const w = await api(t);
+  const agent = await w.service.saveAgent({
+    name: "Builder",
+    environment: "codex",
+  });
+  const workflow = w.service.workflow({
+    name: "Build",
+    goal: "Ship",
+    ownerId: agent.id,
+    completionCriteria: "Done",
+  });
+  const task = w.service.task({
+    workflowId: workflow.id,
+    agentId: agent.id,
+    title: "Build",
+    completionCriteria: "Done",
+  });
+  w.service.transitionTask(task.id, { status: "running" });
+
+  assert.throws(
+    () =>
+      w.store.transaction(() =>
+        attachProjectWorkspaceInTx(w.store, { [agent.id]: "write" }, w.repo),
+      ),
+    { code: "agent_busy" },
+  );
+  assert.deepEqual(w.store.get<Agent>("agent", agent.id).workspaces, []);
+});
 
 test("example teams are listed with their shape and insert as teams only: no goal, workflow or task", async (t) => {
   const w = await api(t);
@@ -236,6 +269,54 @@ test("example teams are listed with their shape and insert as teams only: no goa
   assert.match(text, /"mode":"mandatory"/);
   assert.match(text, /"specialty":"security"/);
   assert.ok(!/"status":"denied"/.test(text), text);
+});
+
+test("quickstart Pi review fails closed without fresh execution evidence", async (t) => {
+  const w = await api(t);
+  const examples = (await w.call("GET", "/teams/examples")).body;
+  const quickstart = examples.find(
+    (example: any) => example.id === "quickstart-code-team",
+  );
+  assert.ok(quickstart, "quickstart example is available");
+  const manager = quickstart.template.agents.find(
+    (agent: any) => agent.key === "manager",
+  );
+  const reviewer = quickstart.template.agents.find(
+    (agent: any) => agent.key === "codex-reviewer",
+  );
+  assert.ok(manager && reviewer, "manager and reviewer are configured");
+
+  assert.match(manager.instructions, /Do not ask the reviewer to run commands/);
+  assert.match(manager.instructions, /dedicated safe verification setup/);
+  assert.match(manager.instructions, /stale \.out files do not count/);
+  assert.match(reviewer.instructions, /Do not run commands\./);
+  assert.match(
+    reviewer.instructions,
+    /fresh execution evidence is provided for all three current source files/,
+  );
+  assert.match(
+    reviewer.instructions,
+    /exact byte-for-byte comparison against this independent reference:/,
+  );
+  assert.match(
+    reviewer.instructions,
+    /report Pi output verification as inconclusive/,
+  );
+  assert.match(
+    reviewer.instructions,
+    /request a dedicated safe verification setup/,
+  );
+  const reference = reviewer.instructions.match(
+    /independent reference: ([0-9]+\.[0-9]+)\./,
+  )?.[1];
+  assert.ok(reference, "reviewer has the independent Pi reference");
+  assert.equal(
+    reference,
+    manager.instructions.match(
+      /independent reference: ([0-9]+\.[0-9]+)\./,
+    )?.[1],
+  );
+  assert.equal(reference!.replace(".", "").length, 300);
 });
 
 test("assign project: a pipeline team gets paused staged projects on its existing agents, repeatedly", async (t) => {
@@ -497,7 +578,7 @@ test("team templates v3: roleType and the project profile round-trip; a partial 
     "adjudicator",
   );
   const exported = teams.export(whole.id);
-  assert.equal(exported.schemaVersion, 3);
+  assert.equal(exported.schemaVersion, 4);
   const again = await teams.insert({ envelope: exported });
   assert.equal(again.profile?.type, "pipeline");
   assert.equal(again.profile?.roles.implement.length, 1);

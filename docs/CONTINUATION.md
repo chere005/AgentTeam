@@ -1,6 +1,18 @@
 # AgentTeam continuation handoff
 
-## Start here: Windows checkpoint and next-agent handoff (October 22, 2026)
+## Start here: macOS test build checkpoint (October 23, 2026)
+
+Current worktree: `/Users/s/GIT/AgentTeam-stabilize`, branch `codex/stability-fixes-2026-10-22`, based on `b792dce`. The separate `/Users/s/GIT/AgentTeam` checkout was not modified.
+
+This checkpoint adds persisted agent nicknames and bounded raster avatars, fixes Windows directory-link test fixtures, makes the Pi reviewer require fresh execution evidence and fail closed when it is absent, and closes launch/configuration races. It also adds a desktop identity persistence test and fixes two test-only issues found during verification (an invalid PNG fixture and an ambiguous team-pack status selector).
+
+Verification on this Mac (Node 26): `npm run typecheck`, `npm run build`, `node scripts/audit-release.mjs`, `npm test` (472 total: 471 passed, 1 opt-in Wolfram smoke test skipped), `npm run test:ui` (63 passed; its only failure was a strict selector in the test, fixed and passed in a focused rerun), the identity and team-pack Playwright tests, Prettier checks, and `git diff --check` passed. Build output is local; it has not been packaged or released.
+
+The UI/backend suites use fixture providers. There is **no verified live AgentTeam provider run of the Pi workflow**, and the reviewer still needs a supported safe way to execute/check fresh outputs. Independently running the checked-in C++, Python and TypeScript sources is not proof of orchestration. Windows filesystem isolation and Windows CI also remain unverified; do not claim OS-enforced isolation.
+
+Next: open this build for Sean to try; then implement a safe, visible verification path for the Pi project and run a bounded live subscription-backed workflow, while keeping provider permissions fail-closed. Continue with Windows boundary/CI verification and the open items in `TODO.md`. Do not run a live workflow in a user's project without a fresh, isolated example workspace.
+
+## Prior Windows checkpoint and next-agent handoff (October 22, 2026; historical)
 
 The user requested that the current work be committed and pushed for another agent. Continue on **`codex/stability-fixes-2026-10-22`** in `C:\GIT\AgentTeam` (or fetch that branch on the next machine). It contains the other agent's `ed68b80` and `61bcb9e` commits plus the Windows continuation described below. Preserve the branch and all checkpoint changes. This is a WIP handoff, not a release or a full-suite pass. No live provider/kernel run was deliberately started by the Windows verification.
 

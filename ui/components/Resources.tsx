@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { LockKeyhole, Plus, Users, Clock, ShieldCheck } from "lucide-react";
 import { api, type Snapshot, type TeamEvent } from "../api";
 import { Cooperation } from "./Cooperation";
+import { agentSelectorLabel } from "../agent-identity";
 export function Resources({
   data,
   events,
@@ -142,13 +143,13 @@ export function Resources({
           {data.agents.map((a) => (
             <label className="priority-row" key={a.id}>
               <span>
-                {a.name}
+                {agentSelectorLabel(a)}
                 <small>
                   Default {priorityName(a.schedulingPriority ?? 50)}
                 </small>
               </span>
               <PrioritySelect
-                label={"Priority for " + a.name}
+                label={"Priority for " + agentSelectorLabel(a)}
                 value={priorities[a.id] ?? a.schedulingPriority ?? 50}
                 onChange={(value) =>
                   setPriorities({ ...priorities, [a.id]: value })
@@ -323,7 +324,7 @@ export function Resources({
               <option value="">Choose coordinator</option>
               {data.agents.map((a) => (
                 <option key={a.id} value={a.id}>
-                  {a.name}
+                  {agentSelectorLabel(a)}
                 </option>
               ))}
             </select>

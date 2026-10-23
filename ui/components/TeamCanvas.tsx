@@ -79,6 +79,8 @@ import {
 import { useTheme } from "../theme";
 import { clearArrange, peekArrange } from "../arrange-request";
 import { accessLabel, accessTitle } from "../access-view";
+import { agentDisplayName, agentSelectorLabel } from "../agent-identity";
+import { AgentAvatar } from "./AgentAvatar";
 import {
   api,
   saved,
@@ -116,6 +118,7 @@ function roleLabel(a: Agent) {
 function Card({ data }: NodeProps) {
   const a = data.agent as Agent,
     activity = data.activity as any;
+  const displayName = agentDisplayName(a);
   const zoom = useStore((s) => s.transform[2]),
     far = zoom < FAR_ZOOM,
     state: string = activity?.state ?? "idle",
@@ -140,12 +143,12 @@ function Card({ data }: NodeProps) {
             } as React.CSSProperties)
           : undefined
       }
-      aria-label={`${a.name}, ${state}${failed ? ", has failed tasks" : ""}`}
+      aria-label={`${agentSelectorLabel(a)}, ${state}${failed ? ", has failed tasks" : ""}`}
     >
       <Handle type="target" position={Position.Top} />
       {far && (
         <div className="card-glance" data-testid="card-glance">
-          <b title={a.name}>{a.name}</b>
+          <b title={a.name}>{displayName}</b>
           <span className="glance-line" title={a.environment + " · " + a.model}>
             {a.kind === "team-assistant"
               ? "Coordinator"
@@ -166,9 +169,15 @@ function Card({ data }: NodeProps) {
         </div>
       )}
       <div className="row">
-        <span className={"avatar " + a.environment}>{a.name[0]}</span>
+        <AgentAvatar
+          name={a.name}
+          nickname={a.nickname}
+          avatar={a.avatar}
+          environment={a.environment}
+          className={`avatar ${a.environment}`}
+        />
         <div className="grow">
-          <b>{a.name}</b>
+          <b title={a.name}>{displayName}</b>
           <small className="card-role">
             {a.kind === "team-assistant"
               ? "Team coordinator"
@@ -1239,8 +1248,8 @@ export function TeamCanvas(p: Props) {
                     <option value="">Choose an agent…</option>
                     {otherAgents.map((a) => (
                       <option key={a.id} value={a.id}>
-                        {a.name} ({teamNames.get(a.teamId ?? "") ?? "Main team"}
-                        )
+                        {agentSelectorLabel(a)} (
+                        {teamNames.get(a.teamId ?? "") ?? "Main team"})
                       </option>
                     ))}
                   </select>

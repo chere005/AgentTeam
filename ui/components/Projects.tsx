@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { api } from "../api";
+import { agentSelectorLabel } from "../agent-identity";
 import "./pipeline.css";
 import "./team-settings.css";
 
@@ -287,7 +288,7 @@ export function AssignProject({
             >
               {info.agents.map((a) => (
                 <option key={a.id} value={a.id}>
-                  {a.name}
+                  {agentSelectorLabel(a)}
                 </option>
               ))}
             </select>
@@ -320,7 +321,7 @@ export function AssignProject({
                     >
                       {info.agents.map((a) => (
                         <option key={a.id} value={a.id}>
-                          {a.name}
+                          {agentSelectorLabel(a)}
                         </option>
                       ))}
                     </select>

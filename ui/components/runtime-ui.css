@@ -59,6 +59,11 @@
   background: var(--panel-2);
   font-size: 12px;
 }
+.group-chat-message-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
 .group-chat-message p {
   margin: 4px 0 0;
   white-space: pre-wrap;

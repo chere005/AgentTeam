@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { File, MessageSquare, Search, X } from "lucide-react";
 import type { Snapshot } from "../api";
 import { api } from "../api";
+import { agentDisplayName } from "../agent-identity";
 import "./quick-switch.css";
 
 type FileResult = {
@@ -90,7 +91,12 @@ export function QuickSwitch({
     const sessions = data.sessions.filter((s) =>
       data.agents.some((agent) => agent.id === s.agentId),
     );
-    const names = new Map(data.agents.map((agent) => [agent.id, agent.name]));
+    const names = new Map(
+      data.agents.map((agent) => [agent.id, agentDisplayName(agent)]),
+    );
+    const canonicalNames = new Map(
+      data.agents.map((agent) => [agent.id, agent.name]),
+    );
     void Promise.all([
       api(`/group-chats?teamId=${encodeURIComponent(data.activeTeamId)}`)
         .then((items: GroupChat[]) =>
@@ -107,7 +113,7 @@ export function QuickSwitch({
               detail: chat.participantIds
                 .map((id) => names.get(id) ?? "Agent")
                 .join(", "),
-              searchText: `${chat.title} ${chat.lastMessage?.text ?? ""} ${chat.participantIds.map((id) => names.get(id) ?? "").join(" ")}`,
+              searchText: `${chat.title} ${chat.lastMessage?.text ?? ""} ${chat.participantIds.map((id) => `${names.get(id) ?? ""} ${canonicalNames.get(id) ?? ""}`).join(" ")}`,
             })),
         )
         .catch(() => [] as ChatResult[]),
@@ -130,7 +136,7 @@ export function QuickSwitch({
             agentId: session.agentId,
             title,
             detail: agentName,
-            searchText: `${agentName} ${plain.map((message) => message.text).join(" ")}`,
+            searchText: `${agentName} ${canonicalNames.get(session.agentId) ?? ""} ${plain.map((message) => message.text).join(" ")}`,
           };
         } catch {
           return null;

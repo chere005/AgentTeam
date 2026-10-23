@@ -3,6 +3,8 @@ import { ChevronDown, ChevronRight, MessageSquare, Users } from "lucide-react";
 import { chatTree, type ChatTreeNode } from "../chat-tree";
 import type { Agent, Snapshot, TeamEvent } from "../api";
 import { api } from "../api";
+import { agentDisplayName, agentSelectorLabel } from "../agent-identity";
+import { AgentAvatar } from "./AgentAvatar";
 import { Chat } from "./Panes";
 import { GroupChatPanel } from "./InvocationPanel";
 import type { PaneProps } from "./Panes";
@@ -36,7 +38,9 @@ export function TeamChatView({
   const [groupChatId, setGroupChatId] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const agents = data.teamView?.allAgents ?? data.agents;
-  const names = new Map(agents.map((agent) => [agent.id, agent.name]));
+  const names = new Map(
+    agents.map((agent) => [agent.id, agentDisplayName(agent)]),
+  );
   useEffect(() => {
     let alive = true;
     const refresh = () =>
@@ -80,16 +84,17 @@ export function TeamChatView({
     setSelected(id);
   };
   const agentNode = (
-    { agent, children }: ChatTreeNode,
+    { agent, children }: ChatTreeNode<Agent>,
     depth = 1,
   ): React.ReactNode => {
     const expanded = !collapsed.has(agent.id);
     const active = !groupChatId && selected === agent.id;
+    const displayName = agentDisplayName(agent);
     return (
       <div
         key={agent.id}
         role="treeitem"
-        aria-label={agent.name}
+        aria-label={agentSelectorLabel(agent)}
         aria-level={depth}
         aria-expanded={children.length ? expanded : undefined}
         aria-selected={active}
@@ -151,7 +156,7 @@ export function TeamChatView({
             <button
               className="team-chat-tree-toggle"
               tabIndex={-1}
-              aria-label={`${expanded ? "Collapse" : "Expand"} ${agent.name}`}
+              aria-label={`${expanded ? "Collapse" : "Expand"} ${agentSelectorLabel(agent)}`}
               onClick={(event) => {
                 event.stopPropagation();
                 toggle(agent.id);
@@ -166,11 +171,15 @@ export function TeamChatView({
           ) : (
             <span className="team-chat-tree-spacer" />
           )}
-          <span className="team-chat-picker-avatar" aria-hidden="true">
-            {agent.name.slice(0, 1).toUpperCase()}
-          </span>
+          <AgentAvatar
+            name={agent.name}
+            nickname={agent.nickname}
+            avatar={agent.avatar}
+            environment={agent.environment}
+            className="team-chat-picker-avatar"
+          />
           <span className="team-chat-tree-name" title={agent.name}>
-            {agent.name}
+            {displayName}
           </span>
         </div>
         {children.length > 0 && expanded && (

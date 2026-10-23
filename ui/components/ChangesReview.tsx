@@ -3,6 +3,7 @@ import { api, type Agent } from "../api";
 import { ReviewComments, type ReviewScope } from "./ReviewComments";
 import { diffRows, splitRows, type Cell, type Row } from "./diffRows";
 import { highlightLine, languageFor } from "./highlight";
+import { agentSelectorLabel } from "../agent-identity";
 
 type Change = { path: string; status: string; from?: string };
 type Meta = {
@@ -495,7 +496,7 @@ export function ChangesReview({
             >
               {agents.map((a) => (
                 <option key={a.id} value={a.id}>
-                  {a.name}
+                  {agentSelectorLabel(a)}
                 </option>
               ))}
             </select>

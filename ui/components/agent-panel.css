@@ -23,6 +23,26 @@
 .agent-panel-head .state.processing {
   color: var(--accent);
 }
+.agent-avatar-editor {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+}
+.agent-avatar-editor > .avatar {
+  width: 48px;
+  height: 48px;
+  font-size: 14px;
+}
+.agent-avatar-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.agent-avatar-actions small {
+  flex-basis: 100%;
+}
 .agent-context {
   display: flex;
   flex-wrap: wrap;

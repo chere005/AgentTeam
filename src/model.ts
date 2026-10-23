@@ -1,5 +1,9 @@
 import { z } from "zod";
 import { completionCheckSchema } from "./limits-schema.ts";
+import {
+  isSafeAgentAvatarDataUrl,
+  MAX_AGENT_AVATAR_DATA_URL_CHARS,
+} from "./agent-avatar.ts";
 import type { RoutingDecision } from "./routing-decision.ts";
 export const environment = z.enum(["codex", "claude", "wolfram"]);
 export const workspaceSchema = z
@@ -52,9 +56,26 @@ export const ROLE_TYPES = [
   "adjudicator",
   "custom",
 ] as const;
+export const agentAvatarSchema = z
+  .string()
+  .max(MAX_AGENT_AVATAR_DATA_URL_CHARS)
+  .refine(isSafeAgentAvatarDataUrl, {
+    message: "Avatar must be a small PNG, JPEG, or WebP image",
+  });
 export const agentSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
+    /** Optional display-only label; `name` and `id` remain the routing identity. */
+    nickname: z
+      .string()
+      .trim()
+      .max(40)
+      .refine((value) => !/[\u0000-\u001f\u007f]/.test(value), {
+        message: "Nickname cannot contain control characters",
+      })
+      .default(""),
+    /** Bounded PNG/JPEG/WebP data URL; absent/null uses initials. */
+    avatar: agentAvatarSchema.nullable().default(null),
     role: z.string().max(4000).default(""),
     /** Role preset (src/roles.ts); "custom" keeps fully manual configuration. */
     roleType: z.enum(ROLE_TYPES).default("custom"),

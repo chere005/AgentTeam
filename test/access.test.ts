@@ -1,13 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
-  mkdtemp,
-  mkdir,
-  writeFile,
-  rm,
-  symlink,
-  realpath,
-} from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -27,6 +20,10 @@ import {
 } from "../src/access.ts";
 import { accessAgentView } from "../src/access-routes.ts";
 import { sharedResources } from "../src/sharing.ts";
+import {
+  createFileSymlink,
+  WINDOWS_FILE_SYMLINK_SKIP_REASON,
+} from "./fixtures/filesystem-links.ts";
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", ["-C", cwd, ...args], {
@@ -180,8 +177,15 @@ async function fixture(t: any, workspace: Record<string, unknown> = {}) {
   await writeFile(join(root, "README.md"), "readme");
   await writeFile(join(root, "secrets", "key.txt"), "TOPSECRET");
   await writeFile(join(base, "outside.txt"), "outside");
-  await symlink(join(root, "secrets", "key.txt"), join(root, "link-to-secret"));
-  await symlink(join(base, "outside.txt"), join(root, "link-outside"));
+  const fileSymlinksAvailable =
+    (await createFileSymlink(
+      join(root, "secrets", "key.txt"),
+      join(root, "link-to-secret"),
+    )) &&
+    (await createFileSymlink(
+      join(base, "outside.txt"),
+      join(root, "link-outside"),
+    ));
   const store = new Store(":memory:"),
     team = new TeamService(store, new SkillCatalog([]));
   const agent = await team.saveAgent({
@@ -193,7 +197,15 @@ async function fixture(t: any, workspace: Record<string, unknown> = {}) {
     store.close();
     await rm(base, { recursive: true, force: true });
   });
-  return { base, root, store, team, agent, ws: new WorkspaceService(store) };
+  return {
+    base,
+    root,
+    store,
+    team,
+    agent,
+    ws: new WorkspaceService(store),
+    fileSymlinksAvailable,
+  };
 }
 const code = (p: Promise<unknown>) =>
   p.then(
@@ -202,7 +214,7 @@ const code = (p: Promise<unknown>) =>
   );
 
 test("exclusions block browse, preview, symlink and traversal paths; .git rules unchanged", async (t) => {
-  const { root, agent, ws } = await fixture(t, {
+  const { root, agent, ws, fileSymlinksAvailable } = await fixture(t, {
     rules: [{ path: "secrets", access: "none" }],
   });
   const names = (await ws.browse(agent.id, { workspace: root })).entries.map(
@@ -222,11 +234,20 @@ test("exclusions block browse, preview, symlink and traversal paths; .git rules 
     assert.equal(await code(at("SECRETS/key.txt")), "access_denied");
   else assert.notEqual(await code(at("SECRETS/key.txt")), "ok");
   assert.equal(await code(at("src/../secrets/key.txt")), "access_denied");
-  assert.equal(await code(at("link-to-secret")), "access_denied"); // symlink into an excluded path
-  assert.equal(await code(at("link-outside")), "path_escape"); // symlink escape unchanged
   assert.equal(await code(at("../outside.txt")), "path_escape");
   assert.equal(await code(at(".git/config")), "git_internal");
   assert.equal(await code(at("src/a.ts")), "ok");
+  await t.test(
+    "file symlinks obey exclusions and workspace boundaries",
+    async (st) => {
+      if (!fileSymlinksAvailable) {
+        st.skip(WINDOWS_FILE_SYMLINK_SKIP_REASON);
+        return;
+      }
+      assert.equal(await code(at("link-to-secret")), "access_denied");
+      assert.equal(await code(at("link-outside")), "path_escape");
+    },
+  );
 });
 test("explicit-only attachments grant just the listed files; read rules cap writes; write rules lift a read folder", async (t) => {
   const { root, agent, ws } = await fixture(t, {

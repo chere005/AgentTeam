@@ -9,7 +9,13 @@
 // Teams without a profile (Main, hand-built teams, older templates) take free-form projects.
 import { realpath, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
-import { AppError, assert, type Agent, type Session } from "./model.ts";
+import {
+  AppError,
+  assert,
+  type Agent,
+  type Session,
+  type Task,
+} from "./model.ts";
 import type { ModelCheck, ModelExpectation } from "./samples.ts";
 import type { TeamTemplate } from "./teams.ts";
 import type { Store } from "./store.ts";
@@ -222,13 +228,19 @@ export function attachProjectWorkspaceInTx(
       .filter((s) => s.state === "running")
       .map((s) => s.agentId),
   );
+  const runningTasks = new Set(
+    store
+      .list<Task>("task")
+      .filter((task) => task.status === "running")
+      .map((task) => task.agentId),
+  );
   for (const [agentId, mode] of Object.entries(access)) {
     const a = store.get<Agent>("agent", agentId);
     if (a.workspaces.some((w) => w.path === path)) continue;
     assert(
-      !running.has(agentId),
+      !running.has(agentId) && !runningTasks.has(agentId),
       "agent_busy",
-      `Stop ${a.name}'s active session before assigning a project that attaches a folder to it`,
+      `Stop ${a.name}'s active session or task before assigning a project that attaches a folder to it`,
     );
     const next: Agent = {
       ...a,

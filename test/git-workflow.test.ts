@@ -6,7 +6,6 @@ import {
   writeFile,
   readFile,
   rm,
-  symlink,
   realpath,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -31,6 +30,7 @@ import {
   parseConflictMarkers,
   parseRemoteUrl,
 } from "../src/git-remote.ts";
+import { createDirectoryAlias } from "./fixtures/filesystem-links.ts";
 
 // Isolate from the developer's global Git configuration (credential helpers, signing, hooks).
 process.env.GIT_CONFIG_GLOBAL = emptyGitConfig;
@@ -778,7 +778,7 @@ test("staging stays inside the folder: traversal, .git and symlink escapes are r
   const { base, root, agent, ws } = await fixture(t, { remote: false });
   await mkdir(join(base, "outside"));
   await writeFile(join(base, "outside", "secret.txt"), "s\n");
-  await symlink(join(base, "outside"), join(root, "link"));
+  await createDirectoryAlias(join(base, "outside"), join(root, "link"));
   for (const bad of [
     "../outside/secret.txt",
     "/etc/passwd",

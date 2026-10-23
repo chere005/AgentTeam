@@ -32,6 +32,12 @@ import type { AccessRule } from "../access-view";
 import type { FeatureId } from "../features";
 import { registerUnsaved } from "./UnsavedGuard";
 import { instructionLengthHint } from "../instruction-length";
+import {
+  isSafeAgentAvatarDataUrl,
+  MAX_AGENT_AVATAR_BYTES,
+} from "../../src/agent-avatar";
+import { agentSelectorLabel } from "../agent-identity";
+import { AgentAvatar } from "./AgentAvatar";
 import "./runtime-ui.css";
 import "./agent-panel.css";
 
@@ -56,6 +62,8 @@ type SkillPick = { id: string; mode: string; allowUnverified: boolean };
 export type AgentForm = {
   schedulingPriority: number;
   name: string;
+  nickname: string;
+  avatar: string | null;
   role: string;
   roleType?: string;
   environment: string;
@@ -73,6 +81,8 @@ export type AgentForm = {
 export const newAgentDefaults: AgentForm = {
   schedulingPriority: 50,
   name: "",
+  nickname: "",
+  avatar: null,
   role: "",
   roleType: "custom",
   environment: "codex",
@@ -176,6 +186,8 @@ export function AgentFormSections({
     [picking, setPicking] = useState(false),
     [search, setSearch] = useState(""),
     [source, setSource] = useState("bundled");
+  const avatarFile = useRef<HTMLInputElement>(null);
+  const [avatarError, setAvatarError] = useState("");
   useEffect(() => {
     api("/skills")
       .then(setCatalog)
@@ -250,7 +262,121 @@ export function AgentFormSections({
               placeholder="e.g. Database Architect"
             />
           </label>
+          <label>
+            Nickname
+            <input
+              aria-label="Agent nickname"
+              value={form.nickname}
+              maxLength={40}
+              onChange={(e) => update("nickname", e.target.value)}
+              placeholder="Optional display name"
+            />
+          </label>
         </div>
+        <div className="agent-avatar-editor">
+          <AgentAvatar
+            name={form.name || "Agent"}
+            nickname={form.nickname}
+            avatar={form.avatar}
+            environment={form.environment}
+            className={`avatar ${form.environment}`}
+          />
+          <div className="agent-avatar-actions">
+            <input
+              ref={avatarFile}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              aria-label="Choose custom avatar"
+              className="sr-only"
+              onChange={async (event) => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = "";
+                if (!file) return;
+                setAvatarError("");
+                try {
+                  if (
+                    !["image/png", "image/jpeg", "image/webp"].includes(
+                      file.type,
+                    )
+                  )
+                    throw new Error("Choose a PNG, JPEG, or WebP image.");
+                  if (file.size > 10 * 1024 * 1024)
+                    throw new Error("Choose an image smaller than 10 MB.");
+                  const bitmap = await createImageBitmap(file);
+                  try {
+                    if (
+                      bitmap.width > 4096 ||
+                      bitmap.height > 4096 ||
+                      bitmap.width * bitmap.height > 16_000_000
+                    )
+                      throw new Error(
+                        "Choose an image no larger than 16 megapixels.",
+                      );
+                    let encoded: string | null = null;
+                    for (const [size, quality] of [
+                      [96, 0.82],
+                      [64, 0.68],
+                    ]) {
+                      const canvas = document.createElement("canvas");
+                      canvas.width = size;
+                      canvas.height = size;
+                      const context = canvas.getContext("2d");
+                      if (!context)
+                        throw new Error("Could not prepare the avatar image.");
+                      const crop = Math.min(bitmap.width, bitmap.height);
+                      context.drawImage(
+                        bitmap,
+                        (bitmap.width - crop) / 2,
+                        (bitmap.height - crop) / 2,
+                        crop,
+                        crop,
+                        0,
+                        0,
+                        size,
+                        size,
+                      );
+                      const candidate = canvas.toDataURL("image/webp", quality);
+                      if (isSafeAgentAvatarDataUrl(candidate)) {
+                        encoded = candidate;
+                        break;
+                      }
+                    }
+                    if (
+                      !encoded ||
+                      encoded.length > MAX_AGENT_AVATAR_BYTES * 1.4
+                    )
+                      throw new Error(
+                        "This image could not be reduced to a small avatar.",
+                      );
+                    update("avatar", encoded);
+                  } finally {
+                    bitmap.close();
+                  }
+                } catch (error) {
+                  setAvatarError(
+                    error instanceof Error ? error.message : String(error),
+                  );
+                }
+              }}
+            />
+            <button type="button" onClick={() => avatarFile.current?.click()}>
+              {form.avatar ? "Change avatar" : "Choose avatar"}
+            </button>
+            {form.avatar && (
+              <button type="button" onClick={() => update("avatar", null)}>
+                Remove
+              </button>
+            )}
+            <small className="quiet">
+              Small raster image; initials appear when unset.
+            </small>
+          </div>
+        </div>
+        {avatarError && (
+          <p className="error" role="alert">
+            {avatarError}
+          </p>
+        )}
         <label>
           Role / specialty
           <textarea
@@ -271,7 +397,7 @@ export function AgentFormSections({
               .filter((a) => a.id !== agent?.id)
               .map((a) => (
                 <option value={a.id} key={a.id}>
-                  {a.name}
+                  {agentSelectorLabel(a)}
                 </option>
               ))}
           </select>
@@ -984,7 +1110,7 @@ function TalksTo({
             .filter((a) => a.id !== agent.id)
             .map((a) => (
               <option key={a.id} value={a.id}>
-                {a.name}
+                {agentSelectorLabel(a)}
               </option>
             ))}
         </select>
@@ -1148,10 +1274,19 @@ export function AgentPanel({
       data-testid="agent-panel"
     >
       <header className="agent-panel-head">
-        <span className={"avatar " + agent.environment}>{agent.name[0]}</span>
+        <AgentAvatar
+          name={agent.name}
+          nickname={agent.nickname}
+          avatar={agent.avatar}
+          environment={agent.environment}
+          className={`avatar ${agent.environment}`}
+        />
         <div className="grow">
           <h2 data-testid="agent-panel-name">{agent.name}</h2>
           <small className="quiet">
+            {agent.nickname?.trim()
+              ? `Shown as “${agent.nickname.trim()}” · `
+              : ""}
             {agent.kind === "team-assistant"
               ? "Team coordinator"
               : agent.environment + " · " + agent.model}{" "}

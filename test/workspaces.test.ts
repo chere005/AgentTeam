@@ -1,14 +1,7 @@
 import { test } from "node:test";
 import "./fixtures/git-config.ts";
 import assert from "node:assert/strict";
-import {
-  mkdtemp,
-  mkdir,
-  writeFile,
-  rm,
-  symlink,
-  realpath,
-} from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -16,6 +9,10 @@ import { Store } from "../src/store.ts";
 import { SkillCatalog } from "../src/skills.ts";
 import { TeamService } from "../src/service.ts";
 import { WorkspaceService, parseStatus } from "../src/workspaces.ts";
+import {
+  createFileSymlink,
+  WINDOWS_FILE_SYMLINK_SKIP_REASON,
+} from "./fixtures/filesystem-links.ts";
 async function fixture(t: any) {
   const base = await realpath(
       await mkdtemp(join(tmpdir(), "agentteam-files-")),
@@ -156,16 +153,21 @@ test("new text files can be created only in writable workspace paths", async (t)
 test("paths cannot escape through traversal, symlinks or Git internals", async (t) => {
   const { base, root, agent, ws } = await fixture(t);
   await writeFile(join(base, "secret"), "outside");
-  await symlink(join(base, "secret"), join(root, "link"));
   await mkdir(join(root, ".git"));
   await assert.rejects(
     ws.preview(agent.id, { workspace: root, path: "../secret" }),
     /escapes/,
   );
-  await assert.rejects(
-    ws.preview(agent.id, { workspace: root, path: "link" }),
-    /escapes/,
-  );
+  await t.test("file symlinks cannot escape the workspace", async (st) => {
+    if (!(await createFileSymlink(join(base, "secret"), join(root, "link")))) {
+      st.skip(WINDOWS_FILE_SYMLINK_SKIP_REASON);
+      return;
+    }
+    await assert.rejects(
+      ws.preview(agent.id, { workspace: root, path: "link" }),
+      /escapes/,
+    );
+  });
   await assert.rejects(
     ws.browse(agent.id, { workspace: root, path: ".git" }),
     /Git internals/,

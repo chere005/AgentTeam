@@ -24,6 +24,9 @@ async function setup(t: any) {
   await mkdir(ws);
   const lead = await service.saveAgent({
     name: "Lead",
+    nickname: "Pi Manager",
+    avatar:
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADUlEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
     environment: "codex",
     instructions: "Coordinate",
     effort: "high",
@@ -100,6 +103,8 @@ test("save, export and import round-trip into a fresh insertion with remapped id
   assert.ok(![lead.id, dev.id].some((id) => newIds.has(id)));
   const [nl, nd] = result.agents;
   assert.equal(nl.name, "Lead");
+  assert.equal(nl.nickname, "Pi Manager");
+  assert.equal(nl.avatar, lead.avatar);
   assert.equal(nl.effort, "high");
   assert.equal(nl.schedulingPriority, 80);
   assert.equal(nd.parentId, nl.id);

@@ -4,6 +4,7 @@ import "@xyflow/react/dist/style.css";
 import { api, type Snapshot, type TeamEvent } from "../api";
 import { NODE_TYPE_LABEL, layerGraph, nodeSummary } from "../graph-layout";
 import { useTheme } from "../theme";
+import { agentSelectorLabel } from "../agent-identity";
 import "./workflow-graphs.css";
 
 type GNode = Record<string, any> & { id: string; type: string };
@@ -703,7 +704,7 @@ export function WorkflowGraphs({
       <option value="">{optional ? "(workflow owner)" : "Choose agent"}</option>
       {agents.map((a) => (
         <option key={a.id} value={a.id}>
-          {a.name}
+          {agentSelectorLabel(a)}
         </option>
       ))}
     </select>

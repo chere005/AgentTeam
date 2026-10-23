@@ -5,7 +5,6 @@ import {
   mkdir,
   writeFile,
   rm,
-  symlink,
   realpath,
   chmod,
   readFile,
@@ -14,6 +13,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { emptyGitConfig } from "./fixtures/git-config.ts";
+import { createDirectoryAlias } from "./fixtures/filesystem-links.ts";
 import { Store } from "../src/store.ts";
 import { SkillCatalog } from "../src/skills.ts";
 import { TeamService } from "../src/service.ts";
@@ -427,7 +427,7 @@ test("editor settings validate real executables; open uses configured path via a
     codeOf("git_internal"),
   );
   await mkdir(join(dir, "out"));
-  await symlink(join(dir, "out"), join(root, "lnk"));
+  await createDirectoryAlias(join(dir, "out"), join(root, "lnk"));
   await assert.rejects(
     svc.open(agent.id, { workspace: root, path: "lnk" }, false),
     codeOf("path_escape"),

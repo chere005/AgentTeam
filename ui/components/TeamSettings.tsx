@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { api } from "../api";
 import { requestArrange } from "../arrange-request";
+import { agentDisplayName } from "../agent-identity";
 import type { PaneProps } from "./Panes";
 import "./team-settings.css";
 
@@ -246,7 +247,7 @@ export function TeamSettings(p: PaneProps) {
                   <td>
                     {r.agents.map((a) => (
                       <div key={a.id} className={a.missing ? "bad" : ""}>
-                        {a.name}
+                        {agentDisplayName(a)}
                         {a.model && (
                           <small className="quiet"> · {a.model}</small>
                         )}
@@ -371,7 +372,7 @@ export function TeamSettings(p: PaneProps) {
         <ul className="ts-list">
           {view.workspaceAccess.agents.map((a) => (
             <li key={a.id}>
-              {a.name}:{" "}
+              {agentDisplayName(a)}:{" "}
               <b>{a.access === "write" ? "Can read and edit" : "Can read"}</b>
             </li>
           ))}

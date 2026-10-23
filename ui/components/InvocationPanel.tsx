@@ -4,6 +4,8 @@ import { api } from "../api";
 import { invocationSummary, waitReasonText } from "../../src/invocation-view";
 import { usePersistedDetails } from "./persisted-details";
 import { MessageMarkdown } from "./Markdown";
+import { AgentAvatar } from "./AgentAvatar";
+import { agentDisplayName, agentSelectorLabel } from "../agent-identity";
 import "./runtime-ui.css";
 
 type InvocationRecord = {
@@ -41,7 +43,9 @@ export function GroupChatPanel({
   const [invite, setInvite] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const names = Object.fromEntries(agents.map((a) => [a.id, a.name]));
+  const names = Object.fromEntries(
+    agents.map((a) => [a.id, agentDisplayName(a)]),
+  );
   useEffect(() => {
     let alive = true;
     const refresh = () =>
@@ -109,11 +113,31 @@ export function GroupChatPanel({
             key={message.id}
             className={`group-chat-message ${message.role}`}
           >
-            <b>
-              {message.role === "human"
-                ? "You"
-                : (names[message.senderAgentId ?? ""] ?? "Agent")}
-            </b>
+            <div className="group-chat-message-head">
+              {message.role === "human" ? (
+                <span className="avatar small user">Y</span>
+              ) : (
+                (() => {
+                  const sender = agents.find(
+                    (a) => a.id === message.senderAgentId,
+                  );
+                  return sender ? (
+                    <AgentAvatar
+                      name={sender.name}
+                      nickname={sender.nickname}
+                      avatar={sender.avatar}
+                      environment={sender.environment}
+                      className={`avatar small ${sender.environment}`}
+                    />
+                  ) : null;
+                })()
+              )}
+              <b>
+                {message.role === "human"
+                  ? "You"
+                  : (names[message.senderAgentId ?? ""] ?? "Agent")}
+              </b>
+            </div>
             <div className="message-text">
               <MessageMarkdown
                 text={message.text}
@@ -137,7 +161,7 @@ export function GroupChatPanel({
           <option value="">Add an agent…</option>
           {available.map((a) => (
             <option key={a.id} value={a.id}>
-              {a.name}
+              {agentSelectorLabel(a)}
             </option>
           ))}
         </select>
@@ -184,7 +208,9 @@ export function InvocationPanel({
   limit: number | null;
   data: Snapshot;
 }) {
-  const names = Object.fromEntries(data.agents.map((a) => [a.id, a.name]));
+  const names = Object.fromEntries(
+    data.agents.map((a) => [a.id, agentDisplayName(a)]),
+  );
   const reasons: Record<string, string | null> = {};
   const tasks = data.workflows.flatMap((w) => w.tasks);
   for (const a of data.activity)
@@ -328,7 +354,7 @@ export function InvocationPanel({
             <article className="invocation-exchange" key={task.id}>
               <b>
                 {task.invokedBy
-                  ? `${names[task.invokedBy] ?? "Teammate"} → ${agent.name}`
+                  ? `${names[task.invokedBy] ?? "Teammate"} → ${agentDisplayName(agent)}`
                   : "Assigned work"}
                 : {task.title}
               </b>

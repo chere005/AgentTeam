@@ -278,7 +278,7 @@ test("creation paths attach new agents and workflows to the right team", async (
   assert.equal(saved.body.sourceTeam.id, research);
   const exported = await call("GET", `/teams/${saved.body.id}/export`);
   assert.equal(exported.body.template.sourceTeam, undefined);
-  assert.equal(exported.body.schemaVersion, 3);
+  assert.equal(exported.body.schemaVersion, 4);
 });
 
 test("team delete: Main and busy teams are refused; agents move by default or are deleted explicitly", async (t) => {

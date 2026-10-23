@@ -47,6 +47,9 @@ test("agent configurations persist across a restart", async (t) => {
     service = new TeamService(store, new SkillCatalog([]));
   const a = await service.saveAgent({
     ...agent("Builder"),
+    nickname: "Pi Builder",
+    avatar:
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADUlEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
     instructions: "Always explain changes",
     effort: "high",
   });
@@ -57,7 +60,36 @@ test("agent configurations persist across a restart", async (t) => {
     "Always explain changes",
   );
   assert.equal(second.get<Agent>("agent", a.id).effort, "high");
+  assert.equal(second.get<Agent>("agent", a.id).nickname, "Pi Builder");
+  assert.equal(second.get<Agent>("agent", a.id).avatar, a.avatar);
+  assert.equal(second.get<Agent>("agent", a.id).name, "Builder");
+  assert.equal(second.get<Agent>("agent", a.id).id, a.id);
   second.close();
+});
+
+test("agent identity rejects unsafe avatars and oversized or control-character nicknames", async (t) => {
+  const { service } = fixture(t);
+  await assert.rejects(
+    service.saveAgent({
+      ...agent("Unsafe avatar"),
+      avatar: "https://example.test/a.png",
+    }),
+  );
+  await assert.rejects(
+    service.saveAgent({
+      ...agent("SVG avatar"),
+      avatar: "data:image/svg+xml;base64,PHN2Zz4=",
+    }),
+  );
+  await assert.rejects(
+    service.saveAgent({
+      ...agent("Oversized nickname"),
+      nickname: "x".repeat(41),
+    }),
+  );
+  await assert.rejects(
+    service.saveAgent({ ...agent("Control nickname"), nickname: "name\nrole" }),
+  );
 });
 test("transactions roll back entities AND audit events", (t) => {
   const { store } = fixture(t);

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api, type Agent, type Rule } from "../api";
 import { RuleOptionsFields, splitList } from "./RuleOptions";
+import { agentSelectorLabel } from "../agent-identity";
 import "./task-settings.css";
 
 /** Edit button and inline form for an existing routing rule (PUT /rules/:id). */
@@ -101,7 +102,7 @@ export function RuleEditor({
               .filter((a) => a.id !== rule.agentId)
               .map((a) => (
                 <option key={a.id} value={a.id}>
-                  {a.name}
+                  {agentSelectorLabel(a)}
                 </option>
               ))}
           </select>

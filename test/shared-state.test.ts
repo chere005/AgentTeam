@@ -1,13 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../src/store.ts";
@@ -20,6 +13,11 @@ import { ValidationService, type KernelRunner } from "../src/validation.ts";
 import { MAX_VALUE_BYTES } from "../src/shared-state.ts";
 import { MAX_INLINE_BYTES } from "../src/artifacts.ts";
 import type { Task } from "../src/model.ts";
+import {
+  createDirectoryAlias,
+  createFileSymlink,
+  WINDOWS_FILE_SYMLINK_SKIP_REASON,
+} from "./fixtures/filesystem-links.ts";
 
 type Provider = ConstructorParameters<typeof Scheduler>[2];
 const hang: Provider = () => new Promise(() => undefined);
@@ -811,7 +809,7 @@ test("dependency outputs are selected and size-limited with a clear summary", as
   void wf;
 });
 
-test("artifacts: path traversal, absolute paths, symlink escapes and .git are rejected; previews are bounded", async () => {
+test("artifacts: path traversal, absolute paths, symlink escapes and .git are rejected; previews are bounded", async (testContext) => {
   const dir = await tmp();
   const ws = await realpath(dir);
   const outside = await tmp("agentteam-outside-");
@@ -821,8 +819,7 @@ test("artifacts: path traversal, absolute paths, symlink escapes and .git are re
   await mkdir(join(ws, ".git"));
   await writeFile(join(ws, ".git", "config"), "[core]");
   await mkdir(join(ws, "sub"));
-  await symlink(join(outside, "secret.txt"), join(ws, "link.txt"));
-  await symlink(outside, join(ws, "linkdir"));
+  await createDirectoryAlias(outside, join(ws, "linkdir"));
   const b = boot(":memory:");
   const { writer, wf } = await world(b, ws);
   const reg = (p: string, extra: object = {}) =>
@@ -861,11 +858,25 @@ test("artifacts: path traversal, absolute paths, symlink escapes and .git are re
       path: p,
       ...extra,
     });
+  await testContext.test(
+    "file symlink artifact registration cannot escape",
+    async (st) => {
+      if (
+        !(await createFileSymlink(
+          join(outside, "secret.txt"),
+          join(ws, "link.txt"),
+        ))
+      ) {
+        st.skip(WINDOWS_FILE_SYMLINK_SKIP_REASON);
+        return;
+      }
+      await assert.rejects(asTask("link.txt"), { code: "path_escape" });
+    },
+  );
   await assert.rejects(asTask("../../etc/passwd"), { code: "path_escape" });
   await assert.rejects(asTask("sub/../../x"), { code: "path_escape" });
   await assert.rejects(asTask("/etc/passwd"), { code: "invalid_path" });
   await assert.rejects(asTask(join(ws, "ok.txt")), { code: "invalid_path" });
-  await assert.rejects(asTask("link.txt"), { code: "path_escape" });
   await assert.rejects(asTask("linkdir/secret.txt"), { code: "path_escape" });
   await assert.rejects(asTask(".git/config"), { code: "git_internal" });
   await assert.rejects(asTask("sub"), { code: "not_file" });
@@ -912,10 +923,24 @@ test("artifacts: path traversal, absolute paths, symlink escapes and .git are re
   // swapping the file for a symlink after registration cannot escape on preview
   const { rm: rmf } = await import("node:fs/promises");
   await rmf(join(ws, "bin.dat"));
-  await symlink(join(outside, "secret.txt"), join(ws, "bin.dat"));
-  await assert.rejects(
-    b.service.artifacts.preview(bin.id, { type: "user" }),
-    (e: { code: string }) => ["path_escape", "artifact_moved"].includes(e.code),
+  await testContext.test(
+    "registered artifact detects replacement by a file symlink",
+    async (st) => {
+      if (
+        !(await createFileSymlink(
+          join(outside, "secret.txt"),
+          join(ws, "bin.dat"),
+        ))
+      ) {
+        st.skip(WINDOWS_FILE_SYMLINK_SKIP_REASON);
+        return;
+      }
+      await assert.rejects(
+        b.service.artifacts.preview(bin.id, { type: "user" }),
+        (e: { code: string }) =>
+          ["path_escape", "artifact_moved"].includes(e.code),
+      );
+    },
   );
   // registry records are immutable
   assert.throws(

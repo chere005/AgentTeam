@@ -142,7 +142,9 @@ test("team packs: preview, gated install with groups, and three-way update that 
     await expect(apply).toBeEnabled();
     await apply.click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
-    await expect(page.getByRole("status")).toContainText("Updated to 0.2.0");
+    await expect(page.locator('[role="status"].team-note')).toContainText(
+      "Updated to 0.2.0",
+    );
     snap = await snapshot();
     expect(byName("Swift Implementer").instructions).toBe(
       "My own implementer instructions",

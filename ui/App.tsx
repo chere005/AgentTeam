@@ -1245,6 +1245,9 @@ export default function App() {
           agents={view.agents.map((a) => ({
             id: a.id,
             name: a.name,
+            nickname: a.nickname,
+            avatar: a.avatar,
+            environment: a.environment,
             detail:
               a.kind === "team-assistant"
                 ? "Team coordinator"

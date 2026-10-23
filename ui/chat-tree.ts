@@ -1,9 +1,12 @@
 type ChatAgent = { id: string; name: string; parentId?: string | null };
-export type ChatTreeNode = { agent: ChatAgent; children: ChatTreeNode[] };
+export type ChatTreeNode<T extends ChatAgent = ChatAgent> = {
+  agent: T;
+  children: ChatTreeNode<T>[];
+};
 /** Stable org order, including detached parents and malformed historical cycles. */
-export function chatTree(agents: ChatAgent[]): ChatTreeNode[] {
+export function chatTree<T extends ChatAgent>(agents: T[]): ChatTreeNode<T>[] {
   const ids = new Set(agents.map((agent) => agent.id));
-  const children = new Map<string, ChatAgent[]>();
+  const children = new Map<string, T[]>();
   for (const agent of agents) {
     if (
       agent.parentId &&
@@ -16,7 +19,7 @@ export function chatTree(agents: ChatAgent[]): ChatTreeNode[] {
       ]);
   }
   const seen = new Set<string>();
-  const visit = (agent: ChatAgent): ChatTreeNode => {
+  const visit = (agent: T): ChatTreeNode<T> => {
     seen.add(agent.id);
     return {
       agent,

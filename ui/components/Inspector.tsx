@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type Agent, type Snapshot, type TeamEvent } from "../api";
 import "./inspector.css";
 import { ConversationLink } from "./ConversationExtras";
+import { agentSelectorLabel } from "../agent-identity";
 
 /** Encodes every character the desktop IPC path filter rejects (".", "_") as well as reserved ones. */
 const enc = (v: string) =>
@@ -182,7 +183,7 @@ function Timeline(p: Props) {
             <option value="">All</option>
             {p.data.agents.map((a) => (
               <option key={a.id} value={a.id}>
-                {a.name}
+                {agentSelectorLabel(a)}
               </option>
             ))}
           </select>
@@ -389,7 +390,7 @@ function Waiting(p: Props) {
             <option value="">Choose an agent…</option>
             {p.data.agents.map((a) => (
               <option key={a.id} value={a.id}>
-                {a.name}
+                {agentSelectorLabel(a)}
               </option>
             ))}
           </select>
@@ -603,7 +604,7 @@ function Preview(p: Props) {
             <option value="">You (intake)</option>
             {p.data.agents.map((a) => (
               <option key={a.id} value={a.id}>
-                {a.name}
+                {agentSelectorLabel(a)}
               </option>
             ))}
           </select>
@@ -614,7 +615,7 @@ function Preview(p: Props) {
             <option value="">Let routing rules decide</option>
             {p.data.agents.map((a) => (
               <option key={a.id} value={a.id}>
-                {a.name}
+                {agentSelectorLabel(a)}
               </option>
             ))}
           </select>

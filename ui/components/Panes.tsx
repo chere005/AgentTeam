@@ -87,6 +87,8 @@ import {
   type TeamEvent,
 } from "../api";
 import { eventVisible } from "../team-view";
+import { agentDisplayName, agentSelectorLabel } from "../agent-identity";
+import { AgentAvatar } from "./AgentAvatar";
 import { isProjectWorkflow } from "../project-kind";
 import type { FeatureId } from "../features";
 import { GitRenamePair } from "./GitRenamePair";
@@ -114,19 +116,31 @@ export type PaneProps = {
   openFeature?: (id: FeatureId) => void;
 };
 function AgentPicker(p: PaneProps & { unread?: Record<string, number> }) {
+  const current = p.data.agents.find((agent) => agent.id === p.selected);
   return (
-    <select
-      aria-label="Agent"
-      value={p.selected}
-      onChange={(e) => p.setSelected(e.target.value)}
-    >
-      {p.data.agents.map((a) => (
-        <option value={a.id} key={a.id}>
-          {a.name}
-          {p.unread?.[a.id] ? ` (${unreadLabel(p.unread[a.id])} new)` : ""}
-        </option>
-      ))}
-    </select>
+    <span className="agent-picker">
+      {current && (
+        <AgentAvatar
+          name={current.name}
+          nickname={current.nickname}
+          avatar={current.avatar}
+          environment={current.environment}
+          className={`avatar small agent-picker-avatar ${current.environment}`}
+        />
+      )}
+      <select
+        aria-label="Agent"
+        value={p.selected}
+        onChange={(e) => p.setSelected(e.target.value)}
+      >
+        {p.data.agents.map((a) => (
+          <option value={a.id} key={a.id}>
+            {agentSelectorLabel(a)}
+            {p.unread?.[a.id] ? ` (${unreadLabel(p.unread[a.id])} new)` : ""}
+          </option>
+        ))}
+      </select>
+    </span>
   );
 }
 export function Chat(p: PaneProps) {
@@ -137,6 +151,7 @@ export function Chat(p: PaneProps) {
   const box = useRef<HTMLDivElement>(null),
     agent = p.data.agents.find((a) => a.id === p.selected),
     session = p.data.sessions.find((s) => s.agentId === p.selected);
+  const displayName = agent ? agentDisplayName(agent) : "Agent";
   const [sending, setSending] = useState(false),
     [searching, setSearching] = useState(false),
     [options, setOptions] = useState(false),
@@ -372,7 +387,7 @@ export function Chat(p: PaneProps) {
                 <h1>
                   {agent.kind === "team-assistant"
                     ? "What are we building?"
-                    : `Talk to ${agent.name}`}
+                    : `Talk to ${displayName}`}
                 </h1>
                 <p>
                   {agent.kind === "team-assistant"
@@ -416,15 +431,18 @@ export function Chat(p: PaneProps) {
                   <UnreadDivider n={unreadAtOpen} />
                 )}
                 <div className="message-label">
-                  <span
-                    className={
-                      "avatar small " +
-                      (m.role === "user" ? "user" : agent.environment)
-                    }
-                  >
-                    {m.role === "user" ? "Y" : agent.name[0]}
-                  </span>
-                  <b>{m.role === "user" ? "You" : agent.name}</b>
+                  {m.role === "user" ? (
+                    <span className="avatar small user">Y</span>
+                  ) : (
+                    <AgentAvatar
+                      name={agent.name}
+                      nickname={agent.nickname}
+                      avatar={agent.avatar}
+                      environment={agent.environment}
+                      className={`avatar small ${agent.environment}`}
+                    />
+                  )}
+                  <b>{m.role === "user" ? "You" : displayName}</b>
                   <time>
                     {new Date(m.createdAt).toLocaleTimeString([], {
                       hour: "2-digit",
@@ -476,7 +494,7 @@ export function Chat(p: PaneProps) {
               <LiveActivity
                 events={p.events}
                 sessionId={session.id}
-                name={agent.name}
+                name={displayName}
               />
             )}
             {failureMessage && (
@@ -493,7 +511,7 @@ export function Chat(p: PaneProps) {
           <div className="composer-wrap">
             {session?.state === "running" && (
               <RunProgress
-                name={agent.name}
+                name={displayName}
                 startedAt={
                   session.startedAt ?? new Date(fallbackStartedAt).toISOString()
                 }
@@ -510,7 +528,7 @@ export function Chat(p: PaneProps) {
             <div className="composer">
               <textarea
                 aria-label="Message"
-                placeholder={`Message ${agent.name}…`}
+                placeholder={`Message ${displayName}…`}
                 value={draft}
                 onChange={(e) => {
                   setDraft(e.target.value);
@@ -988,7 +1006,7 @@ export function Workflows(p: PaneProps) {
                 >
                   {p.data.agents.map((a) => (
                     <option key={a.id} value={a.id}>
-                      {a.name}
+                      {agentSelectorLabel(a)}
                     </option>
                   ))}
                 </select>
@@ -1004,7 +1022,7 @@ export function Workflows(p: PaneProps) {
                     .filter((a) => a.id !== taskAgent)
                     .map((a) => (
                       <option key={a.id} value={a.id}>
-                        {a.name}
+                        {agentSelectorLabel(a)}
                       </option>
                     ))}
                 </select>
@@ -1120,7 +1138,7 @@ export function Workflows(p: PaneProps) {
                   .filter((a) => a.id !== p.selected)
                   .map((a) => (
                     <option value={a.id} key={a.id}>
-                      {a.name}
+                      {agentSelectorLabel(a)}
                     </option>
                   ))}
               </select>
@@ -2003,7 +2021,7 @@ function AccessView({
     <div className="access-view">
       <div className="access-heading">
         <span className="eyebrow">EXPLICIT FILE ACCESS</span>
-        <h2>{agent.name}</h2>
+        <h2>{agentDisplayName(agent)}</h2>
         <p>
           These are the folders this agent can browse through AgentTeam. Each
           permission includes files and subfolders below that path.
@@ -2053,7 +2071,7 @@ function AccessView({
                   a.id !== agent.id &&
                   a.workspaces.some((x) => x.path === w.path),
               )
-              .map((a) => a.name)
+              .map((a) => agentDisplayName(a))
               .join(", ") || "No other agents"}
           </small>
         </div>

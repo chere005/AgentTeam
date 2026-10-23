@@ -18,6 +18,7 @@ import {
   type PipelineRecord,
 } from "../src/pipeline.ts";
 import type { Agent, Task } from "../src/model.ts";
+import { createDirectoryAlias } from "./fixtures/filesystem-links.ts";
 
 const installed = (): DetectedRuntime[] =>
   structuredClone(defaults).map((r) => ({ ...r, installed: true }));
@@ -611,7 +612,6 @@ test("an unadvertised Codex effort blocks verification and is never substituted"
 
 test("workspace and worker paths: .git, traversal and symlink escapes are refused; an existing resource is kept as configured", async (t) => {
   const w = await world(t);
-  const { symlink } = await import("node:fs/promises");
   const make = (over: Record<string, unknown>) =>
     code(
       createPipelineSample(w.service, {
@@ -642,13 +642,13 @@ test("workspace and worker paths: .git, traversal and symlink escapes are refuse
   // a symlink inside the workspace pointing outside it
   const outside = join(w.base, "outside");
   await mkdir(outside);
-  await symlink(outside, join(w.root, "link"));
+  await createDirectoryAlias(outside, join(w.root, "link"));
   assert.equal(
     await make({ paths: [join(w.root, "link"), join(w.root, "b")] }),
     "path_escape",
   );
   // a workspace reached through a symlink to a .git directory
-  await symlink(join(w.root, ".git"), join(w.base, "sneaky"));
+  await createDirectoryAlias(join(w.root, ".git"), join(w.base, "sneaky"));
   assert.equal(
     await make({ workspace: join(w.base, "sneaky") }),
     "git_dir_blocked",

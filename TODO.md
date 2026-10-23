@@ -1,6 +1,6 @@
 # AgentTeam feature backlog
 
-Updated October 18, 2026. This is the remaining work for the desktop application, including the approved additions from AutoGen Studio, Flowise, Happy, and Vibe Kanban. A feature is complete only when its interface, backend behavior, persistence, and relevant tests work together.
+Updated October 23, 2026. This is the remaining work for the desktop application, including the approved additions from AutoGen Studio, Flowise, Happy, and Vibe Kanban. A feature is complete only when its interface, backend behavior, persistence, and relevant tests work together.
 
 **Maintenance:** remove completed tasks after verification; keep this file focused on remaining work. Record completed behavior in release notes or implementation documentation.
 
@@ -59,7 +59,6 @@ Implemented and verified on macOS (`src/devserver*.ts`, `ui/components/DevServer
 
 Invocation-limit display, installation-validated model/effort choices and unavailable-model warnings are implemented and covered by `e2e/runtime-settings.spec.ts`.
 
-- [ ] Add user-assigned agent nicknames and custom avatars, persisted across reload and team template import/export. Show them consistently in chat, canvas and agent selectors, with initials fallback and the canonical name/ID retained for routing. Add backend validation/persistence and desktop editing/display coverage. Requested October 22; not yet implemented.
 
 ## 3 Provider installations and useful agent execution — P0
 
