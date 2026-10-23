@@ -281,7 +281,7 @@ test("log output is bounded", async (t) => {
     agentId: "a",
     workspace: tmpdir(),
     cwd: tmpdir(),
-    command: `"${process.execPath}" -e "for(let i=0;i<3000;i++)console.log('x'.repeat(100));process.exit(1)"`,
+    command: `"${process.execPath}" -e "for(let i=0;i<3000;i++)console.log('x'.repeat(100));process.exitCode=1"`,
     url: `http://127.0.0.1:${port}`,
     readyTimeoutMs: 5000,
   });

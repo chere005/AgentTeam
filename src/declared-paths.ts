@@ -44,6 +44,7 @@ export function canonicalDeclaredPaths(
     const real = canonicalize(p);
     assertPath?.(real);
     const ws = agent.workspaces
+      .map((w) => ({ ...w, path: canonicalize(w.path) }))
       .filter((w) => contains(w.path, real))
       .sort((a, b) => b.path.length - a.path.length)[0];
     if (!ws)

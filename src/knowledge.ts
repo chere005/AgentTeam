@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, realpathSync } from "node:fs";
 import { lstat, open, readdir, realpath, stat } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { decide, traversable } from "./access.ts";
 import { AppError, assert, type Agent } from "./model.ts";
@@ -111,22 +111,44 @@ const patchSchema = z
     include: z.boolean().optional(),
   })
   .strict();
+function comparablePath(path: string) {
+  if (process.platform !== "win32") return resolve(path);
+  let existing = resolve(path);
+  const rest: string[] = [];
+  for (;;) {
+    try {
+      return join(realpathSync(existing), ...rest.reverse());
+    } catch {
+      const parent = dirname(existing);
+      if (parent === existing) return resolve(path);
+      rest.push(existing.slice(parent.length).replace(/^[\\/]+/, ""));
+      existing = parent;
+    }
+  }
+}
 const inside = (root: string, path: string) => {
-  const rel = relative(root, path);
+  const rel = relative(comparablePath(root), comparablePath(path));
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 };
-const samePath = (a: string, b: string) => {
-  const key = (value: string) => {
-    if (process.platform === "win32")
-      return value
-        .replace(/^\\\\\?\\/, "")
-        .replaceAll("/", "\\")
-        .replace(/\\+$/, "")
-        .toLowerCase();
-    return resolve(value);
-  };
-  return key(a) === key(b);
-};
+async function samePath(a: string, b: string) {
+  if (process.platform !== "win32") return resolve(a) === resolve(b);
+  const key = (value: string) =>
+    value
+      .replace(/^\\\\\?\\/, "")
+      .replaceAll("/", "\\")
+      .replace(/\\+$/, "")
+      .toLowerCase();
+  try {
+    const [left, right, original] = await Promise.all([
+      realpath(a),
+      realpath(b),
+      lstat(b),
+    ]);
+    return !original.isSymbolicLink() && key(left) === key(right);
+  } catch {
+    return false;
+  }
+}
 /**
  * Whether one of `agent`'s attachments containing `abs` (canonical) grants it under the attachment's
  * file rules and exclusions (src/access.ts). Directories also count when they only lead to an
@@ -201,7 +223,7 @@ export class KnowledgeBase {
     } catch {
       return { ok: false as const, reason: "Folder no longer exists" };
     }
-    if (folder !== source.folder)
+    if (!(await samePath(folder, source.folder)))
       return {
         ok: false as const,
         reason: "Folder path changed (symlink or move)",

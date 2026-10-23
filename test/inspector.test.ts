@@ -2,7 +2,14 @@
 import { tempDataDir } from "./fixtures/temp-data-dir.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile, readdir } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  realpath,
+  rm,
+  writeFile,
+  readdir,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inflateRawSync } from "node:zlib";
@@ -340,6 +347,7 @@ test("waiting explainer: workflow limit trips, invocation capacity, lease owner 
     const root = await t.dir(),
       sub = join(root, "pkg");
     await mkdir(sub);
+    const canonicalSub = await realpath(sub);
     const owner = await t.agent("Owner", {
       workspaces: [{ path: root, access: "write", active: true }],
     });
@@ -356,7 +364,7 @@ test("waiting explainer: workflow limit trips, invocation capacity, lease owner 
     const normalizePath = (path: string) =>
       path.replaceAll("\\", "/").toLowerCase();
     assert.ok(
-      normalizePath(r.detail).includes(normalizePath(sub)),
+      normalizePath(r.detail).includes(normalizePath(canonicalSub)),
       "names the overlapping path",
     );
     assert.equal((r.refs as any).leases[0].agentId, owner.id);
