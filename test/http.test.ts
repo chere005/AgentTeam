@@ -84,7 +84,7 @@ test("HTTP agent → session → message flow persists independently", async (t)
     403,
   );
   const catalog = (await (await request("/skills")).json()) as any;
-  assert.equal(catalog.recommended.skills.length, 31);
+  assert.equal(catalog.recommended.skills.length, 37);
   assert.equal(catalog.installed.total, 0);
 });
 test("SSE replays durable events with monotonically increasing IDs", async (t) => {

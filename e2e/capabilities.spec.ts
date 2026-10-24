@@ -83,7 +83,7 @@ test("skills, tools and knowledge: validation, adapters, change acceptance, MCP 
       "no errors",
     );
     await expect(page.getByTestId("validation-report")).toContainText(
-      "28 bundled skills",
+      "34 bundled skills",
     );
     const row = page
       .getByTestId("skill-change-row")

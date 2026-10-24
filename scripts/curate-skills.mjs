@@ -25,6 +25,7 @@ const selections = {
     "fastapi-expert",
     "django-expert",
     "nextjs-developer",
+    "react-expert",
     "vue-expert",
     "spring-boot-engineer",
   ],
@@ -33,6 +34,7 @@ const selections = {
     "test-master",
     "code-reviewer",
     "security-reviewer",
+    "code-documenter",
   ],
   Infrastructure: [
     "devops-engineer",
@@ -59,13 +61,14 @@ async function add(
   license,
   licenseFile,
   publisher,
+  sourcePath = "skills/" + skill,
 ) {
   const cache = join(root, ".agentteam/vendor-sources", source),
     commit = execFileSync("git", ["rev-parse", "HEAD"], {
       cwd: cache,
       encoding: "utf8",
     }).trim();
-  const from = join(cache, "skills", skill),
+  const from = join(cache, sourcePath),
     destination = join(root, "assets/skills", source + "--" + skill);
   await files(from);
   const raw = await readFile(join(from, "SKILL.md"), "utf8"),
@@ -97,7 +100,7 @@ async function add(
     category,
     publisher,
     source: "https://github.com/" + repo,
-    sourcePath: "skills/" + skill,
+    sourcePath,
     commit,
     license,
     licenseFile: "UPSTREAM-LICENSE.txt",
@@ -139,6 +142,83 @@ await add(
   "skills/frontend-design/LICENSE.txt",
   "Anthropic · First party",
 );
+await add(
+  "anthropic",
+  "anthropics/skills",
+  "webapp-testing",
+  "Quality",
+  "Apache-2.0",
+  "skills/webapp-testing/LICENSE.txt",
+  "Anthropic · First party",
+);
+await add(
+  "nextlevelbuilder",
+  "nextlevelbuilder/ui-ux-pro-max-skill",
+  "ui-ux-pro-max",
+  "Design",
+  "MIT",
+  "LICENSE",
+  "Next Level Builder · Community",
+  ".claude/skills/ui-ux-pro-max",
+);
+await add(
+  "wshobson",
+  "wshobson/agents",
+  "bash-defensive-patterns",
+  "Languages",
+  "MIT",
+  "LICENSE",
+  "Seth Hobson · Community",
+  "plugins/shell-scripting/skills/bash-defensive-patterns",
+);
+// First-party: AgentTeam's own Electron skill (no well-rated public one exists). Its maintained
+// copy lives in the sibling AgentSuite checkout; it ships under AgentTeam's MIT license.
+{
+  const from = join(root, "../AgentSuite/skills/electron-desktop"),
+    destination = join(root, "assets/skills/agentteam--electron-desktop");
+  await files(from);
+  const raw = await readFile(join(from, "SKILL.md"), "utf8"),
+    meta = parse(raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)[1]);
+  await cp(from, destination, { recursive: true });
+  await cp(join(root, "LICENSE"), join(destination, "UPSTREAM-LICENSE.txt"));
+  await writeFile(
+    join(destination, "agentteam.json"),
+    JSON.stringify(
+      {
+        catalogId: "agentteam--electron-desktop",
+        environments: ["codex", "claude"],
+        requiresTools: [],
+        compatibilityEvidence: "format-only",
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+  catalog.push({
+    id: "curated:agentteam--electron-desktop",
+    name: meta.name,
+    title: "Electron Desktop",
+    description: meta.description,
+    category: "Frameworks",
+    publisher: "AgentTeam · First party",
+    source: "https://github.com/chere005/AgentTeam",
+    sourcePath: "assets/skills/agentteam--electron-desktop",
+    // The AgentTeam revision the skill was curated at (the audit requires a full revision).
+    commit: execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: root,
+      encoding: "utf8",
+    }).trim(),
+    license: "MIT",
+    licenseFile: "UPSTREAM-LICENSE.txt",
+    bundled: true,
+    environmentSupport: {
+      codex: "format-compatible; execution not validated",
+      claude: "native skill format; execution not validated",
+      wolfram: "not validated",
+    },
+    skillSha256: createHash("sha256").update(raw).digest("hex"),
+  });
+}
 const vercel = join(root, ".agentteam/vendor-sources/vercel"),
   commit = execFileSync("git", ["rev-parse", "HEAD"], {
     cwd: vercel,
@@ -179,7 +259,7 @@ await writeFile(
   join(root, "assets/recommended-skills.json"),
   JSON.stringify(
     {
-      curatedOn: "2026-10-18",
+      curatedOn: "2026-10-23",
       selectionPolicy:
         "First-party guidance where available; focused, established community language specialists. This is an editorial starter set, not an objective ranking. Bundled content is pinned and not executed during curation.",
       skills: catalog,

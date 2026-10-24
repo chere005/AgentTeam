@@ -1,0 +1,9 @@
+{
+  "catalogId": "jeffallan--react-expert",
+  "environments": [
+    "codex",
+    "claude"
+  ],
+  "requiresTools": [],
+  "compatibilityEvidence": "format-only"
+}

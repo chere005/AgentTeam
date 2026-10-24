@@ -7,6 +7,8 @@ import { openFeature } from "./helpers";
 
 // Fixtures only: a local bare "origin" in a temp directory. Nothing touches a real remote, the
 // network, a browser, or the user's AgentTeam data directory.
+// Fetch/pull/push spawn Git against a local bare remote; a busy hosted runner has taken over 5 s.
+const GIT_NETWORK = 20_000;
 test("git workflow: fetch/pull/push feedback, branch safety, conflicts, PR link, previews, live refresh", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentteam-gitwf-"));
   const env = {
@@ -65,11 +67,14 @@ test("git workflow: fetch/pull/push feedback, branch safety, conflicts, PR link,
 
     // Fetch reports what happened; pull is fast-forward only.
     await panel.getByRole("button", { name: "Fetch" }).click();
-    await expect(panel.getByRole("status").first()).toContainText("Fetched");
+    await expect(panel.getByRole("status").first()).toContainText("Fetched", {
+      timeout: GIT_NETWORK,
+    });
     await expect(panel).toContainText("behind 1");
     await panel.getByRole("button", { name: "Pull (fast-forward)" }).click();
     await expect(panel.getByRole("status").first()).toContainText(
       "Updated main",
+      { timeout: GIT_NETWORK },
     );
     await expect(panel).toContainText("behind 0");
 
@@ -139,12 +144,18 @@ test("git workflow: fetch/pull/push feedback, branch safety, conflicts, PR link,
       "file://" + join(directory, "missing.git"),
     );
     await panel.getByRole("button", { name: "Push and set upstream" }).click();
-    await expect(panel.getByRole("alert").first()).toContainText("Push failed");
+    await expect(panel.getByRole("alert").first()).toContainText(
+      "Push failed",
+      {
+        timeout: GIT_NETWORK,
+      },
+    );
     git(project, "remote", "set-url", "origin", bare);
     git(project, "checkout", "--", "a.txt");
     await panel.getByRole("button", { name: "Push and set upstream" }).click();
     await expect(panel.getByRole("status").first()).toContainText(
       "Pushed topic",
+      { timeout: GIT_NETWORK },
     );
 
     // A branch tracking a differently named remote branch: the target is shown and pushing there

@@ -1,0 +1,9 @@
+{
+  "catalogId": "nextlevelbuilder--ui-ux-pro-max",
+  "environments": [
+    "codex",
+    "claude"
+  ],
+  "requiresTools": [],
+  "compatibilityEvidence": "format-only"
+}
