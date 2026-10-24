@@ -29,8 +29,12 @@ export async function openSetup(page: Page, agentName: string) {
     .first();
   await card.click();
   const panel = page.getByTestId("agent-panel");
-  if (!(await panel.isVisible()))
-    await page.getByRole("button", { name: `Set up ${agentName}` }).click();
+  if (!(await panel.isVisible())) {
+    await page
+      .getByRole("complementary", { name: "Side panel" })
+      .getByRole("tab", { name: "Agent setup" })
+      .click();
+  }
   await expect(panel.getByTestId("agent-panel-name")).toHaveText(agentName);
   return panel;
 }

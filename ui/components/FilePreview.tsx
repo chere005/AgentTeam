@@ -3,6 +3,7 @@ import { ExternalLink } from "lucide-react";
 import { api } from "../api";
 import { Markdown } from "./Markdown";
 import { TextEditor } from "./TextEditor";
+import { CodePreview } from "./CodeEditor";
 import type { RichPreview } from "../../src/previews";
 
 /** Typed, bounded file preview. Text is shown in <pre>, Markdown through the safe renderer, tables as cells. */
@@ -12,12 +13,18 @@ export function FilePreview({
   path,
   access,
   refreshKey = 0,
+  active = true,
+  onDirtyChange,
+  guardLeave = true,
 }: {
   agentId: string;
   workspace: string;
   path: string;
   access: string;
   refreshKey?: number;
+  active?: boolean;
+  onDirtyChange?: (dirty: boolean) => void;
+  guardLeave?: boolean;
 }) {
   const [view, setView] = useState<RichPreview | null>(null),
     [error, setError] = useState(""),
@@ -35,38 +42,21 @@ export function FilePreview({
   }, [agentId, workspace, path, refreshKey]);
   return (
     <section className="file-preview" aria-label="File preview">
-      <div className="row between">
+      <header className="file-preview-header">
         <b>{view?.name ?? path}</b>
-        <OpenWith agentId={agentId} workspace={workspace} path={path} />
-      </div>
-      <div className="access-banner">
-        <b>{access === "write" ? "READ & WRITE" : "READ ONLY"}</b>
-        <code>
-          {workspace}/{path}
-        </code>
-        <small>
-          {access === "write"
-            ? "Folder allows edits; file rules are checked again when saving"
-            : "Read-only folder"}
-        </small>
-      </div>
+        {view && <span>{view.kind.toUpperCase()}</span>}
+      </header>
       {error && <p role="alert">{error}</p>}
       {view && (
         <>
-          <small>
-            {view.size} bytes · {view.kind}
-            {view.truncated ? " · truncated" : ""}
-          </small>
-          {view.note && (
-            <p className="hint" role="status">
-              {view.note}
-            </p>
-          )}
           {editing ? (
             <TextEditor
               agentId={agentId}
               workspace={workspace}
               path={path}
+              active={active}
+              guardLeave={guardLeave}
+              onDirtyChange={onDirtyChange}
               onCancel={() => setEditing(false)}
               onSaved={(content, bytes) =>
                 setView((previous) =>
@@ -77,16 +67,12 @@ export function FilePreview({
               }
             />
           ) : (
-            <>
-              {!view.truncated &&
-                ["markdown", "text", "json"].includes(view.kind) && (
-                  <button
-                    className="file-edit-button"
-                    onClick={() => setEditing(true)}
-                  >
-                    Edit file
-                  </button>
-                )}
+            <div className="file-preview-content">
+              {view.note && (
+                <p className="hint" role="status">
+                  {view.note}
+                </p>
+              )}
               {view.kind === "image" && view.image && (
                 <img
                   className="preview-image"
@@ -96,28 +82,42 @@ export function FilePreview({
               )}
               {view.kind === "markdown" && view.content !== undefined && (
                 <>
-                  <label className="check">
-                    <input
-                      type="checkbox"
-                      checked={raw}
-                      onChange={(e) => setRaw(e.target.checked)}
-                    />
-                    Show source
-                  </label>
+                  <div
+                    className="markdown-view-toggle"
+                    role="group"
+                    aria-label="Markdown view"
+                  >
+                    <button
+                      type="button"
+                      aria-pressed={!raw}
+                      onClick={() => setRaw(false)}
+                    >
+                      Preview
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={raw}
+                      onClick={() => setRaw(true)}
+                    >
+                      Source
+                    </button>
+                  </div>
                   {raw ? (
-                    <pre>{view.content}</pre>
+                    <CodePreview value={view.content} path={path} />
                   ) : (
                     <Markdown text={view.content} />
                   )}
                 </>
               )}
-              {view.kind === "text" && <pre>{view.content}</pre>}
+              {view.kind === "text" && (
+                <CodePreview value={view.content ?? ""} path={path} />
+              )}
               {view.kind === "json" && view.json && (
                 <>
                   {!view.json.valid && view.json.error && (
                     <p role="alert">Invalid JSON: {view.json.error}</p>
                   )}
-                  <pre>{view.json.formatted}</pre>
+                  <CodePreview value={view.json.formatted} path={path} />
                 </>
               )}
               {view.kind === "csv" && view.table && (
@@ -155,7 +155,42 @@ export function FilePreview({
                   </button>
                 </p>
               )}
-            </>
+            </div>
+          )}
+          <footer className="file-preview-footer">
+            <div className="file-preview-details">
+              <span className={`file-access-pill ${access}`}>
+                {access === "write"
+                  ? "Agent: write"
+                  : "Agent: read only · you can edit"}
+              </span>
+              <small>
+                {view.size.toLocaleString()} bytes · {view.kind}
+                {view.truncated ? " · truncated" : ""}
+              </small>
+              <details>
+                <summary>Path</summary>
+                <code>{workspace ? `${workspace}/${path}` : path}</code>
+              </details>
+            </div>
+            <div className="file-preview-actions">
+              {!editing &&
+                !view.truncated &&
+                ["markdown", "text", "json"].includes(view.kind) && (
+                  <button
+                    className="file-edit-button"
+                    onClick={() => setEditing(true)}
+                  >
+                    Edit file
+                  </button>
+                )}
+              <OpenWith agentId={agentId} workspace={workspace} path={path} />
+            </div>
+          </footer>
+          {view.note && editing && (
+            <p className="hint file-preview-note" role="status">
+              {view.note}
+            </p>
           )}
         </>
       )}

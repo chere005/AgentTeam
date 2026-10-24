@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   fitStep,
   fitViewport,
@@ -83,6 +84,55 @@ test("theme: System follows the OS, Light/Dark override it, junk falls back to S
   assert.equal(sanitizeTheme("dark"), "dark");
   assert.equal(sanitizeTheme("purple"), "system");
   assert.equal(sanitizeTheme(null), "system");
+});
+
+test("Burgundy Rose and Sand Ink theme tokens keep readable text and actions", () => {
+  const darkCss = readFileSync(
+    new URL("../ui/style.css", import.meta.url),
+    "utf8",
+  );
+  const lightCss = readFileSync(
+    new URL("../ui/theme-light.css", import.meta.url),
+    "utf8",
+  );
+  const token = (css: string, name: string) => {
+    const value = css.match(new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{6})`))?.[1];
+    assert.ok(value, `missing --${name}`);
+    return value;
+  };
+  for (const [name, css] of [
+    ["Burgundy Rose", darkCss],
+    ["Sand Ink", lightCss],
+  ] as const) {
+    const page = token(css, "bg");
+    const surfaces = [
+      page,
+      token(css, "panel"),
+      token(css, "surface-1"),
+      token(css, "surface-2"),
+      token(css, "selected"),
+    ];
+    const text = token(css, "text");
+    const muted = token(css, "muted");
+    for (const surface of surfaces) {
+      assert.ok(
+        contrast(text, surface) >= 4.5,
+        `${name}: text ${text} on ${surface}`,
+      );
+      assert.ok(
+        contrast(muted, surface) >= 4.5,
+        `${name}: muted ${muted} on ${surface}`,
+      );
+    }
+    assert.ok(
+      contrast(token(css, "accent"), page) >= 4.5,
+      `${name}: accent on page`,
+    );
+    assert.ok(
+      contrast(token(css, "accent-contrast"), token(css, "accent")) >= 4.5,
+      `${name}: primary button label`,
+    );
+  }
 });
 
 /** WCAG relative luminance contrast ratio. */

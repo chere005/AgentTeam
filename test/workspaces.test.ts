@@ -56,7 +56,7 @@ test("file previews are bounded; binary files are identified", async (t) => {
     3,
   );
 });
-test("in-app text editing checks folder access and refuses stale saves", async (t) => {
+test("owner can edit agent-read-only files while stale saves are refused", async (t) => {
   const { root, team, agent, ws } = await fixture(t);
   const path = join(root, "readme.md");
   await writeFile(path, "# Original\n");
@@ -96,17 +96,27 @@ test("in-app text editing checks folder access and refuses stale saves", async (
     path: "readme.md",
   });
   assert.equal(readOnly.access, "read");
+  const ownerSave = await ws.saveText(reader.id, {
+    workspace: root,
+    path: "readme.md",
+    content: "Owner can edit this file\n",
+    expectedHash: readOnly.hash,
+  });
+  assert.equal(
+    (await ws.readText(reader.id, { workspace: root, path: "readme.md" }))
+      .content,
+    "Owner can edit this file\n",
+  );
   await assert.rejects(
-    ws.saveText(reader.id, {
-      workspace: root,
-      path: "readme.md",
-      content: "no write",
-      expectedHash: readOnly.hash,
-    }),
+    ws.location(reader.id, { workspace: root, path: "readme.md" }, true),
     /read.only/i,
   );
+  assert.equal(
+    ownerSave.bytes,
+    Buffer.byteLength("Owner can edit this file\n"),
+  );
 });
-test("new text files can be created only in writable workspace paths", async (t) => {
+test("owner can create files in agent-read-only workspaces without changing agent access", async (t) => {
   const { root, team, agent, ws } = await fixture(t);
   await mkdir(join(root, "src"));
   const created = await ws.createText(agent.id, {
@@ -141,13 +151,82 @@ test("new text files can be created only in writable workspace paths", async (t)
     environment: "codex",
     workspaces: [{ path: root, access: "read" }],
   });
+  const ownerCreated = await ws.createText(reader.id, {
+    workspace: root,
+    path: "nope.txt",
+    content: "owner-created",
+  });
+  assert.equal(ownerCreated.path, "nope.txt");
+  assert.equal(
+    (await ws.readText(reader.id, { workspace: root, path: "nope.txt" }))
+      .content,
+    "owner-created",
+  );
   await assert.rejects(
-    ws.createText(reader.id, {
-      workspace: root,
-      path: "nope.txt",
-      content: "no",
-    }),
+    ws.location(reader.id, { workspace: root, path: "." }, true),
     /read.only/i,
+  );
+});
+test("file activity reports active and queued work overlapping a file", async (t) => {
+  const { root, store, team, agent, ws } = await fixture(t);
+  const src = join(root, "src"),
+    file = join(src, "main.cpp");
+  await mkdir(src);
+  await writeFile(file, "int main() {}\n");
+  const activeTask = {
+    id: "active-task",
+    workflowId: "workflow",
+    agentId: agent.id,
+    title: "Build the C++ example",
+    instructions: "",
+    completionCriteria: "",
+    dependsOn: [],
+    status: "running",
+    resourcePaths: [src],
+  };
+  store.put("task", activeTask);
+  store.put("lease", {
+    id: activeTask.id,
+    agentId: agent.id,
+    workflowId: activeTask.workflowId,
+    paths: [src],
+    acquiredAt: new Date().toISOString(),
+  });
+  const queuedAgent = await team.saveAgent({
+    name: "Queued reviewer",
+    environment: "codex",
+    workspaces: [{ path: root, access: "write", active: true }],
+  });
+  store.put("task", {
+    ...activeTask,
+    id: "queued-task",
+    agentId: queuedAgent.id,
+    title: "Review the C++ example",
+    status: "queued",
+    resourcePaths: [file],
+  });
+  const result = await ws.fileActivity(agent.id, {
+    workspace: root,
+    path: "src/main.cpp",
+  });
+  assert.deepEqual(
+    result.activities.map(({ agentName, state, title }) => ({
+      agentName,
+      state,
+      title,
+    })),
+    [
+      {
+        agentName: agent.name,
+        state: "active",
+        title: activeTask.title,
+      },
+      {
+        agentName: queuedAgent.name,
+        state: "queued",
+        title: "Review the C++ example",
+      },
+    ],
   );
 });
 test("paths cannot escape through traversal, symlinks or Git internals", async (t) => {

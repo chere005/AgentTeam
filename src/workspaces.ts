@@ -16,7 +16,7 @@ import { attachedRepoGitConfig, SAFE_GIT_CONFIG } from "./git-config.ts";
 import { filesystemPolicy } from "./filesystem-policy.ts";
 import { applyStaging } from "./git-stage.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { ResourceCoordinator } from "./resources.ts";
+import { ResourceCoordinator, overlaps, type Lease } from "./resources.ts";
 import {
   decideBoth,
   filterDiff,
@@ -28,7 +28,7 @@ import {
 } from "./access.ts";
 import { withRepoLockFor } from "./repo-lock.ts";
 import { Store } from "./store.ts";
-import { AppError, assert, type Agent } from "./model.ts";
+import { AppError, assert, type Agent, type Task } from "./model.ts";
 import {
   DIFF_MAX_BYTES,
   type DiffMeta,
@@ -42,6 +42,7 @@ import {
   resetWorkspaceBaseline,
   workspaceChanges,
 } from "./workspace-changes.ts";
+import { loadSublimeEditorConfig } from "./sublime-config.ts";
 const exec = promisify(execFile);
 export const TEXT_EDITOR_MAX_BYTES = 256_000;
 const FILE_SEARCH_MAX_RESULTS = 300;
@@ -374,13 +375,16 @@ export class WorkspaceService {
       await handle.close();
     }
   }
-  /** Save only if the source is still the version the editor loaded; access is checked again. */
+  /**
+   * Save a human editor change. Agent folder grants do not restrict the owner; workspace roots,
+   * global filesystem denials, path safety, and the loaded-content hash are still enforced.
+   */
   async saveText(agentId: string, input: unknown) {
     const data = saveTextSchema.parse(input);
     const loc = await this.location(
       agentId,
       { workspace: data.workspace, path: data.path },
-      true,
+      false,
     );
     const bytes = Buffer.from(data.content, "utf8");
     assert(
@@ -438,21 +442,22 @@ export class WorkspaceService {
       await handle.close();
     }
   }
-  /** Create a new text file in an existing writable workspace directory. */
+  /** Create a new text file as the owner inside an attached workspace directory. */
   async createText(agentId: string, input: unknown) {
     const data = createTextSchema.parse(input);
-    const name = basename(data.path);
+    const requestedPath = data.path.split("\\").join("/");
+    const name = basename(requestedPath);
     assert(
       name !== "." && name !== ".." && !name.includes("\0") && name !== ".git",
       "invalid_path",
       "Choose a file name inside the workspace",
       400,
     );
-    const parentPath = dirname(data.path).split("\\").join("/") || ".";
+    const parentPath = dirname(requestedPath) || ".";
     const parent = await this.location(
       agentId,
       { workspace: data.workspace, path: parentPath },
-      true,
+      false,
     );
     assert(
       (await stat(parent.target)).isDirectory(),
@@ -462,17 +467,7 @@ export class WorkspaceService {
     );
     const target = resolve(parent.target, name);
     const relativePath = relative(parent.root, target).split("\\").join("/");
-    const agent = this.store.get<Agent>("agent", agentId);
-    const workspace = agent.workspaces.find(
-      (item) => item.path === parent.root,
-    )!;
-    const decision = decideBoth(workspace, lexicalRel(data.path), relativePath);
-    assert(
-      decision.access === "write",
-      decision.access === "none" ? "access_denied" : "read_only",
-      decision.reason,
-      403,
-    );
+    filesystemPolicy(this.store).assertPath(target);
     const bytes = Buffer.from(data.content, "utf8");
     assert(
       bytes.length <= TEXT_EDITOR_MAX_BYTES,
@@ -507,6 +502,129 @@ export class WorkspaceService {
     } finally {
       await handle.close();
     }
+  }
+  /**
+   * Report AgentTeam work that currently reserves or is queued for this file. Paths on queued
+   * work are conservative: tasks without declared paths are assumed to use the agent's folders.
+   */
+  async fileActivity(agentId: string, input: unknown) {
+    const data = textFileSchema
+      .extend({ create: z.boolean().optional() })
+      .strict()
+      .parse(input);
+    let target: string;
+    if (data.create) {
+      const requestedPath = data.path.split("\\").join("/");
+      const name = basename(requestedPath);
+      assert(
+        name !== "." &&
+          name !== ".." &&
+          !name.includes("\0") &&
+          name !== ".git",
+        "invalid_path",
+        "Choose a file name inside the workspace",
+        400,
+      );
+      const parentPath = dirname(requestedPath) || ".";
+      const parent = await this.location(agentId, {
+        workspace: data.workspace,
+        path: parentPath,
+      });
+      assert(
+        (await stat(parent.target)).isDirectory(),
+        "not_directory",
+        "The file's folder does not exist",
+        400,
+      );
+      target = resolve(parent.target, name);
+      filesystemPolicy(this.store).assertPath(target);
+      const rel = relative(parent.root, target);
+      assert(
+        !/^\.\.[\\/]/.test(rel) && rel !== ".." && !isAbsolute(rel),
+        "path_escape",
+        "Path escapes the attached workspace",
+        403,
+      );
+      assert(
+        !rel.split(/[\\/]/).includes(".git"),
+        "git_internal",
+        "Direct access to Git internals is not supported",
+        403,
+      );
+    } else {
+      target = (
+        await this.location(agentId, {
+          workspace: data.workspace,
+          path: data.path,
+        })
+      ).target;
+    }
+
+    const agents = new Map(
+      this.store.list<Agent>("agent").map((a) => [a.id, a]),
+    );
+    const tasks = this.store.list<Task>("task");
+    const seen = new Set<string>();
+    const activities: {
+      agentId: string;
+      agentName: string;
+      state: "active" | "queued";
+      title: string;
+    }[] = [];
+    const add = (
+      id: string,
+      ownerId: string,
+      state: "active" | "queued",
+      title: string,
+    ) => {
+      const agent = agents.get(ownerId);
+      if (!agent) return;
+      const key = `${id}:${state}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      activities.push({
+        agentId: ownerId,
+        agentName: agent.name,
+        state,
+        title,
+      });
+    };
+    const taskPaths = (task: Task) =>
+      task.resourcePaths?.length
+        ? task.resourcePaths
+        : (agents.get(task.agentId)?.workspaces.map((w) => w.path) ?? []);
+    const overlapsTarget = (paths: string[]) =>
+      paths.some((path) => overlaps(path, target));
+
+    for (const lease of this.store.list<Lease>("lease")) {
+      if (!overlapsTarget(lease.paths)) continue;
+      const task = tasks.find((item) => item.id === lease.id);
+      add(
+        lease.id,
+        lease.agentId,
+        "active",
+        task?.title ?? "Agent chat or file operation",
+      );
+    }
+    for (const task of tasks) {
+      if (task.status === "running" && overlapsTarget(taskPaths(task)))
+        add(task.id, task.agentId, "active", task.title);
+      if (task.status === "queued" && overlapsTarget(taskPaths(task)))
+        add(task.id, task.agentId, "queued", task.title);
+    }
+    for (const request of this.store.list<{ id: string; agentId: string }>(
+      "run-request",
+    )) {
+      const owner = agents.get(request.agentId);
+      if (owner && overlapsTarget(owner.workspaces.map((w) => w.path)))
+        add(request.id, request.agentId, "queued", "Queued chat");
+    }
+    activities.sort(
+      (a, b) =>
+        a.state.localeCompare(b.state) ||
+        a.agentName.localeCompare(b.agentName),
+    );
+    return { path: data.path, activities: activities.slice(0, 20) };
   }
   private async git(root: string, args: string[]) {
     filesystemPolicy(this.store).assertConfinedExecution();
@@ -1089,6 +1207,16 @@ export class WorkspaceService {
     } catch {
       return { id: "user", defaultEditor: "sublime" as const };
     }
+  }
+  async sublimeEditorConfig(agentId: string, input: unknown) {
+    const data = z.object({ workspace: z.string() }).strict().parse(input);
+    const loc = await this.location(
+      agentId,
+      { workspace: data.workspace, path: "." },
+      false,
+      { traverse: true },
+    );
+    return loadSublimeEditorConfig(loc.root);
   }
   setEditor(input: unknown) {
     const data = z

@@ -34,12 +34,12 @@
   width: 220px;
   padding: 14px;
   border-radius: 12px;
-  border: 2px dashed #5b7690;
-  background: #1a2531;
+  border: 2px dashed var(--line-strong);
+  background: var(--surface-1);
   font-size: 12px;
 }
 .group-card.chosen {
-  border-color: #8cddc2;
+  border-color: var(--accent);
 }
 .group-card.busy {
   border-color: #77d5ba;

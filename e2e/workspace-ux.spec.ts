@@ -143,7 +143,27 @@ test("main view shortcuts keep the current project and Files can edit a text fil
     const { page, errors } = await start();
     const root = join(directory, "pi-demo");
     await mkdir(root);
+    await writeFile(
+      join(root, "pi-demo.sublime-project"),
+      JSON.stringify({
+        folders: [{ path: "." }],
+        settings: {
+          font_size: 17,
+          tab_size: 4,
+          translate_tabs_to_spaces: false,
+          word_wrap: true,
+          rulers: [80],
+        },
+      }),
+    );
     await writeFile(join(root, "README.md"), "# Pi demo\n");
+    await writeFile(join(root, "main.ts"), "const answer: number = 42;\n");
+    await writeFile(join(root, "main.c"), "int main(void) { return 42; }\n");
+    await writeFile(join(root, "module.sv"), "module demo; endmodule\n");
+    await writeFile(join(root, "example.wl"), "Total[Range[3]]\n");
+    await writeFile(join(root, "CMakeLists.txt"), "project(Demo)\n");
+    await writeFile(join(root, "config.xml"), '<root enabled="true" />\n');
+    await writeFile(join(root, "settings.json"), '{"answer": 42}\n');
     const agent = await api(page, "POST", "/agents", {
       name: "Pi builder",
       environment: "codex",
@@ -185,14 +205,84 @@ test("main view shortcuts keep the current project and Files can edit a text fil
     await tab(page, "Diff").click();
     await expect(page.getByText("no Git required")).toBeVisible();
     await tab(page, "Files").click();
-    const files = page.getByRole("complementary", { name: "Project files" });
-    await files.getByRole("button", { name: "README.md" }).click();
+    const files = page.getByRole("complementary", {
+      name: "Agent folders and files",
+    });
+    const codePreview = page.locator(
+      ".workspace-open-file-panel:not([hidden]) .file-code-preview .cm-editor",
+    );
+    for (const name of [
+      "main.ts",
+      "main.c",
+      "module.sv",
+      "example.wl",
+      "CMakeLists.txt",
+      "config.xml",
+      "settings.json",
+    ]) {
+      await files.getByRole("treeitem", { name, exact: true }).click();
+      await expect(codePreview, name).toBeVisible();
+      await expect(codePreview.locator(".cm-content")).toHaveAttribute(
+        "contenteditable",
+        "false",
+      );
+      await expect(
+        codePreview.locator(".cm-line span").first(),
+        name,
+      ).toBeVisible();
+    }
+    const keyword = codePreview
+      .locator(".cm-line span")
+      .filter({ hasText: "answer" })
+      .first();
+    await expect(keyword).toBeVisible();
+    const keywordColor = await keyword.evaluate(
+      (el) => getComputedStyle(el).color,
+    );
+    const sourceColor = await codePreview
+      .locator(".cm-line")
+      .first()
+      .evaluate((el) => getComputedStyle(el).color);
+    expect(keywordColor).not.toBe(sourceColor);
+    await files
+      .getByRole("treeitem", { name: "README.md", exact: true })
+      .click();
+    const markdownToggle = page.getByRole("group", { name: "Markdown view" });
+    await expect(
+      markdownToggle.getByRole("button", { name: "Preview" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await markdownToggle.getByRole("button", { name: "Source" }).click();
+    await expect(codePreview).toBeVisible();
+    await markdownToggle.getByRole("button", { name: "Preview" }).click();
+    await expect(page.getByRole("heading", { name: "Pi demo" })).toBeVisible();
     await page.getByRole("button", { name: "Edit file" }).click();
     const editor = page.getByRole("textbox", { name: "File contents" });
+    const textEditor = page.locator(".text-editor-surface");
     await expect(editor).toHaveText("# Pi demo");
+    await expect(textEditor.locator(".cm-scroller")).toHaveCSS(
+      "font-size",
+      "17px",
+    );
+    await expect(textEditor.locator(".cm-content")).toHaveClass(
+      /cm-lineWrapping/,
+    );
+    await expect(page.locator(".text-editor-footer")).toContainText("Tabs: 4");
+    const ruler = await textEditor
+      .locator(".cm-content")
+      .evaluate((el) => getComputedStyle(el).backgroundImage);
+    expect(ruler).toContain("linear-gradient");
+    await editor.click();
+    await editor.press("Home");
+    await editor.press("Tab");
+    await expect(editor).toHaveText("\t# Pi demo");
     await editor.fill("# Pi demo\n\nEdited in AgentTeam.\n");
+    page.once("dialog", (dialog) => void dialog.accept());
     await page.getByRole("button", { name: /Save/ }).click();
-    await expect(page.getByText(/Saved /)).toBeVisible();
+    await expect(
+      page
+        .locator(".workspace-open-file-panel:not([hidden])")
+        .getByText(/Saved /),
+    ).toBeVisible();
     expect(await readFile(join(root, "README.md"), "utf8")).toBe(
       "# Pi demo\n\nEdited in AgentTeam.\n",
     );
@@ -203,13 +293,38 @@ test("main view shortcuts keep the current project and Files can edit a text fil
     await page
       .getByRole("textbox", { name: "File contents" })
       .fill("print('ready')\n");
-    await page.getByRole("button", { name: "Save in workspace" }).click();
+    page.once("dialog", (dialog) => void dialog.accept());
+    await page.getByRole("button", { name: /^Save in / }).click();
     await expect(
       page.getByText("example.py", { exact: true }).first(),
     ).toBeVisible();
     expect(await readFile(join(root, "example.py"), "utf8")).toBe(
       "print('ready')\n",
     );
+    const fileTabs = page.getByRole("tablist", { name: "Open files" });
+    await expect(fileTabs.getByRole("tab")).toHaveCount(9);
+    await page.getByRole("button", { name: "Edit file" }).click();
+    const pythonEditor = page.getByRole("textbox", { name: "File contents" });
+    await pythonEditor.fill("print('unsaved draft')\n");
+    await fileTabs.getByRole("tab", { name: "README.md" }).click();
+    await expect(
+      page.getByRole("textbox", { name: "File contents" }),
+    ).toContainText("Edited in AgentTeam.");
+    await fileTabs.getByRole("tab", { name: "example.py" }).click();
+    await expect(
+      page.getByRole("textbox", { name: "File contents" }),
+    ).toHaveText("print('unsaved draft')");
+    page.once("dialog", (dialog) => void dialog.accept());
+    await page
+      .locator(
+        ".workspace-open-file-panel:not([hidden]) .text-editor-toolbar button.primary",
+      )
+      .click();
+    await expect(
+      page
+        .locator(".workspace-open-file-panel:not([hidden])")
+        .getByText(/Saved /),
+    ).toBeVisible();
     await page.keyboard.press(
       `${process.platform === "darwin" ? "Meta" : "Control"}+4`,
     );
@@ -217,8 +332,92 @@ test("main view shortcuts keep the current project and Files can edit a text fil
     const changed = page.getByRole("navigation", { name: "Changed files" });
     await expect(changed).toContainText("README.md");
     await expect(changed).toContainText("example.py");
-    await expect(page.getByText("Current project: Pi demo")).toBeVisible();
+    await changed.getByRole("button", { name: /example\.py/ }).click();
+    const addedFile = page.getByRole("table", { name: "Unified diff" });
+    await expect(addedFile.locator("tbody tr.diff-added")).toHaveCount(1);
+    await expect(addedFile.locator("tbody tr.diff-added")).toContainText(
+      "print('unsaved draft')",
+    );
+    await expect(page.locator(".review-added-label")).toHaveText("New file");
     await expect(projectPicker).toHaveValue(project.id);
+    expect(errors).toEqual([]);
+  });
+});
+
+test("Files previews highlight source and Markdown has Preview and Source views", async () => {
+  await withApp(async ({ directory, start }) => {
+    const { page, errors } = await start();
+    const root = join(directory, "syntax-samples");
+    await mkdir(root);
+    const samples: Record<string, string> = {
+      "main.ts": "const answer: number = 42;",
+      "main.js": "const answer = 42;",
+      "main.c": "int main(void) { return 0; }",
+      "main.cpp": "int main() { return 0; }",
+      "example.py": 'print("hello")',
+      "example.wl": "Total[Range[3]]",
+      "module.sv": "module demo; endmodule",
+      "CMakeLists.txt": "project(Demo)",
+      "settings.json": '{"enabled": true}',
+      "config.xml": '<root enabled="true" />',
+      "config.yaml": "enabled: true",
+      "config.toml": '[project]\nname = "Demo"',
+      "run.sh": 'echo "hello"',
+      "index.html": "<html><body>Hello</body></html>",
+      "site.css": "body { color: red; }",
+      "query.sql": "select * from demo;",
+      "main.rs": 'fn main() { println!("hello"); }',
+      "main.go": "package main\nfunc main() {}",
+      "Main.java": "class Main {}",
+      "Main.cs": "class Main {}",
+      Dockerfile: "FROM alpine\nRUN echo hello",
+      "changes.diff": "+added line\n-removed line",
+    };
+    for (const [name, text] of Object.entries(samples))
+      await writeFile(join(root, name), text + "\n");
+    const agent = await api(page, "POST", "/agents", {
+      name: "Syntax preview agent",
+      environment: "codex",
+      workspaces: [{ path: root, access: "read", active: true }],
+    });
+    expect(agent.id).toBeTruthy();
+    await page.reload();
+    await expect(
+      page.getByText("Workspace connected", { exact: true }),
+    ).toBeVisible();
+    await tab(page, "Files").click();
+    const agentTree = page.getByRole("tree", {
+      name: "Folders and files by agent",
+    });
+    const agentNode = agentTree.getByRole("treeitem", {
+      name: "Syntax preview agent",
+      exact: true,
+    });
+    await agentNode.getByRole("treeitem", { name: /syntax-samples/ }).click();
+    const files = page.getByRole("complementary", {
+      name: "Agent folders and files",
+    });
+    const preview = page.locator(
+      ".workspace-open-file-panel:not([hidden]) .file-code-preview .cm-editor",
+    );
+    for (const [name, sample] of Object.entries(samples)) {
+      await files.getByRole("treeitem", { name, exact: true }).click();
+      await expect(preview, name).toBeVisible();
+      const expectedText = sample.split("\n")[0].replace(/\s+/g, "");
+      await expect
+        .poll(
+          () =>
+            preview
+              .locator(".cm-content")
+              .evaluate((el) => el.textContent?.replace(/\s+/g, "") ?? ""),
+          { message: name },
+        )
+        .toContain(expectedText);
+      await expect(
+        preview.locator(".cm-line span").first(),
+        name,
+      ).toBeVisible();
+    }
     expect(errors).toEqual([]);
   });
 });
@@ -247,11 +446,18 @@ test("Files sidebar groups attached folders by agent and opens the selected fold
       page.getByText("Workspace connected", { exact: true }),
     ).toBeVisible();
     await tab(page, "Files").click();
-    const folders = page.getByRole("tree", { name: "Agent folders" });
+    const folders = page.getByRole("tree", {
+      name: "Folders and files by agent",
+    });
     const cppAgent = folders.getByRole("treeitem", {
       name: "C++ Builder",
       exact: true,
     });
+    const agentRow = cppAgent.locator(".workspace-agent-folder-name");
+    await expect(agentRow).toBeVisible();
+    expect(
+      await agentRow.evaluate((el) => getComputedStyle(el).justifyContent),
+    ).toBe("flex-start");
     const pythonAgent = folders.getByRole("treeitem", {
       name: "Python Builder",
       exact: true,
@@ -265,12 +471,18 @@ test("Files sidebar groups attached folders by agent and opens the selected fold
     await expect(
       pythonAgent.getByRole("treeitem", { name: /Read/ }),
     ).toBeVisible();
+    const folderRow = cppAgent.locator(".workspace-folder-node");
+    expect(
+      await folderRow.evaluate((el) => getComputedStyle(el).justifyContent),
+    ).toBe("flex-start");
     await pythonAgent
       .getByRole("treeitem", { name: /python-workspace/ })
       .click();
-    const files = page.getByRole("complementary", { name: "Project files" });
+    const files = page.getByRole("complementary", {
+      name: "Agent folders and files",
+    });
     await expect(
-      files.getByRole("button", { name: "README.md" }),
+      files.getByRole("treeitem", { name: "README.md", exact: true }),
     ).toBeVisible();
     await expect(
       page.getByRole("combobox", { name: "Workspace agent" }),
@@ -328,7 +540,7 @@ test("Cmd+P finds chats and project files; Cmd+Shift+P stays the command palette
     await fileResult.click();
     await expect(tab(page, "Files")).toHaveAttribute("aria-selected", "true");
     await expect(
-      page.getByRole("button", { name: "quickWidget.ts", exact: true }),
+      page.getByRole("treeitem", { name: "quickWidget.ts", exact: true }),
     ).toBeVisible();
     await expect(projectPicker).toHaveValue(project.id);
 

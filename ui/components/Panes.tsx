@@ -24,7 +24,7 @@ import { RuleEditor } from "./RuleEditor";
 import { HarnessSettings } from "./HarnessSettings";
 import { FilesystemSettings } from "./FilesystemSettings";
 import { GitWorkflowPanel } from "./GitWorkflow";
-import { FilePreview, OpenWith } from "./FilePreview";
+import { FilePreview } from "./FilePreview";
 import { TextEditor } from "./TextEditor";
 import { EditorSettings } from "./EditorSettings";
 import {
@@ -78,6 +78,7 @@ import {
   Clock,
   Network,
   MoreHorizontal,
+  X,
 } from "lucide-react";
 import {
   api,
@@ -723,9 +724,14 @@ export function Workflows(p: PaneProps) {
           (w as { lifecycle?: { state: string } }).lifecycle?.state !==
           "archived",
       );
+  const [focusedProjectId, setFocusedProjectId] = useState("");
+  const focusedProject =
+    shownWorkflows.find((workflow) => workflow.id === focusedProjectId) ??
+    shownWorkflows.find((workflow) => workflow.id === p.currentProjectId) ??
+    shownWorkflows[0];
   useAssignRequest(() => setAssigning(true));
-  const selected = p.data.agents.find((a) => a.id === p.selected);
   const teamName = p.data.teamView?.team.name ?? "this team";
+  const w = focusedProject;
   return (
     <div className="scroll section">
       <div className="section-title">
@@ -752,9 +758,17 @@ export function Workflows(p: PaneProps) {
         </div>
       </div>
       <p className="hint projects-hint">
-        Projects group a goal, workspace and tasks for {teamName}. Follow each
-        project here; agent conversations are in Chat.
+        Choose a project to see its progress, tasks, blockers, and run report.
       </p>
+      <div className="projects-current-context">
+        <span>Current project</span>
+        <b>{p.currentProject?.name ?? "None selected"}</b>
+        <small>
+          {p.currentProject
+            ? "Files and reports follow this project."
+            : "Choose a project below and make it current to keep the app in context."}
+        </small>
+      </div>
       {assigning && (
         <AssignProject
           teamId={p.data.activeTeamId ?? "main"}
@@ -838,574 +852,658 @@ export function Workflows(p: PaneProps) {
           Show archived ({archived})
         </label>
       )}
-      {shownWorkflows.map((w) => (
-        <section className="workflow project-card" key={w.id}>
-          <div className="row between project-heading">
-            <div className="project-heading-copy">
-              <h3>{w.name}</h3>
-              <p>{w.goal}</p>
+      {projectWorkflows.length > 0 && shownWorkflows.length === 0 && (
+        <div className="empty compact project-detail-empty">
+          <h3>All projects are archived</h3>
+          <p>Show archived projects above to reopen or review one.</p>
+        </div>
+      )}
+      {shownWorkflows.length > 0 && (
+        <div className="projects-workbench">
+          <nav className="projects-sidebar" aria-label="Projects">
+            <div className="projects-sidebar-heading">
+              <b>{shownWorkflows.length} projects</b>
+              <small>{teamName}</small>
             </div>
-            <div className="row">
-              <span
-                className={"badge " + (w.status === "running" ? "green" : "")}
-              >
-                {w.status === "needs-attention" ? "needs attention" : w.status}
-              </span>
-              {p.setCurrentProject && (
+            {shownWorkflows.map((workflow) => {
+              const active = focusedProject?.id === workflow.id;
+              const resolved = workflow.tasks.filter(taskIsResolved).length;
+              const attention =
+                workflow.tasks.filter(taskNeedsAttention).length;
+              return (
                 <button
-                  className="text-button"
-                  aria-pressed={p.currentProjectId === w.id}
-                  onClick={() => p.setCurrentProject!(w.id)}
+                  key={workflow.id}
+                  className={`project-nav-item${active ? " active" : ""}`}
+                  aria-current={active ? "page" : undefined}
+                  onClick={() => setFocusedProjectId(workflow.id)}
                 >
-                  {p.currentProjectId === w.id
-                    ? "Current project"
-                    : "Make current"}
+                  <span className="project-nav-title">{workflow.name}</span>
+                  <span className="project-nav-meta">
+                    <i className={`project-state-dot ${workflow.status}`} />
+                    {workflow.status === "needs-attention"
+                      ? "Needs attention"
+                      : workflow.status}
+                    <span>
+                      {resolved}/{workflow.tasks.length} tasks
+                    </span>
+                  </span>
+                  {attention > 0 && (
+                    <span className="project-nav-alert">
+                      {attention} need attention
+                    </span>
+                  )}
+                  {p.currentProjectId === workflow.id && (
+                    <span className="project-nav-current">Current project</span>
+                  )}
                 </button>
-              )}
-            </div>
-          </div>
-          <ProjectLifecycle workflow={w} act={p.act} />
-          <SampleSetup workflow={w} act={p.act} />
-          <WorkflowGateSummary tasks={w.tasks} />
-          <div className="project-progress-row">
-            <div
-              className="progress project-progress"
-              role="progressbar"
-              aria-label={`${w.name} resolved task progress`}
-              aria-valuemin={0}
-              aria-valuemax={w.tasks.length}
-              aria-valuenow={w.tasks.filter(taskIsResolved).length}
+              );
+            })}
+          </nav>
+          {w ? (
+            <section
+              className="workflow project-card project-detail"
+              key={w.id}
             >
-              <span
-                style={{
-                  width: `${w.tasks.length ? (100 * w.tasks.filter(taskIsResolved).length) / w.tasks.length : 0}%`,
-                }}
-              />
-            </div>
-            <small>
-              {w.tasks.filter(taskIsResolved).length} of {w.tasks.length}{" "}
-              resolved · {w.tasks.filter(taskIsComplete).length} complete
-              {w.tasks.some((task) => taskViewStatus(task) === "superseded") &&
-                ` · ${w.tasks.filter((task) => taskViewStatus(task) === "superseded").length} superseded`}
-              {w.tasks.some(taskNeedsAttention) &&
-                ` · ${w.tasks.filter(taskNeedsAttention).length} need attention`}
-            </small>
-            <button
-              className="icon"
-              title={w.paused ? "Resume project" : "Pause project"}
-              aria-label={w.paused ? "Resume project" : "Pause project"}
-              onClick={() =>
-                void p.act(() =>
-                  api("/workflows/" + w.id + "/pause", "POST", {
-                    paused: !w.paused,
-                  }),
-                )
-              }
-            >
-              {w.paused ? <Play size={15} /> : <Pause size={15} />}
-            </button>
-          </div>
-          <details className="project-tasks">
-            <summary>
-              <b>Tasks</b>
-              <span>
-                {w.tasks.length} total ·{" "}
-                {
-                  w.tasks.filter(
-                    (t) => t.status === "queued" || t.status === "running",
-                  ).length
-                }{" "}
-                active · {w.tasks.filter(taskNeedsAttention).length} need
-                attention
-                {w.tasks.some(
-                  (task) => taskViewStatus(task) === "superseded",
-                ) &&
-                  ` · ${w.tasks.filter((task) => taskViewStatus(task) === "superseded").length} superseded`}
-              </span>
-            </summary>
-            {w.tasks.map((t) => (
-              <details className="task" key={t.id}>
-                <summary>
-                  <span className={"task-dot " + taskViewStatus(t)} />
-                  <span className="task-title" title={t.title}>
-                    <b>{taskDisplayTitle(t.title)}</b>
-                    <small>
-                      {p.data.agents.find((a) => a.id === t.agentId)?.name}
-                    </small>
-                    {taskResultPreview(t) && (
-                      <small className="task-result-preview">
-                        {taskResultPreview(t)}
-                      </small>
-                    )}
-                  </span>
-                  <GateBadge task={t} />
-                  <span className="badge">
-                    {taskViewStatus(t) === "superseded"
-                      ? "superseded"
-                      : (taskResultProblem(t) ?? t.status)}
-                  </span>
-                </summary>
-                <details className="task-brief">
-                  <summary>Full task brief</summary>
-                  <p>{t.instructions}</p>
-                  <small>Done when: {t.completionCriteria}</small>
-                </details>
-                {t.dependsOn.length > 0 && (
-                  <p className="hint">
-                    Depends on{" "}
-                    {t.dependsOn
-                      .map((id) => w.tasks.find((x) => x.id === id)?.title)
-                      .join(", ")}
-                  </p>
-                )}
-                {t.result && (
-                  <details className="task-report">
-                    <summary>
-                      Agent report
-                      {taskResultPreview(t) && (
-                        <small>{taskResultPreview(t)}</small>
-                      )}
-                    </summary>
-                    <MessageMarkdown text={t.result} />
-                  </details>
-                )}
-                {t.supersededBy && (
-                  <div className="row project-task-resolution">
-                    <small>
-                      Superseded by:{" "}
-                      {taskDisplayTitle(
-                        w.tasks.find(
-                          (candidate) => candidate.id === t.supersededBy,
-                        )?.title ?? "verified task",
-                      )}
-                    </small>
-                    <button
-                      onClick={() =>
-                        void p.act(() =>
-                          api(`/tasks/${t.id}/supersede`, "POST", {
-                            supersededBy: null,
-                          }),
-                        )
-                      }
-                    >
-                      Undo
-                    </button>
-                  </div>
-                )}
-                {p.openChat && (
-                  <ConversationLink
-                    taskId={t.id}
-                    openChat={p.openChat}
-                    label="Open agent conversation"
-                  />
-                )}
-                <TaskValidation
-                  task={t}
-                  liveExecution={p.data.liveExecution}
-                  act={p.act}
-                />
-                <TaskSettings task={t} tasks={w.tasks} act={p.act} />
+              <div className="row between project-heading">
+                <div className="project-heading-copy">
+                  <h3>{w.name}</h3>
+                  <p>{w.goal}</p>
+                </div>
                 <div className="row">
-                  {taskViewStatus(t) === "failed" && (
+                  <span
+                    className={
+                      "badge " + (w.status === "running" ? "green" : "")
+                    }
+                  >
+                    {w.status === "needs-attention"
+                      ? "needs attention"
+                      : w.status}
+                  </span>
+                  {p.setCurrentProject && (
                     <button
-                      onClick={() =>
-                        void p.act(() =>
-                          api("/tasks/" + t.id + "/status", "POST", {
-                            status: "queued",
-                          }),
-                        )
-                      }
+                      className="text-button"
+                      aria-pressed={p.currentProjectId === w.id}
+                      onClick={() => p.setCurrentProject!(w.id)}
                     >
-                      Retry
+                      {p.currentProjectId === w.id
+                        ? "Current project"
+                        : "Make current"}
                     </button>
                   )}
-                  {(["queued", "failed", "interrupted", "blocked"].includes(
-                    t.status,
-                  ) ||
-                    taskViewStatus(t) === "failed") && (
+                  {p.openFeature && (
                     <button
-                      onClick={() =>
-                        void p.act(() =>
-                          api("/tasks/" + t.id + "/status", "POST", {
-                            status: "cancelled",
-                          }),
-                        )
-                      }
+                      className="project-report-button"
+                      onClick={() => {
+                        p.setCurrentProject?.(w.id);
+                        p.openFeature!("trace");
+                      }}
                     >
-                      Cancel
-                    </button>
-                  )}
-                  {t.status === "running" && (
-                    <button
-                      onClick={() =>
-                        void p.act(() =>
-                          api("/tasks/" + t.id + "/cancel", "POST"),
-                        )
-                      }
-                    >
-                      Stop
+                      <Network size={15} /> View run report
                     </button>
                   )}
                 </div>
-                {!t.supersededBy &&
-                  ["failed", "interrupted"].includes(taskViewStatus(t)) &&
-                  w.tasks.some(
-                    (candidate) =>
-                      candidate.id !== t.id && taskIsComplete(candidate),
-                  ) && (
-                    <div className="row project-task-resolution">
-                      <select
-                        aria-label={`Supersede ${taskDisplayTitle(t.title)} with successful task`}
-                        value={supersedeChoices[t.id] ?? ""}
-                        onChange={(event) =>
-                          setSupersedeChoices((choices) => ({
-                            ...choices,
-                            [t.id]: event.target.value,
-                          }))
-                        }
-                      >
-                        <option value="">Resolve with successful task…</option>
-                        {w.tasks
-                          .filter(
-                            (candidate) =>
-                              candidate.id !== t.id &&
-                              taskIsComplete(candidate),
-                          )
-                          .map((candidate) => (
-                            <option key={candidate.id} value={candidate.id}>
-                              {taskDisplayTitle(candidate.title)}
-                            </option>
-                          ))}
-                      </select>
-                      <button
-                        disabled={!supersedeChoices[t.id]}
-                        onClick={() =>
-                          void p.act(() =>
-                            api(`/tasks/${t.id}/supersede`, "POST", {
-                              supersededBy: supersedeChoices[t.id],
-                            }),
-                          )
-                        }
-                      >
-                        Mark superseded
-                      </button>
-                    </div>
-                  )}
-              </details>
-            ))}
-          </details>
-          <details className="project-more">
-            <summary>Project settings & reports</summary>
-            {w.setup?.sample === PIPELINE_SAMPLE_ID && (
-              <PipelineHistory workflowId={w.id} act={p.act} />
-            )}
-            {p.openFeature && (
-              <div className="row wrap project-links">
-                <button
-                  className="text-button"
-                  onClick={() => p.openFeature!("usage")}
+              </div>
+              <ProjectLifecycle workflow={w} act={p.act} />
+              <SampleSetup workflow={w} act={p.act} />
+              <WorkflowGateSummary tasks={w.tasks} />
+              <div className="project-progress-row">
+                <div
+                  className="progress project-progress"
+                  role="progressbar"
+                  aria-label={`${w.name} resolved task progress`}
+                  aria-valuemin={0}
+                  aria-valuemax={w.tasks.length}
+                  aria-valuenow={w.tasks.filter(taskIsResolved).length}
                 >
-                  Limits and usage
-                </button>
+                  <span
+                    style={{
+                      width: `${w.tasks.length ? (100 * w.tasks.filter(taskIsResolved).length) / w.tasks.length : 0}%`,
+                    }}
+                  />
+                </div>
+                <small>
+                  {w.tasks.filter(taskIsResolved).length} of {w.tasks.length}{" "}
+                  resolved · {w.tasks.filter(taskIsComplete).length} complete
+                  {w.tasks.some(
+                    (task) => taskViewStatus(task) === "superseded",
+                  ) &&
+                    ` · ${w.tasks.filter((task) => taskViewStatus(task) === "superseded").length} superseded`}
+                  {w.tasks.some(taskNeedsAttention) &&
+                    ` · ${w.tasks.filter(taskNeedsAttention).length} need attention`}
+                </small>
                 <button
-                  className="text-button"
-                  onClick={() => p.openFeature!("recovery")}
+                  className="icon"
+                  title={w.paused ? "Resume project" : "Pause project"}
+                  aria-label={w.paused ? "Resume project" : "Pause project"}
+                  onClick={() =>
+                    void p.act(() =>
+                      api("/workflows/" + w.id + "/pause", "POST", {
+                        paused: !w.paused,
+                      }),
+                    )
+                  }
                 >
-                  Recovery
-                </button>
-                <button
-                  className="text-button"
-                  onClick={() => p.openFeature!("shared")}
-                >
-                  Shared state
-                </button>
-                <button
-                  className="text-button"
-                  onClick={() => p.openFeature!("graphs")}
-                >
-                  Step-by-step runs
+                  {w.paused ? <Play size={15} /> : <Pause size={15} />}
                 </button>
               </div>
-            )}
-          </details>
-          <button
-            className="text-button"
-            onClick={() => {
-              setTaskFor(taskFor === w.id ? "" : w.id);
-              setTaskAgent(p.selected);
-              setInvoke("");
-              setDeps([]);
+              <section className="project-tasks">
+                <header className="project-tasks-heading">
+                  <b>Tasks</b>
+                  <small>
+                    {w.tasks.length} total ·{" "}
+                    {
+                      w.tasks.filter(
+                        (t) => t.status === "queued" || t.status === "running",
+                      ).length
+                    }{" "}
+                    active · {w.tasks.filter(taskNeedsAttention).length} need
+                    attention
+                    {w.tasks.some(
+                      (task) => taskViewStatus(task) === "superseded",
+                    ) &&
+                      ` · ${w.tasks.filter((task) => taskViewStatus(task) === "superseded").length} superseded`}
+                  </small>
+                </header>
+                {w.tasks.map((t) => (
+                  <details className="task" key={t.id}>
+                    <summary>
+                      <span className={"task-dot " + taskViewStatus(t)} />
+                      <span className="task-title" title={t.title}>
+                        <b>{taskDisplayTitle(t.title)}</b>
+                        <small>
+                          {p.data.agents.find((a) => a.id === t.agentId)?.name}
+                        </small>
+                        {taskResultPreview(t) && (
+                          <small className="task-result-preview">
+                            {taskResultPreview(t)}
+                          </small>
+                        )}
+                      </span>
+                      <GateBadge task={t} />
+                      <span className="badge">
+                        {taskViewStatus(t) === "superseded"
+                          ? "superseded"
+                          : (taskResultProblem(t) ?? t.status)}
+                      </span>
+                    </summary>
+                    <details className="task-brief">
+                      <summary>Full task brief</summary>
+                      <p>{t.instructions}</p>
+                      <small>Done when: {t.completionCriteria}</small>
+                    </details>
+                    {t.dependsOn.length > 0 && (
+                      <p className="hint">
+                        Depends on{" "}
+                        {t.dependsOn
+                          .map((id) => w.tasks.find((x) => x.id === id)?.title)
+                          .join(", ")}
+                      </p>
+                    )}
+                    {t.result && (
+                      <details className="task-report">
+                        <summary>
+                          Agent report
+                          {taskResultPreview(t) && (
+                            <small>{taskResultPreview(t)}</small>
+                          )}
+                        </summary>
+                        <MessageMarkdown text={t.result} />
+                      </details>
+                    )}
+                    {t.supersededBy && (
+                      <div className="row project-task-resolution">
+                        <small>
+                          Superseded by:{" "}
+                          {taskDisplayTitle(
+                            w.tasks.find(
+                              (candidate) => candidate.id === t.supersededBy,
+                            )?.title ?? "verified task",
+                          )}
+                        </small>
+                        <button
+                          onClick={() =>
+                            void p.act(() =>
+                              api(`/tasks/${t.id}/supersede`, "POST", {
+                                supersededBy: null,
+                              }),
+                            )
+                          }
+                        >
+                          Undo
+                        </button>
+                      </div>
+                    )}
+                    {p.openChat && (
+                      <ConversationLink
+                        taskId={t.id}
+                        openChat={p.openChat}
+                        label="Open agent conversation"
+                      />
+                    )}
+                    <TaskValidation
+                      task={t}
+                      liveExecution={p.data.liveExecution}
+                      act={p.act}
+                    />
+                    <TaskSettings task={t} tasks={w.tasks} act={p.act} />
+                    <div className="row">
+                      {taskViewStatus(t) === "failed" && (
+                        <button
+                          onClick={() =>
+                            void p.act(() =>
+                              api("/tasks/" + t.id + "/status", "POST", {
+                                status: "queued",
+                              }),
+                            )
+                          }
+                        >
+                          Retry
+                        </button>
+                      )}
+                      {(["queued", "failed", "interrupted", "blocked"].includes(
+                        t.status,
+                      ) ||
+                        taskViewStatus(t) === "failed") && (
+                        <button
+                          onClick={() =>
+                            void p.act(() =>
+                              api("/tasks/" + t.id + "/status", "POST", {
+                                status: "cancelled",
+                              }),
+                            )
+                          }
+                        >
+                          Cancel
+                        </button>
+                      )}
+                      {t.status === "running" && (
+                        <button
+                          onClick={() =>
+                            void p.act(() =>
+                              api("/tasks/" + t.id + "/cancel", "POST"),
+                            )
+                          }
+                        >
+                          Stop
+                        </button>
+                      )}
+                    </div>
+                    {!t.supersededBy &&
+                      ["failed", "interrupted"].includes(taskViewStatus(t)) &&
+                      w.tasks.some(
+                        (candidate) =>
+                          candidate.id !== t.id && taskIsComplete(candidate),
+                      ) && (
+                        <div className="row project-task-resolution">
+                          <select
+                            aria-label={`Supersede ${taskDisplayTitle(t.title)} with successful task`}
+                            value={supersedeChoices[t.id] ?? ""}
+                            onChange={(event) =>
+                              setSupersedeChoices((choices) => ({
+                                ...choices,
+                                [t.id]: event.target.value,
+                              }))
+                            }
+                          >
+                            <option value="">
+                              Resolve with successful task…
+                            </option>
+                            {w.tasks
+                              .filter(
+                                (candidate) =>
+                                  candidate.id !== t.id &&
+                                  taskIsComplete(candidate),
+                              )
+                              .map((candidate) => (
+                                <option key={candidate.id} value={candidate.id}>
+                                  {taskDisplayTitle(candidate.title)}
+                                </option>
+                              ))}
+                          </select>
+                          <button
+                            disabled={!supersedeChoices[t.id]}
+                            onClick={() =>
+                              void p.act(() =>
+                                api(`/tasks/${t.id}/supersede`, "POST", {
+                                  supersededBy: supersedeChoices[t.id],
+                                }),
+                              )
+                            }
+                          >
+                            Mark superseded
+                          </button>
+                        </div>
+                      )}
+                  </details>
+                ))}
+              </section>
+              <details className="project-more">
+                <summary>Advanced project tools</summary>
+                {w.setup?.sample === PIPELINE_SAMPLE_ID && (
+                  <PipelineHistory workflowId={w.id} act={p.act} />
+                )}
+                {p.openFeature && (
+                  <div className="row wrap project-links">
+                    <button
+                      className="text-button"
+                      onClick={() => p.openFeature!("usage")}
+                    >
+                      Limits and usage
+                    </button>
+                    <button
+                      className="text-button"
+                      onClick={() => p.openFeature!("recovery")}
+                    >
+                      Recovery
+                    </button>
+                    <button
+                      className="text-button"
+                      onClick={() => p.openFeature!("shared")}
+                    >
+                      Shared state
+                    </button>
+                    <button
+                      className="text-button"
+                      onClick={() => p.openFeature!("graphs")}
+                    >
+                      Workflow graphs
+                    </button>
+                  </div>
+                )}
+              </details>
+              <button
+                className="text-button"
+                onClick={() => {
+                  setTaskFor(taskFor === w.id ? "" : w.id);
+                  setTaskAgent(p.selected);
+                  setInvoke("");
+                  setDeps([]);
+                }}
+              >
+                <Plus size={14} />
+                Add task
+              </button>
+              {taskFor === w.id && (
+                <form
+                  className="form-card"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void p.act(async () => {
+                      await api("/tasks", "POST", {
+                        workflowId: w.id,
+                        agentId: taskAgent,
+                        title,
+                        instructions: title,
+                        completionCriteria: criteria,
+                        dependsOn: deps,
+                        ...(needsValidation
+                          ? { requiresValidation: true }
+                          : {}),
+                        ...(invoke ? { invokedBy: invoke } : {}),
+                        ...(declaredPaths(taskPaths).length
+                          ? { resourcePaths: declaredPaths(taskPaths) }
+                          : {}),
+                      });
+                      setTaskPaths("");
+                      setTaskFor("");
+                      setTitle("");
+                      setNeedsValidation(false);
+                    });
+                  }}
+                >
+                  <label>
+                    Task
+                    <textarea
+                      required
+                      value={title}
+                      onChange={(e) => setTitle(e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Assigned agent
+                    <select
+                      value={taskAgent}
+                      onChange={(e) => setTaskAgent(e.target.value)}
+                    >
+                      {p.data.agents.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {agentSelectorLabel(a)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Invoked by
+                    <select
+                      value={invoke}
+                      onChange={(e) => setInvoke(e.target.value)}
+                    >
+                      <option value="">Direct user task</option>
+                      {p.data.agents
+                        .filter((a) => a.id !== taskAgent)
+                        .map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {agentSelectorLabel(a)}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                  <label>
+                    Done when
+                    <input
+                      required
+                      value={criteria}
+                      onChange={(e) => setCriteria(e.target.value)}
+                    />
+                  </label>
+                  <label className="inline">
+                    <input
+                      type="checkbox"
+                      checked={needsValidation}
+                      onChange={(e) => setNeedsValidation(e.target.checked)}
+                    />
+                    Requires Wolfram validation before it can run
+                  </label>
+                  {w.tasks.map((t) => (
+                    <label className="inline" key={t.id}>
+                      <input
+                        type="checkbox"
+                        checked={deps.includes(t.id)}
+                        onChange={(e) =>
+                          setDeps(
+                            e.target.checked
+                              ? [...deps, t.id]
+                              : deps.filter((id) => id !== t.id),
+                          )
+                        }
+                      />
+                      After {t.title}
+                    </label>
+                  ))}
+                  <label>
+                    Paths this task will touch (optional)
+                    <input
+                      aria-label="Declared paths"
+                      placeholder="Absolute paths, comma separated; empty locks every attached folder"
+                      value={taskPaths}
+                      onChange={(e) => setTaskPaths(e.target.value)}
+                    />
+                  </label>
+                  {taskAgent && (
+                    <LaunchReview
+                      agentId={taskAgent}
+                      workflowId={w.id}
+                      resourcePaths={declaredPaths(taskPaths)}
+                    />
+                  )}
+                  <button className="primary">Queue task</button>
+                </form>
+              )}
+            </section>
+          ) : (
+            <div className="empty compact project-detail-empty">
+              <h3>No project selected</h3>
+              <p>Choose another project or create a new one.</p>
+            </div>
+          )}
+        </div>
+      )}
+      <details className="project-routing-tools">
+        <summary>Team routing rules</summary>
+        <div className="section-title">
+          <h3>Routing rules</h3>
+          <button onClick={() => setRule(!rule)}>
+            <Plus size={14} />
+            Rule
+          </button>
+        </div>
+        {rule && (
+          <form
+            className="form-card"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void p.act(async () => {
+                await api("/rules", "POST", {
+                  agentId: p.selected,
+                  scope,
+                  ...(scope === "action" ? { targetId: target } : {}),
+                  priority,
+                  match: {
+                    textIncludes: match
+                      .split(",")
+                      .map((t) => t.trim())
+                      .filter(Boolean),
+                    changedFilesAny: splitList(files),
+                    catchAll: !match.trim() && !files.trim(),
+                  },
+                  mode: ruleMode,
+                  ...(specialty.trim() ? { specialty: specialty.trim() } : {}),
+                  kind: ruleMode === "mandatory" ? "review" : "delegate",
+                });
+                setRule(false);
+              });
             }}
           >
-            <Plus size={14} />
-            Add task
-          </button>
-          {taskFor === w.id && (
-            <form
-              className="form-card"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void p.act(async () => {
-                  await api("/tasks", "POST", {
-                    workflowId: w.id,
-                    agentId: taskAgent,
-                    title,
-                    instructions: title,
-                    completionCriteria: criteria,
-                    dependsOn: deps,
-                    ...(needsValidation ? { requiresValidation: true } : {}),
-                    ...(invoke ? { invokedBy: invoke } : {}),
-                    ...(declaredPaths(taskPaths).length
-                      ? { resourcePaths: declaredPaths(taskPaths) }
-                      : {}),
-                  });
-                  setTaskPaths("");
-                  setTaskFor("");
-                  setTitle("");
-                  setNeedsValidation(false);
-                });
-              }}
-            >
+            <label>
+              Agent
+              <AgentPicker {...p} />
+            </label>
+            <label>
+              Rule type
+              <select value={scope} onChange={(e) => setScope(e.target.value)}>
+                <option value="intake">Bring matching work to me</option>
+                <option value="action">When I need this, invoke…</option>
+              </select>
+            </label>
+            {scope === "action" && (
               <label>
-                Task
-                <textarea
+                Invoke
+                <select
                   required
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                />
-              </label>
-              <label>
-                Assigned agent
-                <select
-                  value={taskAgent}
-                  onChange={(e) => setTaskAgent(e.target.value)}
+                  value={target}
+                  onChange={(e) => setTarget(e.target.value)}
                 >
-                  {p.data.agents.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {agentSelectorLabel(a)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Invoked by
-                <select
-                  value={invoke}
-                  onChange={(e) => setInvoke(e.target.value)}
-                >
-                  <option value="">Direct user task</option>
+                  <option value="">Select agent</option>
                   {p.data.agents
-                    .filter((a) => a.id !== taskAgent)
+                    .filter((a) => a.id !== p.selected)
                     .map((a) => (
-                      <option key={a.id} value={a.id}>
+                      <option value={a.id} key={a.id}>
                         {agentSelectorLabel(a)}
                       </option>
                     ))}
                 </select>
               </label>
-              <label>
-                Done when
-                <input
-                  required
-                  value={criteria}
-                  onChange={(e) => setCriteria(e.target.value)}
-                />
-              </label>
-              <label className="inline">
-                <input
-                  type="checkbox"
-                  checked={needsValidation}
-                  onChange={(e) => setNeedsValidation(e.target.checked)}
-                />
-                Requires Wolfram validation before it can run
-              </label>
-              {w.tasks.map((t) => (
-                <label className="inline" key={t.id}>
-                  <input
-                    type="checkbox"
-                    checked={deps.includes(t.id)}
-                    onChange={(e) =>
-                      setDeps(
-                        e.target.checked
-                          ? [...deps, t.id]
-                          : deps.filter((id) => id !== t.id),
-                      )
-                    }
-                  />
-                  After {t.title}
-                </label>
-              ))}
-              <label>
-                Paths this task will touch (optional)
-                <input
-                  aria-label="Declared paths"
-                  placeholder="Absolute paths, comma separated; empty locks every attached folder"
-                  value={taskPaths}
-                  onChange={(e) => setTaskPaths(e.target.value)}
-                />
-              </label>
-              {taskAgent && (
-                <LaunchReview
-                  agentId={taskAgent}
-                  workflowId={w.id}
-                  resourcePaths={declaredPaths(taskPaths)}
-                />
-              )}
-              <button className="primary">Queue task</button>
-            </form>
-          )}
-        </section>
-      ))}
-      <div className="section-title">
-        <h3>Routing rules</h3>
-        <button onClick={() => setRule(!rule)}>
-          <Plus size={14} />
-          Rule
-        </button>
-      </div>
-      {rule && (
-        <form
-          className="form-card"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void p.act(async () => {
-              await api("/rules", "POST", {
-                agentId: p.selected,
-                scope,
-                ...(scope === "action" ? { targetId: target } : {}),
-                priority,
-                match: {
-                  textIncludes: match
-                    .split(",")
-                    .map((t) => t.trim())
-                    .filter(Boolean),
-                  changedFilesAny: splitList(files),
-                  catchAll: !match.trim() && !files.trim(),
-                },
-                mode: ruleMode,
-                ...(specialty.trim() ? { specialty: specialty.trim() } : {}),
-                kind: ruleMode === "mandatory" ? "review" : "delegate",
-              });
-              setRule(false);
-            });
-          }}
-        >
-          <label>
-            Agent
-            <AgentPicker {...p} />
-          </label>
-          <label>
-            Rule type
-            <select value={scope} onChange={(e) => setScope(e.target.value)}>
-              <option value="intake">Bring matching work to me</option>
-              <option value="action">When I need this, invoke…</option>
-            </select>
-          </label>
-          {scope === "action" && (
+            )}
             <label>
-              Invoke
-              <select
-                required
-                value={target}
-                onChange={(e) => setTarget(e.target.value)}
-              >
-                <option value="">Select agent</option>
-                {p.data.agents
-                  .filter((a) => a.id !== p.selected)
-                  .map((a) => (
-                    <option value={a.id} key={a.id}>
-                      {agentSelectorLabel(a)}
-                    </option>
-                  ))}
-              </select>
+              Text contains (comma-separated)
+              <input
+                value={match}
+                onChange={(e) => setMatch(e.target.value)}
+                placeholder="Empty matches all tasks"
+              />
             </label>
-          )}
-          <label>
-            Text contains (comma-separated)
-            <input
-              value={match}
-              onChange={(e) => setMatch(e.target.value)}
-              placeholder="Empty matches all tasks"
+            <RuleOptionsFields
+              mode={ruleMode}
+              setMode={setRuleMode}
+              specialty={specialty}
+              setSpecialty={setSpecialty}
+              files={files}
+              setFiles={setFiles}
             />
-          </label>
-          <RuleOptionsFields
-            mode={ruleMode}
-            setMode={setRuleMode}
-            specialty={specialty}
-            setSpecialty={setSpecialty}
-            files={files}
-            setFiles={setFiles}
-          />
-          <label>
-            Priority (highest wins)
-            <input
-              type="number"
-              min="0"
-              max="10000"
-              value={priority}
-              onChange={(e) => setPriority(Number(e.target.value))}
-            />
-          </label>
-          <button className="primary">Save rule</button>
-        </form>
-      )}
-      {p.data.rules.map((r) => (
-        <div className="rule" key={r.id}>
-          <div>
-            <b>{p.data.agents.find((a) => a.id === r.agentId)?.name}</b>
-            <small>
-              {r.scope === "action"
-                ? "Invoke " +
-                  p.data.agents.find((a) => a.id === r.targetId)?.name
-                : "Receive tasks"}{" "}
-              ·{" "}
-              {r.match.catchAll
-                ? "All tasks"
-                : [
-                    ...r.match.textIncludes,
-                    ...(r.match.changedFilesAny ?? []),
-                  ].join(", ")}{" "}
-              · priority {r.priority}
-            </small>
-            <RuleBadge rule={r} />
-          </div>
-          <RuleEditor rule={r} agents={p.data.agents} act={p.act} />
-          <button
-            onClick={() => void p.act(() => api("/rules/" + r.id, "DELETE"))}
-          >
-            Remove
-          </button>
-        </div>
-      ))}
-      <details className="form-card">
-        <summary>Test task routing</summary>
-        <label>
-          Task description
-          <input
-            value={routeText}
-            onChange={(e) => setRouteText(e.target.value)}
-          />
-        </label>
-        <button
-          disabled={!routeText.trim()}
-          onClick={() =>
-            void p.act(async () =>
-              setRoute(
-                await api("/routing/preview", "POST", { text: routeText }),
-              ),
-            )
-          }
-        >
-          Preview routing
-        </button>
-        {route && (
-          <p>
-            {route.status}:{" "}
-            {p.data.agents.find((a) => a.id === route.agentId)?.name ??
-              route.reason}
-          </p>
+            <label>
+              Priority (highest wins)
+              <input
+                type="number"
+                min="0"
+                max="10000"
+                value={priority}
+                onChange={(e) => setPriority(Number(e.target.value))}
+              />
+            </label>
+            <button className="primary">Save rule</button>
+          </form>
         )}
-        <RoutingExplain agents={p.data.agents} from={p.selected || undefined} />
+        {p.data.rules.map((r) => (
+          <div className="rule" key={r.id}>
+            <div>
+              <b>{p.data.agents.find((a) => a.id === r.agentId)?.name}</b>
+              <small>
+                {r.scope === "action"
+                  ? "Invoke " +
+                    p.data.agents.find((a) => a.id === r.targetId)?.name
+                  : "Receive tasks"}{" "}
+                ·{" "}
+                {r.match.catchAll
+                  ? "All tasks"
+                  : [
+                      ...r.match.textIncludes,
+                      ...(r.match.changedFilesAny ?? []),
+                    ].join(", ")}{" "}
+                · priority {r.priority}
+              </small>
+              <RuleBadge rule={r} />
+            </div>
+            <RuleEditor rule={r} agents={p.data.agents} act={p.act} />
+            <button
+              onClick={() => void p.act(() => api("/rules/" + r.id, "DELETE"))}
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+        <details className="form-card">
+          <summary>Test task routing</summary>
+          <label>
+            Task description
+            <input
+              value={routeText}
+              onChange={(e) => setRouteText(e.target.value)}
+            />
+          </label>
+          <button
+            disabled={!routeText.trim()}
+            onClick={() =>
+              void p.act(async () =>
+                setRoute(
+                  await api("/routing/preview", "POST", { text: routeText }),
+                ),
+              )
+            }
+          >
+            Preview routing
+          </button>
+          {route && (
+            <p>
+              {route.status}:{" "}
+              {p.data.agents.find((a) => a.id === route.agentId)?.name ??
+                route.reason}
+            </p>
+          )}
+          <RoutingExplain
+            agents={p.data.agents}
+            from={p.selected || undefined}
+          />
+        </details>
       </details>
     </div>
   );
@@ -1414,6 +1512,13 @@ function ListTodoIcon() {
   return <Check size={30} />;
 }
 export type WorkspaceView = "files" | "git" | "review" | "preview";
+type OpenWorkspaceFile = {
+  id: string;
+  path: string;
+  name: string;
+  isNew?: boolean;
+  dirty: boolean;
+};
 const VIEW_TITLE: Record<WorkspaceView, string> = {
   files: "Files",
   git: "Git",
@@ -1452,6 +1557,7 @@ export function Workspace(
   const [collapsedFolderAgents, setCollapsedFolderAgents] = useState<
     Set<string>
   >(() => new Set());
+  const [fileTabs, setFileTabs] = useState<OpenWorkspaceFile[]>([]);
   const agent = p.data.agents.find((a) => a.id === workspaceAgentId),
     [root, setRoot] = useState(""),
     [path, setPath] = useState("."),
@@ -1466,8 +1572,61 @@ export function Workspace(
       y: number;
     } | null>(null);
   const tab = p.view;
+  const fileTabId = (file: { path: string }) =>
+    JSON.stringify([workspaceAgentId, root, file.path]);
+  const addFileTab = (file: {
+    path: string;
+    name: string;
+    isNew?: boolean;
+  }) => {
+    const id = fileTabId(file);
+    setFileTabs((open) =>
+      open.some((item) => item.id === id)
+        ? open
+        : [...open, { ...file, id, dirty: false }],
+    );
+    setPreview(file);
+  };
+  const closeFileTab = (id: string, alreadyConfirmed = false) => {
+    const item = fileTabs.find((entry) => entry.id === id);
+    if (!item) return;
+    if (
+      item.dirty &&
+      !alreadyConfirmed &&
+      !window.confirm(`Discard unsaved changes to ${item.name}?`)
+    )
+      return;
+    const remaining = fileTabs.filter((entry) => entry.id !== id);
+    setFileTabs(remaining);
+    if (preview && fileTabId(preview) === id) {
+      const next = remaining[Math.max(0, fileTabs.indexOf(item) - 1)];
+      setPreview(
+        next ? { path: next.path, name: next.name, isNew: next.isNew } : null,
+      );
+    }
+  };
+  const updateFileTabDirty = (id: string, dirty: boolean) =>
+    setFileTabs((open) =>
+      open.map((item) => (item.id === id ? { ...item, dirty } : item)),
+    );
   const previewRef = useRef(preview);
   previewRef.current = preview;
+  const hasDirtyFileTabs = fileTabs.some((file) => file.dirty);
+  useEffect(() => {
+    if (!hasDirtyFileTabs) return;
+    const confirmLeave = (event: Event) => {
+      if (
+        !window.confirm("You have unsaved file changes. Leave the Files view?")
+      )
+        event.preventDefault();
+    };
+    window.addEventListener("agentteam:before-file-editor-leave", confirmLeave);
+    return () =>
+      window.removeEventListener(
+        "agentteam:before-file-editor-leave",
+        confirmLeave,
+      );
+  }, [hasDirtyFileTabs]);
   useEffect(() => setWorkspaceAgentId(preferredAgentId), [preferredAgentId]);
   useEffect(() => {
     if (p.openFileTarget && p.openFileTarget.agentId !== workspaceAgentId)
@@ -1490,6 +1649,7 @@ export function Workspace(
     );
     setPath(".");
     if (!previewRef.current?.isNew) setPreview(null);
+    setFileTabs([]);
     setGit(null);
     setListing(null);
   }, [
@@ -1510,7 +1670,10 @@ export function Workspace(
     const name = parts.pop() ?? target.path;
     setRoot(target.workspace);
     setPath(parts.join("/") || ".");
-    setPreview({ path: target.path, name });
+    const file = { path: target.path, name };
+    const id = JSON.stringify([target.agentId, target.workspace, target.path]);
+    setFileTabs([{ ...file, id, dirty: false }]);
+    setPreview(file);
     p.onFileTargetHandled?.();
   }, [p.openFileTarget, agent?.id]);
   const load = async () => {
@@ -1553,7 +1716,9 @@ export function Workspace(
     setRoot(folderPath);
     setPath(".");
     setPreview(null);
+    setFileTabs([]);
     setGit(null);
+    setListing(null);
   };
   const toggleFolderAgent = (agentId: string) =>
     setCollapsedFolderAgents((previous) => {
@@ -1564,6 +1729,26 @@ export function Workspace(
     });
   const folderName = (folderPath: string) =>
     folderPath.split(/[\\/]/).filter(Boolean).at(-1) || folderPath;
+  const startNewFile = () => {
+    const folder = root ? (path === "." ? "" : `${path}/`) : "";
+    addFileTab({
+      path: `${folder}untitled.txt`,
+      name: "untitled.txt",
+      isNew: true,
+    });
+  };
+  const selectFileEntry = (entry: any) => {
+    void p.act(async () => {
+      if (entry.type === "directory") {
+        if (!canLeaveFileEditor()) return;
+        setPath(entry.path);
+        setPreview(null);
+        setListing(null);
+      } else {
+        addFileTab({ path: entry.path, name: entry.name });
+      }
+    });
+  };
   if (!agent)
     return (
       <div className="empty">
@@ -1580,12 +1765,20 @@ export function Workspace(
         <div className="section-title">
           <h2>{VIEW_TITLE[tab]}</h2>
           <button
-            title="Add a folder to this agent's file workspace"
+            title={`Give ${agentDisplayName(agent)} access to a folder`}
             onClick={() => p.edit(agent)}
           >
             <Plus size={16} />
-            Add folder
+            {tab === "files" ? "Attach folder" : "Add folder"}
           </button>
+          {tab === "files" && (
+            <button
+              className="primary workspace-new-file"
+              onClick={startNewFile}
+            >
+              <Plus size={15} /> New file
+            </button>
+          )}
         </div>
         <div className="row workspace-pickers">
           {tab !== "files" && (
@@ -1625,7 +1818,7 @@ export function Workspace(
           )}
         </div>
       </div>
-      {preview?.isNew ? (
+      {preview?.isNew && tab !== "files" ? (
         <div className="scroll section workspace-body">
           {p.currentProject && (
             <p className="workspace-project-context">
@@ -1638,6 +1831,13 @@ export function Workspace(
             workspace={root}
             path={preview.path}
             isNew
+            saveTargetLabel={
+              p.currentProject?.setup?.workspace === root
+                ? p.currentProject.name
+                : root
+                  ? folderName(root)
+                  : undefined
+            }
             onCancel={() => setPreview(null)}
             onSaved={() => {}}
             onCreated={(createdPath) => {
@@ -1671,11 +1871,6 @@ export function Workspace(
         </div>
       ) : (
         <div className="scroll section workspace-body">
-          {p.currentProject && (
-            <p className="workspace-project-context">
-              Current project: <b>{p.currentProject.name}</b>
-            </p>
-          )}
           {tab === "preview" ? (
             <DevServerPanel
               key={agent.id + root}
@@ -1692,57 +1887,66 @@ export function Workspace(
             />
           ) : tab === "files" ? (
             <>
-              {root && (
-                <div className="row between">
-                  <div className="row">
-                    <button
-                      className="icon"
-                      title="Parent folder"
-                      disabled={path === "."}
-                      onClick={() => {
-                        if (!canLeaveFileEditor()) return;
-                        const parts = path.split(/[\\/]/);
-                        parts.pop();
-                        setPath(parts.join("/") || ".");
-                        setPreview(null);
-                      }}
-                    >
-                      <ArrowLeft size={16} />
-                    </button>
-                    <code>{path === "." ? "Project root" : path}</code>
-                  </div>
+              <div className="workspace-project-context">
+                <span>
+                  {p.currentProject ? "Current project" : "Workspace"}
+                </span>
+                <b>{p.currentProject?.name ?? "Scratch files"}</b>
+                <small>
+                  {root
+                    ? `${folderName(root)}${path === "." ? "" : ` / ${path}`}`
+                    : "No folder selected · new files can be saved to your computer"}
+                </small>
+              </div>
+              <div className="row between workspace-file-toolbar">
+                <div className="row">
                   <button
                     className="icon"
-                    title="Refresh files"
-                    onClick={() => void p.act(load)}
-                  >
-                    <RefreshCw size={15} />
-                  </button>
-                  <button
-                    className="primary"
-                    title={`Create a file in ${root}${path === "." ? "" : `/${path}`}`}
+                    title="Parent folder"
+                    disabled={!root || path === "."}
                     onClick={() => {
                       if (!canLeaveFileEditor()) return;
-                      const folder = path === "." ? "" : `${path}/`;
-                      setPreview({
-                        path: `${folder}untitled.txt`,
-                        name: "untitled.txt",
-                        isNew: true,
-                      });
+                      const parts = path.split(/[\\/]/);
+                      parts.pop();
+                      setPath(parts.join("/") || ".");
+                      setPreview(null);
+                      setListing(null);
                     }}
                   >
-                    <Plus size={15} />
-                    New file
+                    <ArrowLeft size={16} />
                   </button>
+                  <code>
+                    {root
+                      ? path === "."
+                        ? "Project root"
+                        : path
+                      : "Scratch file"}
+                  </code>
                 </div>
-              )}
-              <div className="workspace-file-browser">
+                {root && (
+                  <>
+                    <button
+                      title="Refresh folder"
+                      onClick={() => void p.act(load)}
+                    >
+                      <RefreshCw size={15} /> Refresh
+                    </button>
+                    <button
+                      title="Open this folder in your configured editor"
+                      onClick={() => void p.act(() => open(".", "project"))}
+                    >
+                      <ExternalLink size={14} /> Open folder
+                    </button>
+                  </>
+                )}
+              </div>
+              <div className="workspace-file-browser workspace-file-browser-single">
                 <aside
                   className="workspace-agent-folders"
-                  aria-label="Agent folders"
+                  aria-label="Agent folders and files"
                 >
-                  <h3>Agent folders</h3>
-                  <div role="tree" aria-label="Agent folders">
+                  <h3>Folders by agent</h3>
+                  <div role="tree" aria-label="Folders and files by agent">
                     {p.data.agents.map((folderAgent) => {
                       const expanded = !collapsedFolderAgents.has(
                         folderAgent.id,
@@ -1786,7 +1990,6 @@ export function Workspace(
                                 if (!canLeaveFileEditor()) return;
                                 setWorkspaceAgentId(folderAgent.id);
                               }}
-                              title={agentSelectorLabel(folderAgent)}
                             >
                               <AgentAvatar
                                 name={folderAgent.name}
@@ -1804,159 +2007,231 @@ export function Workspace(
                                 const active =
                                   isCurrentAgent && workspace.path === root;
                                 return (
-                                  <button
-                                    key={workspace.path}
-                                    className={`workspace-folder-node${active ? " active" : ""}`}
-                                    role="treeitem"
-                                    aria-level={2}
-                                    aria-selected={active}
-                                    onClick={() =>
-                                      selectFolder(
-                                        folderAgent.id,
-                                        workspace.path,
-                                      )
-                                    }
-                                    title={`${workspace.path} · ${workspace.access}`}
-                                  >
-                                    <FolderOpen size={15} />
-                                    <span className="workspace-folder-node-label">
-                                      <b>{folderName(workspace.path)}</b>
-                                      <small>{workspace.path}</small>
-                                    </span>
-                                    <small className="workspace-folder-access">
-                                      {workspace.access === "write"
-                                        ? "Write"
-                                        : "Read"}
-                                    </small>
-                                  </button>
+                                  <div key={workspace.path}>
+                                    <button
+                                      className={`workspace-folder-node${active ? " active" : ""}`}
+                                      role="treeitem"
+                                      aria-level={2}
+                                      aria-selected={active}
+                                      title={`${workspace.path} · ${workspace.access}`}
+                                      onClick={() =>
+                                        selectFolder(
+                                          folderAgent.id,
+                                          workspace.path,
+                                        )
+                                      }
+                                    >
+                                      <FolderOpen size={15} />
+                                      <span className="workspace-folder-node-label">
+                                        <b>{folderName(workspace.path)}</b>
+                                        <small>{workspace.path}</small>
+                                      </span>
+                                      <small className="workspace-folder-access">
+                                        {workspace.access === "write"
+                                          ? "Write"
+                                          : "Read"}
+                                      </small>
+                                    </button>
+                                    {active && (
+                                      <div
+                                        className="workspace-inline-files"
+                                        role="group"
+                                        aria-label={`Files in ${folderName(workspace.path)}`}
+                                      >
+                                        {listing?.entries.map((entry: any) => (
+                                          <button
+                                            key={entry.path}
+                                            className="workspace-inline-file"
+                                            role="treeitem"
+                                            aria-level={3}
+                                            aria-current={
+                                              preview?.path === entry.path
+                                                ? "page"
+                                                : undefined
+                                            }
+                                            onClick={() =>
+                                              selectFileEntry(entry)
+                                            }
+                                            onContextMenu={(event) => {
+                                              event.preventDefault();
+                                              setContext({
+                                                path: entry.path,
+                                                x: event.clientX,
+                                                y: event.clientY,
+                                              });
+                                            }}
+                                          >
+                                            {entry.type === "directory" ? (
+                                              <FolderOpen size={14} />
+                                            ) : (
+                                              <File size={14} />
+                                            )}
+                                            <span>{entry.name}</span>
+                                            {entry.type === "directory" && (
+                                              <ChevronRight size={13} />
+                                            )}
+                                          </button>
+                                        ))}
+                                        {listing &&
+                                          listing.entries.length === 0 && (
+                                            <small className="workspace-no-folder">
+                                              This folder is empty.
+                                            </small>
+                                          )}
+                                      </div>
+                                    )}
+                                  </div>
                                 );
                               })}
                             </div>
-                          )}
-                          {expanded && folderAgent.workspaces.length === 0 && (
-                            <p className="workspace-agent-no-folders">
-                              No folders
-                            </p>
                           )}
                         </div>
                       );
                     })}
                   </div>
                 </aside>
-                <aside
-                  className="workspace-file-tree"
-                  aria-label="Project files"
-                >
-                  <div className="file-list">
-                    {!root ? (
-                      <p className="workspace-no-folder">
-                        Choose an agent folder to browse its files.
-                      </p>
-                    ) : (
-                      listing?.entries.map((entry: any) => (
-                        <button
-                          key={entry.path}
-                          aria-current={
-                            preview?.path === entry.path ? "page" : undefined
-                          }
-                          onClick={() => {
-                            if (
-                              preview?.path !== entry.path &&
-                              !canLeaveFileEditor()
-                            )
-                              return;
-                            void p.act(async () => {
-                              if (entry.type === "directory") {
-                                setPath(entry.path);
-                                setPreview(null);
-                              } else {
-                                setPreview({
-                                  path: entry.path,
-                                  name: entry.name,
-                                });
-                              }
-                            });
-                          }}
-                          onContextMenu={(e) => {
-                            e.preventDefault();
-                            setContext({
-                              path: entry.path,
-                              x: e.clientX,
-                              y: e.clientY,
-                            });
-                          }}
-                        >
-                          {entry.type === "directory" ? (
-                            <FolderOpen size={16} />
-                          ) : (
-                            <File size={16} />
-                          )}
-                          <span>{entry.name}</span>
-                          {entry.type === "directory" && (
-                            <ChevronRight size={14} />
-                          )}
-                        </button>
-                      ))
-                    )}
-                  </div>
-                  {root && (
-                    <div className="row wrap workspace-file-actions">
-                      <button onClick={() => void p.act(() => open("."))}>
-                        Open project externally
-                      </button>
-                      <button
-                        onClick={() => void p.act(() => open(path, "finder"))}
-                      >
-                        Reveal folder
-                      </button>
-                      <OpenWith
-                        agentId={agent.id}
-                        workspace={root}
-                        path={path}
-                        project
-                      />
-                    </div>
-                  )}
-                </aside>
                 <section
                   className="workspace-file-editor"
-                  aria-label="File editor"
+                  aria-label="File preview and editor"
                 >
-                  {preview ? (
-                    <FilePreview
-                      key={agent.id + root + preview.path}
-                      agentId={agent.id}
-                      workspace={root}
-                      path={preview.path}
-                      access={
-                        agent.workspaces.find((w) => w.path === root)?.access ??
-                        "read"
-                      }
-                      refreshKey={tick}
-                    />
-                  ) : (
-                    <div className="empty compact">
-                      <File size={30} />
-                      <p>
-                        {root
-                          ? "Select a file to preview or edit it."
-                          : "Open a folder or start with a new file."}
-                      </p>
-                      {!root && (
-                        <button
-                          onClick={() =>
-                            setPreview({
-                              path: "untitled.txt",
-                              name: "untitled.txt",
-                              isNew: true,
-                            })
-                          }
-                        >
-                          <Plus size={15} /> New file
-                        </button>
-                      )}
+                  {fileTabs.length > 0 && (
+                    <div
+                      className="workspace-open-tabs"
+                      role="tablist"
+                      aria-label="Open files"
+                    >
+                      {fileTabs.map((file) => {
+                        const active =
+                          !!preview && fileTabId(preview) === file.id;
+                        const index = fileTabs.indexOf(file);
+                        return (
+                          <div
+                            className="workspace-open-tab"
+                            role="presentation"
+                            key={file.id}
+                          >
+                            <button
+                              id={`file-tab-${index}`}
+                              role="tab"
+                              aria-selected={active}
+                              aria-controls={`file-panel-${index}`}
+                              className={active ? "active" : ""}
+                              onClick={() =>
+                                setPreview({
+                                  path: file.path,
+                                  name: file.name,
+                                  isNew: file.isNew,
+                                })
+                              }
+                            >
+                              {file.dirty && <i aria-label="Unsaved changes" />}
+                              <span>{file.name}</span>
+                            </button>
+                            <button
+                              className="workspace-close-file"
+                              aria-label={`Close ${file.name}`}
+                              title={`Close ${file.name}`}
+                              onClick={() => closeFileTab(file.id)}
+                            >
+                              <X size={13} />
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
+                  <div className="workspace-open-file-panels">
+                    {fileTabs.map((file, index) => {
+                      const active =
+                        !!preview && fileTabId(preview) === file.id;
+                      const access =
+                        agent.workspaces.find((w) => w.path === root)?.access ??
+                        "read";
+                      return (
+                        <div
+                          id={`file-panel-${index}`}
+                          role="tabpanel"
+                          aria-labelledby={`file-tab-${index}`}
+                          className="workspace-open-file-panel"
+                          hidden={!active}
+                          key={file.id}
+                        >
+                          {file.isNew ? (
+                            <TextEditor
+                              agentId={agent.id}
+                              workspace={root}
+                              path={file.path}
+                              isNew
+                              active={active}
+                              guardLeave={false}
+                              onDirtyChange={(dirty) =>
+                                updateFileTabDirty(file.id, dirty)
+                              }
+                              saveTargetLabel={
+                                p.currentProject?.setup?.workspace === root
+                                  ? p.currentProject.name
+                                  : root
+                                    ? folderName(root)
+                                    : undefined
+                              }
+                              onCancel={() => closeFileTab(file.id, true)}
+                              onSaved={() => {}}
+                              onCreated={(createdPath) => {
+                                const name =
+                                  createdPath.split(/[\\/]/).pop() ??
+                                  createdPath;
+                                const id = JSON.stringify([
+                                  workspaceAgentId,
+                                  root,
+                                  createdPath,
+                                ]);
+                                setFileTabs((open) =>
+                                  open.map((item) =>
+                                    item.id === file.id
+                                      ? {
+                                          ...item,
+                                          id,
+                                          path: createdPath,
+                                          name,
+                                          isNew: false,
+                                          dirty: false,
+                                        }
+                                      : item,
+                                  ),
+                                );
+                                setPreview({ path: createdPath, name });
+                                setTick((value) => value + 1);
+                                void p.act(load);
+                              }}
+                            />
+                          ) : (
+                            <FilePreview
+                              agentId={agent.id}
+                              workspace={root}
+                              path={file.path}
+                              access={access}
+                              refreshKey={tick}
+                              active={active}
+                              guardLeave={false}
+                              onDirtyChange={(dirty) =>
+                                updateFileTabDirty(file.id, dirty)
+                              }
+                            />
+                          )}
+                        </div>
+                      );
+                    })}
+                    {!fileTabs.length && (
+                      <div className="empty compact workspace-file-empty">
+                        <File size={26} />
+                        <p>
+                          {root
+                            ? "Choose a file in the folder tree, or create one here."
+                            : "Start a scratch file, attach a folder, or choose an agent folder."}
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 </section>
               </div>
             </>

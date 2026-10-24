@@ -122,6 +122,7 @@ test("orchestration: role presets, advisory vs required rules, ties and blocked 
     expect(state.explain.triggers[0].status).toBe("tie");
     // Rule editor: advisory vs mandatory is explicit; ties and the winner are visible.
     await openFeature(page, "Projects");
+    await page.locator("details.project-routing-tools > summary").click();
     await page.getByRole("button", { name: "Rule", exact: true }).click();
     await expect(page.getByTestId("rule-mode-hint")).toContainText(
       "nothing waits",

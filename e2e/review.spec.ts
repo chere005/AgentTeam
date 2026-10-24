@@ -222,6 +222,8 @@ test("Diff lists and compares pending file changes without requiring Git", async
     await expect(review.getByLabel("Diff content")).toContainText(
       "print('Pi')",
     );
+    await review.getByText("Baseline options", { exact: true }).click();
+    page.once("dialog", (dialog) => void dialog.accept());
     await review
       .getByRole("button", { name: "Set current files as baseline" })
       .click();

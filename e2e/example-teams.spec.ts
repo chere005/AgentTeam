@@ -297,8 +297,8 @@ test("example teams: listed with shape and org preview, inserted as teams (no pr
       }
     }
 
-    // Detailed cards are taller: Arrange measures them and keeps the invariants. The Wolfram team
-    // (active now) is small enough to stay at full zoom, so the detailed cards themselves render.
+    // Switching card modes reflows an automatically arranged team to fit the new card size.
+    // The Wolfram team (active now) is small enough to stay at full zoom.
     const wolframAgents = await teamAgents(page);
     const compactHeights = Object.values(
       await boxes(
@@ -307,7 +307,6 @@ test("example teams: listed with shape and org preview, inserted as teams (no pr
       ),
     ).map((x) => Math.round(x.height));
     await page.getByRole("button", { name: "Detailed cards" }).click();
-    await page.getByRole("button", { name: "Arrange", exact: true }).click();
     await page.waitForTimeout(700);
     const detailed = await boxes(
       page,
@@ -326,6 +325,14 @@ test("example teams: listed with shape and org preview, inserted as teams (no pr
     assertOrgChart(wolframAgents, detailed);
     await page.screenshot({ path: join(shots, "canvas-wolfram-detailed.png") });
     await page.getByRole("button", { name: "Simple cards" }).click();
+    await page.waitForTimeout(700);
+    assertOrgChart(
+      wolframAgents,
+      await boxes(
+        page,
+        wolframAgents.map((a) => a.id),
+      ),
+    );
 
     // Assign a project to the product team from the team menu.
     await page.getByTestId("team-switcher").click();
@@ -369,7 +376,7 @@ test("example teams: listed with shape and org preview, inserted as teams (no pr
       .fill("Add CSV export to the reports page");
     await form.getByLabel("Project workspace").fill(workspace);
     await form.getByRole("button", { name: "Create paused project" }).click();
-    await expect(page.locator(".workflow")).toHaveCount(2);
+    await expect(page.locator(".project-nav-item")).toHaveCount(2);
     expect(errors).toEqual([]);
   } finally {
     await app.close();

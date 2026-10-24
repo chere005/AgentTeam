@@ -5,69 +5,77 @@
  * dialogs read better as white sheets on a light grey ground, and backdrops as a soft dim.
  */
 :root[data-theme="light"] {
-  --bg: #f4f6f9;
-  --panel: #ffffff;
-  --surface-1: #ffffff;
-  --surface-2: #ffffff;
-  --text: #1d2633;
-  --muted: #556274;
-  --faint: #636f80;
+  --bg: #eee8dd;
+  --surface-0: #eee8dd;
+  --panel: #f8f4ec;
+  --surface-1: #e8dece;
+  --surface-2: #e8d9c8;
+  --line: #c8b8a2;
+  --line-soft: #e8d9c8;
+  --line-strong: #c8b8a2;
+  --selected: #d8c4a7;
+  --text: #29241e;
+  --muted: #5c5144;
+  --faint: #5c5144;
+  --accent: #784321;
+  --accent-bg: #e8d9c8;
+  --accent-hover: #5c3218;
+  --accent-contrast: #ffffff;
   --editor-keyword: #7f3193;
   --editor-string: #735300;
   --editor-number: #9c471b;
   --editor-function: #006e65;
   --editor-selection: #789ec44d;
-  --surface-0: #ffffff;
-  background: #f4f6f9;
-  color: #1d2633;
+  background: #eee8dd;
+  color: #29241e;
 }
 :where(:root[data-theme="light"]) .react-flow {
-  background: #eef1f5 !important;
+  background: #eee8dd !important;
 }
 :where(:root[data-theme="light"]) .agent-card {
-  background: #ffffff;
-  box-shadow: 0 1px 3px #1a24331a;
+  background: var(--surface-1);
+  box-shadow: 0 1px 3px #29241e1a;
 }
 :where(:root[data-theme="light"]) .agent-card.chosen {
   box-shadow:
-    0 0 0 3px #2f8c7333,
-    0 1px 3px #1a24331a;
+    0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent),
+    0 1px 3px #29241e1a;
 }
 :where(:root[data-theme="light"]) .modal-backdrop {
-  background: #1a243359;
+  background: #29241e59;
 }
 :where(:root[data-theme="light"]) .context-menu {
-  background: #ffffff;
-  box-shadow: 0 10px 30px #1a243326;
+  background: var(--panel);
+  box-shadow: 0 10px 30px #29241e26;
 }
 :where(:root[data-theme="light"]) .react-flow__handle {
-  border-color: #ffffff !important;
+  border-color: var(--bg) !important;
 }
-/* Primary actions: a medium teal with white text reads calmer than the mirrored dark green. */
+/* Primary actions use the selected Sand Ink accent in light mode. */
 :where(:root[data-theme="light"]) button.primary,
 :where(:root[data-theme="light"]) .send {
-  background: #23735f;
-  border-color: #23735f;
-  color: #ffffff;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
 }
 :where(:root[data-theme="light"]) button.primary:hover:not(:disabled),
 :where(:root[data-theme="light"]) .send:hover:not(:disabled) {
-  background: #1b5e4d;
+  background: var(--accent-hover);
 }
 :where(:root[data-theme="light"]) .react-flow__attribution {
   background: transparent;
 }
 :where(:root[data-theme="light"]) .react-flow__attribution a {
-  color: #556274;
+  color: var(--muted);
 }
-/* Selected tabs sit on white panels: give them a visible tint. */
+/* Keep selected navigation and dialogs on the warm Sand Ink surfaces. */
 :where(:root[data-theme="light"]) .side-tabs button[aria-selected="true"] {
-  background: #e6eeeb;
+  background: var(--selected);
 }
 :where(:root[data-theme="light"]) .view-tab.active {
-  background: #ffffff;
+  background: var(--panel);
 }
 :where(:root[data-theme="light"]) .modal {
-  background: #ffffff;
-  box-shadow: 0 24px 70px #1a243333;
+  background: var(--panel);
+  box-shadow: 0 24px 70px #29241e33;
 }

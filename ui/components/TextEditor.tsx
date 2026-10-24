@@ -1,7 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { FILE_EDITOR_LEAVE_EVENT } from "../file-editor-guard";
 import { CodeEditor, editorLanguage, type EditorStatus } from "./CodeEditor";
+import {
+  defaultSublimePreferences,
+  type SublimeEditorConfig,
+} from "../editor-preferences";
 
 type Document = { content: string; hash: string; access: string };
 const saveShortcut = /Mac/i.test(navigator.platform) ? "⌘S" : "Ctrl+S";
@@ -11,6 +15,10 @@ export function TextEditor({
   workspace,
   path,
   isNew = false,
+  saveTargetLabel,
+  active = true,
+  guardLeave = true,
+  onDirtyChange,
   onCancel,
   onSaved,
   onCreated,
@@ -19,6 +27,10 @@ export function TextEditor({
   workspace: string;
   path: string;
   isNew?: boolean;
+  saveTargetLabel?: string;
+  active?: boolean;
+  guardLeave?: boolean;
+  onDirtyChange?: (dirty: boolean) => void;
   onCancel: () => void;
   onSaved: (content: string, bytes: number) => void;
   onCreated?: (path: string, content: string, bytes: number) => void;
@@ -29,18 +41,30 @@ export function TextEditor({
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState("");
   const [newPath, setNewPath] = useState(path);
-  const [wrap, setWrap] = useState(false);
+  const [wrap, setWrap] = useState<boolean | null>(null);
+  const [sublimeConfig, setSublimeConfig] = useState<SublimeEditorConfig>({
+    preferences: defaultSublimePreferences,
+    globalSettings: "missing",
+    projectFile: null,
+  });
   const [cursor, setCursor] = useState<EditorStatus>({
     line: 1,
     column: 1,
     selections: 1,
     selected: 0,
   });
+  const dirtyCallback = useRef(onDirtyChange);
+  dirtyCallback.current = onDirtyChange;
   const dirty = doc !== null && draft !== doc.content;
   const cancel = () => {
     if (dirty && !window.confirm("Discard your unsaved file changes?")) return;
     onCancel();
   };
+
+  useEffect(() => {
+    dirtyCallback.current?.(dirty);
+  }, [dirty]);
+  useEffect(() => () => dirtyCallback.current?.(false), []);
 
   useEffect(() => {
     let alive = true;
@@ -69,7 +93,32 @@ export function TextEditor({
   }, [agentId, workspace, path, isNew]);
 
   useEffect(() => {
-    if (!dirty) return;
+    let alive = true;
+    const request = workspace
+      ? api(`/agents/${agentId}/editors/preferences`, "POST", { workspace })
+      : api("/editors/sublime-config");
+    request
+      .then((config: SublimeEditorConfig) => alive && setSublimeConfig(config))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [agentId, workspace]);
+
+  const preferences = sublimeConfig.preferences;
+  const wordWrap = wrap ?? preferences.wordWrap;
+  const settingsSource =
+    [
+      sublimeConfig.globalSettings === "loaded"
+        ? "Preferences.sublime-settings"
+        : "",
+      sublimeConfig.projectFile,
+    ]
+      .filter(Boolean)
+      .join(" + ") || "Sublime defaults";
+
+  useEffect(() => {
+    if (!dirty || !guardLeave || !active) return;
     const confirmLeave = (event: Event) => {
       if (!window.confirm("Discard your unsaved file changes?"))
         event.preventDefault();
@@ -84,13 +133,38 @@ export function TextEditor({
       window.removeEventListener(FILE_EDITOR_LEAVE_EVENT, confirmLeave);
       window.removeEventListener("beforeunload", beforeUnload);
     };
-  }, [dirty]);
+  }, [dirty, guardLeave, active]);
 
   const save = async () => {
     if (!doc || (!dirty && !isNew) || saving) return;
     setSaving(true);
     setError("");
     try {
+      const activity = await api(`/agents/${agentId}/files/activity`, "POST", {
+        workspace,
+        path: isNew ? newPath : path,
+        create: isNew,
+      });
+      if (activity.activities.length) {
+        const rows = activity.activities
+          .slice(0, 5)
+          .map(
+            (item: { agentName: string; state: string; title: string }) =>
+              `• ${item.agentName} · ${item.state}: ${item.title}`,
+          );
+        const more = activity.activities.length > rows.length;
+        const message = [
+          "AgentTeam work overlaps this file or its folder:",
+          "",
+          ...rows,
+          ...(more
+            ? [`• and ${activity.activities.length - rows.length} more`]
+            : []),
+          "",
+          "Save your changes anyway?",
+        ].join("\n");
+        if (!window.confirm(message)) return;
+      }
       const result = isNew
         ? await api(`/agents/${agentId}/files/create`, "POST", {
             workspace,
@@ -123,19 +197,26 @@ export function TextEditor({
     <section className="text-editor" aria-label={`Editor for ${path}`}>
       <div className="text-editor-toolbar">
         {isNew ? (
-          <label className="text-editor-new-name">
-            File name
-            <input
-              aria-label="New file name"
-              value={newPath.split(/[\\/]/).pop() ?? "untitled.txt"}
-              onChange={(event) => {
-                const folder = newPath.includes("/")
-                  ? newPath.slice(0, newPath.lastIndexOf("/") + 1)
-                  : "";
-                setNewPath(folder + event.target.value);
-              }}
-            />
-          </label>
+          <div className="text-editor-new-details">
+            <label className="text-editor-new-name">
+              File name
+              <input
+                aria-label="New file name"
+                value={newPath.split(/[\\/]/).pop() ?? "untitled.txt"}
+                onChange={(event) => {
+                  const folder = newPath.includes("/")
+                    ? newPath.slice(0, newPath.lastIndexOf("/") + 1)
+                    : "";
+                  setNewPath(folder + event.target.value);
+                }}
+              />
+            </label>
+            <span className="text-editor-target">
+              {workspace
+                ? `Save target: ${saveTargetLabel ?? "selected folder"}`
+                : "No project folder · save to your computer"}
+            </span>
+          </div>
         ) : (
           <span className="text-editor-status">
             <i className={dirty ? "dirty" : ""} />
@@ -144,9 +225,9 @@ export function TextEditor({
         )}
         <div className="row">
           <button
-            aria-pressed={wrap}
+            aria-pressed={wordWrap}
             title="Wrap long lines"
-            onClick={() => setWrap((value) => !value)}
+            onClick={() => setWrap((value) => !(value ?? preferences.wordWrap))}
           >
             Word wrap
           </button>
@@ -187,15 +268,15 @@ export function TextEditor({
           <button
             className="primary"
             disabled={
-              (!dirty && !isNew) ||
-              saving ||
-              doc?.access !== "write" ||
-              !workspace ||
-              !newPath.trim()
+              (!dirty && !isNew) || saving || !workspace || !newPath.trim()
             }
             onClick={() => void save()}
           >
-            {saving ? "Saving…" : isNew ? "Save in workspace" : "Save"}
+            {saving
+              ? "Saving…"
+              : isNew
+                ? `Save in ${saveTargetLabel ?? "workspace"}`
+                : "Save"}
             <kbd>{saveShortcut}</kbd>
           </button>
         </div>
@@ -212,8 +293,10 @@ export function TextEditor({
           <CodeEditor
             value={draft}
             path={newPath}
-            readOnly={doc?.access !== "write"}
-            wrap={wrap}
+            readOnly={false}
+            wrap={wordWrap}
+            active={active}
+            preferences={preferences}
             onChange={setDraft}
             onSave={() => void save()}
             onStatus={setCursor}
@@ -221,20 +304,19 @@ export function TextEditor({
         </div>
       )}
       <footer className="text-editor-footer">
-        {doc?.access === "write"
-          ? isNew
-            ? `New file in ${workspace}`
-            : "Writable folder · UTF-8"
-          : "Read-only folder"}
-        <span>
+        {isNew
+          ? `New file in ${workspace}`
+          : `You can edit · agent access: ${doc?.access === "write" ? "write" : "read only"}`}
+        <span title={`Sublime settings: ${settingsSource}`}>
           Ln {cursor.line}, Col {cursor.column}
           {cursor.selections > 1
             ? ` · ${cursor.selections} selections`
             : cursor.selected
               ? ` · ${cursor.selected} selected`
               : ""}{" "}
-          · {editorLanguage(newPath).name} · Spaces: 2 ·{" "}
-          {draft.split("\n").length} lines ·{" "}
+          · {editorLanguage(newPath).name} ·{" "}
+          {preferences.translateTabsToSpaces ? "Spaces" : "Tabs"}:{" "}
+          {preferences.tabSize} · {draft.split("\n").length} lines ·{" "}
           {new TextEncoder().encode(draft).length.toLocaleString()} bytes
         </span>
       </footer>

@@ -392,7 +392,7 @@ test("theme: Settings → Appearance switches light/dark, persists across a rela
         bg: BrowserWindow.getAllWindows()[0].getBackgroundColor().toLowerCase(),
         source: nativeTheme.themeSource,
       }));
-    expect(await shell()).toEqual({ bg: "#f4f6f9", source: "light" });
+    expect(await shell()).toEqual({ bg: "#eee8dd", source: "light" });
     await openFeature(page, "Settings");
     await expect(page.getByRole("combobox", { name: "Theme" })).toHaveValue(
       "light",
@@ -400,7 +400,7 @@ test("theme: Settings → Appearance switches light/dark, persists across a rela
     await page.getByRole("combobox", { name: "Theme" }).selectOption("dark");
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     expect(isLight(await background(page))).toBe(false);
-    await expect.poll(shell).toEqual({ bg: "#10141c", source: "dark" });
+    await expect.poll(shell).toEqual({ bg: "#1b1217", source: "dark" });
     // System: follows prefers-color-scheme.
     await page.getByRole("combobox", { name: "Theme" }).selectOption("system");
     await page.emulateMedia({ colorScheme: "light" });

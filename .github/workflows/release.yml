@@ -39,7 +39,6 @@ jobs:
       # until their known failures are fixed (TODO.md), so they never block the installers.
       - run: npm test
         continue-on-error: ${{ runner.os != 'macOS' }}
-      - run: npm run build
       - if: runner.os != 'Linux'
         run: npm run test:ui
         continue-on-error: ${{ runner.os != 'macOS' }}

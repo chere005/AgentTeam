@@ -35,8 +35,13 @@
   outline: none;
 }
 .team-chat-tree [role="treeitem"]:focus-visible > .team-chat-tree-row {
-  outline: 1px solid #8cddc2;
+  outline: 1px solid var(--accent);
   outline-offset: -1px;
+}
+.team-chat-tree [role="group"] {
+  margin-left: 12px;
+  padding-left: 5px;
+  border-left: 1px solid var(--line);
 }
 .team-chat-tree-toggle {
   display: grid;
@@ -186,9 +191,36 @@
 }
 .team-chat-content {
   display: flex;
+  flex-direction: column;
   flex: 1;
   min-width: 0;
   min-height: 0;
+}
+.team-chat-conversation-picker {
+  display: grid;
+  grid-template-columns: minmax(180px, 320px) minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-1);
+}
+.team-chat-conversation-picker label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.team-chat-conversation-picker select {
+  min-width: 0;
+  flex: 1;
+  padding: 6px 8px;
+  font-size: 11px;
+}
+.team-chat-conversation-picker small {
+  color: var(--muted);
+  font-size: 10px;
 }
 .team-chat-content > .chat,
 .team-chat-content > .chat-pane,
@@ -196,6 +228,12 @@
   flex: 1;
   min-width: 0;
   min-height: 0;
+}
+@media (max-width: 700px) {
+  .team-chat-conversation-picker {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
 }
 .team-chat-content > section.group-chat {
   display: flex;

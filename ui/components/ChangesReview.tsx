@@ -157,7 +157,13 @@ export function ChangesReview({
   );
   const scopeKey = JSON.stringify(scope);
   const narrow = width < NARROW;
-  const split = view === "split" && !narrow && review?.source !== "folder";
+  const selectedChange = review?.files.find((file) => file.path === path);
+  const wholeFileAdded =
+    review?.meta?.kind === "added" ||
+    selectedChange?.status.trim().startsWith("A") === true ||
+    selectedChange?.status.trim().startsWith("??") === true;
+  // New files read best as one full-width green addition, not a blank old-file column beside it.
+  const split = view === "split" && !narrow && !wholeFileAdded;
 
   useEffect(() => {
     const el = root.current;
@@ -319,10 +325,19 @@ export function ChangesReview({
       ref={root}
       onKeyDown={onKeyDown}
     >
-      <div className="row between">
-        <h3>
-          {review?.source === "folder" ? "Pending changes" : "Review changes"}
-        </h3>
+      <div className="row between changes-review-header">
+        <div>
+          <h3>
+            {mode === "compare" ? "Compare revisions" : "Pending changes"}
+          </h3>
+          <span className="change-source-badge">
+            {review?.source === "folder"
+              ? "Folder snapshot · no Git required"
+              : review?.source === "git"
+                ? "Git working tree"
+                : "Diff"}
+          </span>
+        </div>
         <button
           onClick={() => {
             setPath("");
@@ -335,39 +350,53 @@ export function ChangesReview({
       <p className="hint">
         {review?.source === "folder" ? (
           <>
-            Folder snapshot · no Git required · {workspace}
+            {review.files.length} changed files · {workspace}
             {review.baselineAt &&
-              ` · tracking edits since ${new Date(review.baselineAt).toLocaleString()}`}
+              ` · since ${new Date(review.baselineAt).toLocaleString()}`}
           </>
         ) : (
           <>
-            {review?.branch} · {workspace}
-            <br />
+            {review?.branch ?? workspace}
             {review?.attribution?.note ??
-              "Changes in this folder may come from any agent or editor."}
+              ` · ${workspace} · changes may come from any agent or editor.`}
           </>
         )}
       </p>
       {review?.source === "folder" && (
-        <div className="row wrap folder-diff-baseline">
-          <button
-            onClick={() => {
-              setError("");
-              void api(`/agents/${agentId}/files/changes/reset`, "POST", {
-                workspace,
-              })
-                .then(() => {
-                  setBaselineNotice("Current files are now the baseline.");
-                  setPath("");
-                  refresh((value) => value + 1);
+        <details className="folder-diff-baseline">
+          <summary>Baseline options</summary>
+          <div className="row wrap">
+            <p className="hint">
+              Reset what counts as pending by recording the files in this folder
+              now.
+            </p>
+            <button
+              onClick={() => {
+                if (
+                  !window.confirm(
+                    "Use the current folder contents as the new baseline? Existing pending changes will no longer appear in this folder diff.",
+                  )
+                )
+                  return;
+                setError("");
+                void api(`/agents/${agentId}/files/changes/reset`, "POST", {
+                  workspace,
                 })
-                .catch((reason) => setError(String(reason?.message ?? reason)));
-            }}
-          >
-            Set current files as baseline
-          </button>
-          {baselineNotice && <span role="status">{baselineNotice}</span>}
-        </div>
+                  .then(() => {
+                    setBaselineNotice("Current files are now the baseline.");
+                    setPath("");
+                    refresh((value) => value + 1);
+                  })
+                  .catch((reason) =>
+                    setError(String(reason?.message ?? reason)),
+                  );
+              }}
+            >
+              Set current files as baseline
+            </button>
+            {baselineNotice && <span role="status">{baselineNotice}</span>}
+          </div>
+        </details>
       )}
       {review?.source !== "folder" && (
         <div className="tabs">
@@ -570,10 +599,16 @@ export function ChangesReview({
               )}
             </nav>
             {path && review.files.length > 0 && (
-              <div className="review-diff">
+              <div
+                className={`review-diff${wholeFileAdded ? " review-diff-added-file" : ""}`}
+                aria-label={wholeFileAdded ? "New file contents" : undefined}
+              >
                 <div className="row between">
                   <strong>{path}</strong>
                   <span>
+                    {wholeFileAdded && (
+                      <span className="review-added-label">New file</span>
+                    )}{" "}
                     <span className="diff-count-add">+{added}</span> /{" "}
                     <span className="diff-count-remove">−{removed}</span>
                   </span>

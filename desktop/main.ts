@@ -248,9 +248,9 @@ async function start() {
       return "system";
     }
   }
-  /** Page background of the resolved theme (ui/theme-light.css --bg, dark #10141c). */
+  /** Page background of the resolved theme (ui/theme-light.css --bg, dark #1b1217). */
   function windowBackground() {
-    return nativeTheme.shouldUseDarkColors ? "#10141c" : "#f4f6f9";
+    return nativeTheme.shouldUseDarkColors ? "#1b1217" : "#eee8dd";
   }
   function createWindow() {
     const theme = storedTheme();

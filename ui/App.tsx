@@ -525,8 +525,10 @@ export default function App() {
         setHelp(true);
       }
     };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    // Main-view shortcuts must still work when CodeMirror, a chat composer or another nested
+    // widget owns focus. The unsaved-editor guard below decides whether navigation may proceed.
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
   }, []);
   const agent = view.agents.find((a) => a.id === selected);
   const members = view.agents.filter((a) => a.kind !== "team-assistant");
@@ -657,6 +659,7 @@ export default function App() {
             data={view}
             events={events}
             openChat={openConversation}
+            initialWorkflowId={currentProjectId}
           />
         );
       case "recovery":

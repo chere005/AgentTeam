@@ -132,9 +132,19 @@ test("an agent's Chat pane leads with its result and tucks full instructions beh
       .getByRole("treeitem", { name: "Python Builder", exact: true })
       .getByRole("treeitem", { name: /Write the Python Pi program/ })
       .click();
+    const conversationPicker = page.getByLabel(
+      "Conversation for Python Builder",
+    );
+    await expect(conversationPicker).toBeVisible();
+    await conversationPicker.selectOption({
+      label: "Write the Python Pi program",
+    });
     await expect(
       page.getByRole("region", { name: "Agent group chat" }),
     ).toContainText("Code Reviewer");
+    await expect(
+      page.getByRole("region", { name: "Agent group chat" }),
+    ).toContainText("Please explain the algorithm.");
 
     await page.getByRole("button", { name: "Help and feature guide" }).click();
     const help = page.getByRole("dialog", { name: "Help and feature guide" });

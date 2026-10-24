@@ -1,6 +1,14 @@
 # AgentTeam continuation handoff
 
-## Start here: v0.2.2 released (October 23, 2026)
+## Current handoff: v0.2.3 editor/theme candidate (October 23, 2026)
+
+This candidate adds Burgundy Rose dark mode and Sand Ink light mode, with the native window frame matching the chosen theme on launch. The text editor reads supported preferences from Sublime Text's global `Preferences.sublime-settings`, then applies matching workspace `.sublime-project` `settings` as overrides: font size, tab size, tabs/spaces, wrapping and rulers. It does not import `.sublime-project` folder paths, packages or color schemes; folder access remains explicitly controlled in AgentTeam.
+
+Verification in this checkout: `npm test` **483 passed, 1 skipped**; rebuilt desktop suite **70/70**; typecheck, release audit, formatting and diff checks passed. A local unsigned macOS arm64 app, ZIP and DMG were packaged. MCP connection and grant safety were exercised against fixtures; ACP protocol and permission flows were fixture-tested. No live provider call was sent, granted provider MCP tools are not yet bridged, and a live installed ACP adapter/auth check is still needed. Windows OS-enforced isolation remains unfinished.
+
+Release workflow is configured to build macOS arm64/x64, Windows x64 and Linux x64 installers when the preflighted commit is pushed to `main` and tagged. For a small contained first workflow, try a local documentation/code review: one writer proposes a change in an attached project, a second agent reviews the diff, and you approve before any test command or merge. It needs two authenticated local CLI providers, one attached folder, and a project with a reviewer gate; it does not deploy anything.
+
+## Previous handoff: v0.2.2 release (October 23, 2026)
 
 The release is on `main` at `d308ea87544d2089c4c825bb557b023fddb0719b`, tagged `v0.2.2`: [GitHub release and installers](https://github.com/chere005/AgentTeam/releases/tag/v0.2.2). Mac arm64 and Intel, Windows x64, and Linux x64 installers are published. The Mac app is unsigned and not notarized; macOS may ask you to approve it.
 

@@ -84,13 +84,6 @@ async function fixture(page: Page) {
 }
 async function openTaskSettings(page: Page, title: string) {
   const project = page.locator(".workflow").filter({ hasText: title }).first();
-  const taskList = project.locator("details.project-tasks").first();
-  if (
-    !(await taskList.evaluate(
-      (element) => (element as HTMLDetailsElement).open,
-    ))
-  )
-    await project.locator("details.project-tasks > summary").click();
   const task = project.locator("details.task", { hasText: title }).first();
   await task.locator("summary").first().click();
   const settings = task.getByTestId("task-settings");
@@ -448,6 +441,7 @@ test("routing rule editing: mode, priority, persistence and backend error", asyn
     });
     await openWorkflows(page);
     await expect(page.getByTestId("rule-badge")).toHaveText("Advisory");
+    await page.locator("details.project-routing-tools > summary").click();
     await page.getByRole("button", { name: /^Edit rule/ }).click();
     const form = page.getByTestId("rule-edit-form");
     await form.getByLabel("Priority (highest wins)").fill("20000");
@@ -475,6 +469,7 @@ test("routing rule editing: mode, priority, persistence and backend error", asyn
     await expect(page.getByTestId("rule-badge")).toHaveText(
       "Required review · security",
     );
+    await page.locator("details.project-routing-tools > summary").click();
     // Backend error: the target agent disappears while the form is open.
     await page.getByRole("button", { name: /^Edit rule/ }).click();
     const again = page.getByTestId("rule-edit-form");

@@ -2,7 +2,7 @@ import { test, expect, _electron as electron } from "@playwright/test";
 import { mkdtemp, rm, copyFile, chmod, mkdir, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openAgentPanel } from "./helpers";
+import { openAgentPanel, openFeature } from "./helpers";
 
 // Fixture installation only: scans are limited to an empty PATH so the developer's real
 // Codex/Claude/Wolfram installs (and accounts) are never touched.
@@ -87,6 +87,8 @@ test("runtime diagnostics, validated model/effort choices, invocation limits and
     await request("POST", `/tasks/${tasks[0].id}/status`, {
       status: "running",
     });
+    // Agents were seeded through the API, so lay out their cards before selecting them.
+    await page.getByRole("button", { name: "Arrange", exact: true }).click();
 
     // Settings: stale manual path, then the fixture installation.
     await page.getByRole("button", { name: "Settings", exact: true }).click();
@@ -172,7 +174,17 @@ test("runtime diagnostics, validated model/effort choices, invocation limits and
     await expect(page.getByTestId("agent-panel")).toHaveCount(0);
 
     // Invocation limit: running child counts, second waits with the reason.
-    const leadPanel = await openAgentPanel(page, "Lead");
+    await openFeature(page, "Canvas");
+    const side = page.getByRole("complementary", { name: "Side panel" });
+    await side.getByRole("tab", { name: "Chat" }).click();
+    await side
+      .getByRole("combobox", { name: "Agent", exact: true })
+      .selectOption({
+        label: "Lead",
+      });
+    await side.getByRole("tab", { name: "Agent setup" }).click();
+    const leadPanel = page.getByTestId("agent-panel");
+    await expect(leadPanel.getByTestId("agent-panel-name")).toHaveText("Lead");
     await leadPanel.getByTestId("agent-advanced").locator("> summary").click();
     const limits = page.getByTestId("invocation-panel");
     await expect(limits).toContainText("running 1 / 1");

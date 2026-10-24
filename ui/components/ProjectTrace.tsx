@@ -40,17 +40,20 @@ export function ProjectTrace({
   data,
   events,
   openChat,
+  initialWorkflowId = "",
 }: {
   data: Snapshot;
   events: TeamEvent[];
   openChat: (id: string) => void;
+  initialWorkflowId?: string;
 }) {
-  const [workflowId, setWorkflowId] = useState("");
+  const [workflowId, setWorkflowId] = useState(initialWorkflowId);
   const [entries, setEntries] = useState<TraceEvent[]>([]);
   const [error, setError] = useState("");
   const [selectedSeq, setSelectedSeq] = useState<number | null>(null);
   const [quick, setQuick] = useState<QuickTarget | null>(null);
   const workflow = data.workflows.find((w) => w.id === workflowId);
+  useEffect(() => setWorkflowId(initialWorkflowId), [initialWorkflowId]);
   useEffect(() => {
     let alive = true;
     const query = new URLSearchParams({

@@ -11,10 +11,18 @@ import "./team-chat.css";
 
 type ChatSummary = {
   id: string;
+  invocationId?: string;
   title: string;
   participantIds: string[];
   lastMessage: { text: string; createdAt: string } | null;
   humanParticipated: boolean;
+};
+type InvocationSummary = {
+  id: string;
+  fromAgentId: string;
+  toAgentId: string;
+  request: { title: string };
+  createdAt: string;
 };
 
 function moveTreeFocus(event: KeyboardEvent<HTMLElement>) {
@@ -58,6 +66,7 @@ export function TeamChatView({
   paneProps: PaneProps;
 }) {
   const [chats, setChats] = useState<ChatSummary[]>([]);
+  const [invocations, setInvocations] = useState<InvocationSummary[]>([]);
   const [groupChatId, setGroupChatId] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const allAgents = data.teamView?.allAgents ?? data.agents;
@@ -66,19 +75,21 @@ export function TeamChatView({
   );
   useEffect(() => {
     let alive = true;
-    const refresh = () =>
-      api(`/group-chats?teamId=${encodeURIComponent(data.activeTeamId)}`)
-        .then((items: ChatSummary[]) => {
-          if (alive) {
-            setChats(items);
-            setGroupChatId((current) =>
-              current && items.some((chat) => chat.id === current)
-                ? current
-                : "",
-            );
-          }
+    const refresh = () => {
+      void Promise.all([
+        api(`/group-chats?teamId=${encodeURIComponent(data.activeTeamId)}`),
+        api("/orchestration/invocations"),
+      ])
+        .then(([items, exchanges]: [ChatSummary[], InvocationSummary[]]) => {
+          if (!alive) return;
+          setChats(items);
+          setInvocations(exchanges);
+          setGroupChatId((current) =>
+            current && items.some((chat) => chat.id === current) ? current : "",
+          );
         })
         .catch(() => {});
+    };
     void refresh();
     const timer = window.setInterval(refresh, 2500);
     return () => {
@@ -99,6 +110,17 @@ export function TeamChatView({
   // name in each shared chat, but unrelated agent roots stay out of this team's sidebar.
   const people = data.agents;
   const agentById = new Map(people.map((agent) => [agent.id, agent]));
+  const reports = new Map<string, Agent[]>();
+  for (const person of people) {
+    if (person.parentId && agentById.has(person.parentId))
+      reports.set(person.parentId, [
+        ...(reports.get(person.parentId) ?? []),
+        person,
+      ]);
+  }
+  const roots = people.filter(
+    (person) => !person.parentId || !agentById.has(person.parentId),
+  );
   const chatsByAgent = new Map<string, ChatSummary[]>();
   for (const chat of chats) {
     for (const id of chat.participantIds) {
@@ -122,11 +144,41 @@ export function TeamChatView({
     setGroupChatId("");
     setSelected(id);
   };
-  const openGroup = (id: string) => setGroupChatId(id);
+  const openGroup = (id: string, viewingAgentId?: string) => {
+    const chat = chats.find((item) => item.id === id);
+    const owner =
+      viewingAgentId ??
+      people.find((person) => chat?.participantIds.includes(person.id))?.id;
+    if (owner) setSelected(owner);
+    setGroupChatId(id);
+  };
+  const selectConversation = async (value: string, agentId: string) => {
+    if (!value) {
+      openAgent(agentId);
+      return;
+    }
+    if (value.startsWith("invocation:")) {
+      const invocationId = value.slice("invocation:".length);
+      try {
+        const chat = await api("/group-chats", "POST", { invocationId });
+        setChats((current) =>
+          current.some((item) => item.id === chat.id)
+            ? current
+            : [chat, ...current],
+        );
+        openGroup(chat.id, agentId);
+      } catch (error) {
+        console.error("Could not open agent conversation", error);
+      }
+      return;
+    }
+    openGroup(value, agentId);
+  };
 
   const renderChatNode = (
     chat: ChatSummary,
     parentAgentId?: string,
+    level = 2,
   ): ReactNode => {
     const participantNames = chat.participantIds
       .map((id) => names.get(id))
@@ -141,7 +193,7 @@ export function TeamChatView({
         key={`${parentAgentId ?? "unattached"}:${chat.id}`}
         role="treeitem"
         aria-label={`${chat.title}${participantNames ? ` — ${participantNames}` : ""}`}
-        aria-level={parentAgentId ? 2 : 1}
+        aria-level={level}
         aria-current={active ? "page" : undefined}
         tabIndex={active && parentAgentId === primaryAgentId ? 0 : -1}
         onKeyDown={(event) => {
@@ -164,7 +216,7 @@ export function TeamChatView({
       >
         <div
           className={`team-chat-tree-row team-chat-side-chat${active ? " active" : ""}`}
-          onClick={() => openGroup(chat.id)}
+          onClick={() => openGroup(chat.id, parentAgentId)}
         >
           <span className="team-chat-tree-spacer" />
           <span className="team-chat-avatar group-avatar">
@@ -181,8 +233,15 @@ export function TeamChatView({
     );
   };
 
-  const agentNode = (agent: Agent): ReactNode => {
+  const agentNode = (
+    agent: Agent,
+    level = 1,
+    ancestry = new Set<string>(),
+  ): ReactNode => {
+    if (ancestry.has(agent.id)) return null;
+    const nextAncestry = new Set(ancestry).add(agent.id);
     const sideChats = chatsByAgent.get(agent.id) ?? [];
+    const children = reports.get(agent.id) ?? [];
     const expanded = !collapsed.has(agent.id);
     const active = !groupChatId && selected === agent.id;
     const displayName = agentDisplayName(agent);
@@ -191,8 +250,10 @@ export function TeamChatView({
         key={agent.id}
         role="treeitem"
         aria-label={agentSelectorLabel(agent)}
-        aria-level={1}
-        aria-expanded={sideChats.length ? expanded : undefined}
+        aria-level={level}
+        aria-expanded={
+          sideChats.length || children.length ? expanded : undefined
+        }
         aria-selected={active}
         tabIndex={active || (!selected && agent === people[0]) ? 0 : -1}
         onKeyDown={(event) => {
@@ -203,7 +264,8 @@ export function TeamChatView({
             openAgent(agent.id);
           } else if (event.key === "ArrowRight") {
             event.preventDefault();
-            if (sideChats.length && !expanded) toggle(agent.id);
+            if ((sideChats.length || children.length) && !expanded)
+              toggle(agent.id);
             else
               item
                 .querySelector<HTMLElement>(
@@ -225,7 +287,7 @@ export function TeamChatView({
           className={`team-chat-tree-row${active ? " active" : ""}`}
           onClick={() => openAgent(agent.id)}
         >
-          {sideChats.length ? (
+          {sideChats.length || children.length ? (
             <button
               className="team-chat-tree-toggle"
               tabIndex={-1}
@@ -255,14 +317,64 @@ export function TeamChatView({
             {displayName}
           </span>
         </div>
-        {sideChats.length > 0 && expanded && (
+        {(sideChats.length > 0 || children.length > 0) && expanded && (
           <div role="group">
-            {sideChats.map((chat) => renderChatNode(chat, agent.id))}
+            {sideChats.map((chat) => renderChatNode(chat, agent.id, level + 1))}
+            {children.map((child) => agentNode(child, level + 1, nextAncestry))}
           </div>
         )}
       </div>
     );
   };
+
+  const conversationAgent = people.find((person) => person.id === selected);
+  const agentConversations = conversationAgent
+    ? (chatsByAgent.get(conversationAgent.id) ?? [])
+    : [];
+  const knownInvocationIds = new Set(
+    agentConversations.map((chat) => chat.invocationId).filter(Boolean),
+  );
+  const unlistedInvocations = conversationAgent
+    ? invocations
+        .filter(
+          (item) =>
+            (item.fromAgentId === conversationAgent.id ||
+              item.toAgentId === conversationAgent.id) &&
+            !knownInvocationIds.has(item.id),
+        )
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    : [];
+  const conversationPicker = conversationAgent ? (
+    <div className="team-chat-conversation-picker">
+      <label>
+        Conversation
+        <select
+          aria-label={`Conversation for ${agentDisplayName(conversationAgent)}`}
+          value={groupChatId}
+          onChange={(event) =>
+            void selectConversation(event.target.value, conversationAgent.id)
+          }
+        >
+          <option value="">
+            Main chat · {agentDisplayName(conversationAgent)}
+          </option>
+          {agentConversations.map((chat) => (
+            <option key={chat.id} value={chat.id}>
+              {chat.title}
+            </option>
+          ))}
+          {unlistedInvocations.map((item) => (
+            <option key={item.id} value={`invocation:${item.id}`}>
+              {item.request.title} · open shared chat
+            </option>
+          ))}
+        </select>
+      </label>
+      <small>
+        Shared-chat replies appear as you and go to its participating agents.
+      </small>
+    </div>
+  ) : null;
 
   return (
     <div className="team-chat-view">
@@ -312,7 +424,7 @@ export function TeamChatView({
           <Users size={14} /> Agents
         </div>
         <div role="tree" aria-label="Agent chats" className="team-chat-tree">
-          {people.map((agent) => agentNode(agent))}
+          {roots.map((agent) => agentNode(agent))}
         </div>
         {unattachedChats.length > 0 && (
           <>
@@ -344,6 +456,7 @@ export function TeamChatView({
         )}
       </nav>
       <section className="team-chat-content" aria-label="Conversation">
+        {conversationPicker}
         {activeGroup ? (
           <GroupChatPanel
             key={activeGroup.id}

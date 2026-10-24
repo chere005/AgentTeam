@@ -98,8 +98,8 @@
   top: calc(100% + 6px);
   z-index: 95;
   width: 380px;
-  background: #222d3b;
-  border: 1px solid #3b4f61;
+  background: var(--panel);
+  border: 1px solid var(--line);
   border-radius: 9px;
   padding: 10px;
   box-shadow: 0 14px 34px #0007;
@@ -111,7 +111,7 @@
   padding: 2px 4px 8px;
 }
 .team-popup-head small {
-  color: #8c9aad;
+  color: var(--muted);
   font-size: 11px;
 }
 .team-popup ul {
@@ -133,11 +133,11 @@
 }
 .team-row:hover,
 .team-row:focus-visible {
-  background: #2a3747;
+  background: var(--surface-2);
 }
 .team-row.current {
   border-color: var(--accent);
-  background: #203d3833;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .team-row-text {
   display: flex;

@@ -3,6 +3,7 @@ import { EditorService } from "./editors.ts";
 import { WatchService } from "./fs-watch.ts";
 import { GitWorkflow } from "./git-workflow.ts";
 import { inspectFile } from "./previews.ts";
+import { loadSublimeEditorConfig } from "./sublime-config.ts";
 import type { Store } from "./store.ts";
 import type { WorkspaceService } from "./workspaces.ts";
 
@@ -14,8 +15,9 @@ import type { WorkspaceService } from "./workspaces.ts";
  *   POST /agents/:id/files/read                     bounded UTF-8 editor read
  *   POST /agents/:id/files/save                     guarded UTF-8 editor save
  *   POST /agents/:id/files/create                   create a new UTF-8 file
+ *   POST /agents/:id/files/activity                 overlapping active/queued work
  *   POST /agents/:id/files/{open,open-plan}         Open file / project / reveal / open with
- *   POST /agents/:id/editors/{open,plan}            same, explicit names
+ *   POST /agents/:id/editors/{open,plan,preferences} same, explicit names, or Sublime settings
  *   POST /agents/:id/git/{state,branches,switch,fetch,pull,push,log,commit-info,
  *        pr,pr/open,pr/record,conflicts,conflict-file,resolve,integrate,abort,continue,init}
  *   POST /agents/:id/watch/{start,stop}             debounced change events (`workspace.changed`)
@@ -56,8 +58,10 @@ export class WorkspaceExtras {
         return { data: await this.editors.save(await readBody()) };
       return undefined;
     }
+    if (path === "/editors/sublime-config" && method === "GET")
+      return { data: await loadSublimeEditorConfig() };
     const m = path.match(
-      /^\/agents\/([^/]+)\/(files\/(?:inspect|read|save|create|search|changes|changes\/reset|open|open-plan)|editors\/(?:open|plan)|git\/(?:state|branches|switch|fetch|pull|push|log|commit-info|pr|pr\/open|pr\/record|conflicts|conflict-file|resolve|integrate|abort|continue|init)|watch\/(?:start|stop))$/,
+      /^\/agents\/([^/]+)\/(files\/(?:inspect|read|save|create|activity|search|changes|changes\/reset|open|open-plan)|editors\/(?:open|plan|preferences)|git\/(?:state|branches|switch|fetch|pull|push|log|commit-info|pr|pr\/open|pr\/record|conflicts|conflict-file|resolve|integrate|abort|continue|init)|watch\/(?:start|stop))$/,
     );
     if (!m || method !== "POST") return undefined;
     const agentId = decodeURIComponent(m[1]),
@@ -73,6 +77,8 @@ export class WorkspaceExtras {
         return { data: await this.ws.saveText(agentId, body) };
       case "files/create":
         return { data: await this.ws.createText(agentId, body), status: 201 };
+      case "files/activity":
+        return { data: await this.ws.fileActivity(agentId, body) };
       case "files/search":
         return { data: await this.ws.searchFiles(agentId, body) };
       case "files/changes":
@@ -90,6 +96,8 @@ export class WorkspaceExtras {
       case "files/open-plan":
       case "editors/plan":
         return { data: await this.editors.open(agentId, body, false) };
+      case "editors/preferences":
+        return { data: await this.ws.sublimeEditorConfig(agentId, body) };
       case "git/state":
         return { data: await g.state(agentId, body) };
       case "git/branches":

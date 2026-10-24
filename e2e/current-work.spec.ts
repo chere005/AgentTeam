@@ -87,7 +87,6 @@ test("Projects can resolve a failed attempt against verified work and undo it", 
       .locator(".project-card")
       .filter({ has: page.getByRole("heading", { name: "Supersede demo" }) });
     await card.getByText("needs attention", { exact: true }).waitFor();
-    await card.locator(".project-tasks > summary").click();
     await card
       .locator(".task > summary")
       .filter({ hasText: "First attempt" })
@@ -151,8 +150,8 @@ test("editor supports Sublime-style multiple selections, duplicate line, undo af
     await page.getByLabel("Current project").selectOption(project.id);
     await page.getByRole("tab", { name: "Files", exact: true }).click();
     await page
-      .getByRole("complementary", { name: "Project files" })
-      .getByRole("button", { name: "sample.ts", exact: true })
+      .getByRole("complementary", { name: "Agent folders and files" })
+      .getByRole("treeitem", { name: "sample.ts", exact: true })
       .click();
     await page.getByRole("button", { name: "Edit file", exact: true }).click();
     const editor = page.getByRole("textbox", {
@@ -173,13 +172,26 @@ test("editor supports Sublime-style multiple selections, duplicate line, undo af
     await page.keyboard.insertText("value");
     await expect(editor).toContainText("const value = 1;");
     await expect(editor).toContainText("console.log(value);");
+    const acceptOverlapWarning = () => {
+      let message = "";
+      page.once("dialog", (dialog) => {
+        message = dialog.message();
+        void dialog.accept();
+      });
+      return () =>
+        expect(message).toContain(
+          "AgentTeam work overlaps this file or its folder:",
+        );
+    };
     await editor.press("Escape");
     await editor.press(
       process.platform === "darwin" ? "Meta+ArrowUp" : "Control+Home",
     );
     await editor.press(`${mod}+Shift+D`);
+    const assertFirstOverlapWarning = acceptOverlapWarning();
     await editor.press(`${mod}+s`);
     await expect(page.getByText(/Saved \d/)).toBeVisible();
+    assertFirstOverlapWarning();
     const saved = await readFile(join(root, "sample.ts"), "utf8");
     expect(saved.match(/const value = 1;/g)).toHaveLength(2);
     await editor.press(`${mod}+z`);
@@ -199,15 +211,86 @@ test("editor supports Sublime-style multiple selections, duplicate line, undo af
       .click();
     await page.getByRole("button", { name: "close", exact: true }).click();
     await expect(editor).toContainText("entry");
-    await page.getByRole("button", { name: "Word wrap", exact: true }).click();
+    const wordWrap = page.getByRole("button", {
+      name: "Word wrap",
+      exact: true,
+    });
+    await expect(wordWrap).toHaveAttribute("aria-pressed", "true");
+    await wordWrap.click();
+    await expect(wordWrap).toHaveAttribute("aria-pressed", "false");
+    await expect(page.locator(".cm-content")).not.toHaveClass(
+      /cm-lineWrapping/,
+    );
+    await wordWrap.click();
+    await expect(wordWrap).toHaveAttribute("aria-pressed", "true");
     await expect(page.locator(".cm-content")).toHaveClass(/cm-lineWrapping/);
+    const assertSecondOverlapWarning = acceptOverlapWarning();
     await editor.press(`${mod}+s`);
     await expect(page.getByText(/Saved \d/)).toBeVisible();
+    assertSecondOverlapWarning();
     await page.screenshot({ path: join(directory, "editor.png") });
   });
 });
 
-test("team Chat makes every person a root and global pause controls remain available", async () => {
+test("owner edits agent-read-only files and gets a pre-save overlap warning", async () => {
+  await withApp(async (page, directory) => {
+    const root = join(directory, "read-only-workspace");
+    await mkdir(root);
+    await writeFile(join(root, "notes.md"), "Original\n");
+    const agent = await api(page, "POST", "/agents", {
+      name: "Read-only agent",
+      environment: "codex",
+      workspaces: [{ path: root, access: "read", active: true }],
+    });
+    const project = await api(page, "POST", "/workflows", {
+      name: "Human edit check",
+      goal: "Edit a file while the agent has read-only access",
+      ownerId: agent.id,
+      completionCriteria: "The owner can save the edit",
+    });
+    await api(page, "POST", "/tasks", {
+      workflowId: project.id,
+      agentId: agent.id,
+      title: "Review notes.md",
+      completionCriteria: "Review the file",
+      resourcePaths: [join(root, "notes.md")],
+    });
+    await page.reload();
+    await expect(
+      page.getByText("Workspace connected", { exact: true }),
+    ).toBeVisible();
+    await page.getByLabel("Current project").selectOption(project.id);
+    await page.getByRole("tab", { name: "Files", exact: true }).click();
+    await page
+      .getByRole("complementary", { name: "Agent folders and files" })
+      .getByRole("treeitem", { name: "notes.md", exact: true })
+      .click();
+    await expect(
+      page.getByText("Agent: read only · you can edit", { exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Edit file", exact: true }).click();
+    const editor = page.getByRole("textbox", {
+      name: "File contents",
+      exact: true,
+    });
+    await expect(editor).toBeEditable();
+    await editor.fill("Edited by the owner\n");
+    page.once("dialog", async (dialog) => {
+      expect(dialog.message()).toContain(
+        "Read-only agent · queued: Review notes.md",
+      );
+      expect(dialog.message()).toContain("Save your changes anyway?");
+      await dialog.accept();
+    });
+    await page.locator(".text-editor-toolbar button.primary").click();
+    await expect(page.getByText(/Saved /)).toBeVisible();
+    expect(await readFile(join(root, "notes.md"), "utf8")).toBe(
+      "Edited by the owner\n",
+    );
+  });
+});
+
+test("team Chat indents reports under their manager and global pause controls remain available", async () => {
   await withApp(async (page) => {
     const lead = await api(page, "POST", "/agents", {
       name: "Lead",
@@ -234,20 +317,30 @@ test("team Chat makes every person a root and global pause controls remain avail
     ).toHaveAttribute("aria-level", "1");
     await expect(
       tree.getByRole("treeitem", { name: "Worker", exact: true }),
-    ).toHaveAttribute("aria-level", "1");
+    ).toHaveAttribute("aria-level", "2");
     await expect(
       tree.getByRole("treeitem", { name: "Child", exact: true }),
-    ).toHaveAttribute("aria-level", "1");
+    ).toHaveAttribute("aria-level", "3");
     const leadX = (await tree
       .getByRole("treeitem", { name: "Lead", exact: true })
       .locator(":scope > .team-chat-tree-row .team-chat-picker-avatar")
       .boundingBox())!.x;
-    const childX = (await tree
-      .getByRole("treeitem", { name: "Child", exact: true })
+    const workerX = (await tree
+      .getByRole("treeitem", { name: "Worker", exact: true })
       .locator(":scope > .team-chat-tree-row .team-chat-picker-avatar")
       .boundingBox())!.x;
-    expect(childX).toBe(leadX);
-    await tree.getByRole("treeitem", { name: "Worker", exact: true }).click();
+    expect(workerX).toBeGreaterThan(leadX);
+    const workerItem = tree.getByRole("treeitem", {
+      name: "Worker",
+      exact: true,
+    });
+    await expect(
+      workerItem.getByRole("treeitem", { name: "Child", exact: true }),
+    ).toBeVisible();
+    await tree
+      .getByRole("treeitem", { name: "Worker", exact: true })
+      .locator(":scope > .team-chat-tree-row")
+      .click();
     const conversation = page.getByRole("region", { name: "Conversation" });
     await expect(
       conversation.getByRole("heading", { name: "Talk to Worker" }),

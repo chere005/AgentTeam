@@ -195,7 +195,7 @@ test("git workflow: fetch/pull/push feedback, branch safety, conflicts, PR link,
 
     // Files: typed previews and live refresh after an external edit (no manual refresh).
     await openFeature(page, "Files");
-    await expect(page.getByRole("button", { name: /a\.txt/ })).toBeVisible();
+    await expect(page.getByRole("treeitem", { name: /a\.txt/ })).toBeVisible();
     await writeFile(
       join(project, "table.csv"),
       'name,note\n"Smith, J","said ""hi"""\n',
@@ -208,23 +208,27 @@ test("git workflow: fetch/pull/push feedback, branch safety, conflicts, PR link,
     await writeFile(join(project, "pic.png"), png);
     await writeFile(join(project, "data.json"), '{"k":[1,2]}');
     await writeFile(join(project, "doc.pdf"), "%PDF-1.4\n");
-    await expect(page.getByRole("button", { name: /table\.csv/ })).toBeVisible({
+    await expect(
+      page.getByRole("treeitem", { name: /table\.csv/ }),
+    ).toBeVisible({
       timeout: 15000,
     });
-    await page.getByRole("button", { name: /table\.csv/ }).click();
+    await page.getByRole("treeitem", { name: /table\.csv/ }).click();
     const table = page.getByRole("table", { name: "Table preview" });
     await expect(table).toContainText("Smith, J");
     await expect(table).toContainText('said "hi"');
-    await page.getByRole("button", { name: /data\.json/ }).click();
-    await expect(page.getByLabel("File preview")).toContainText('"k": [');
-    await page.getByRole("button", { name: /pic\.png/ }).click();
+    await page.getByRole("treeitem", { name: /data\.json/ }).click();
+    await expect(
+      page.getByRole("region", { name: "File preview", exact: true }),
+    ).toContainText('"k": [');
+    await page.getByRole("treeitem", { name: /pic\.png/ }).click();
     await expect(
       page.getByRole("img", { name: /Preview of pic\.png/ }),
     ).toBeVisible();
-    await page.getByRole("button", { name: /doc\.pdf/ }).click();
-    await expect(page.getByLabel("File preview")).toContainText(
-      "open in an external application",
-    );
+    await page.getByRole("treeitem", { name: /doc\.pdf/ }).click();
+    await expect(
+      page.getByRole("region", { name: "File preview", exact: true }),
+    ).toContainText("open in an external application");
   } finally {
     await app.close();
     await rm(directory, { recursive: true, force: true });

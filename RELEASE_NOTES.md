@@ -1,8 +1,22 @@
-# AgentTeam 0.2.2
+# AgentTeam 0.2.3
+
+Editor and theme update.
+
+## What's new in 0.2.3
+
+- Dark mode uses Burgundy Rose and light mode uses Sand Ink; native window colors match the selected theme from launch. Contrast checks cover both palettes.
+- The built-in editor reads Sublime Text's global `Preferences.sublime-settings` and the selected workspace's matching `.sublime-project` settings. Supported settings are font size, tab width, tabs versus spaces, word wrap and rulers. Project `folders`, packages and color schemes are not imported, so editor preferences never silently grant workspace access.
+- Sublime-style editor defaults and file editing are covered by desktop tests for tabs, indentation, multiple selections, find/replace, wrapping, save/undo, Markdown preview and project-specific settings.
+- `npm run test:ui` now builds the production renderer before launching desktop tests, preventing stale UI bundles from giving false results.
+- Verification on macOS: backend suite **483 passed, 1 skipped**; desktop workflows **70/70**. MCP connection/grant and ACP protocol fixture workflows passed; live provider compatibility was not exercised.
+
+Installers are unsigned and the macOS app is not notarized. Your OS may ask you to approve the application.
+
+## Earlier release notes: 0.2.2
 
 Project workspace and workflow reliability release.
 
-## What's new in 0.2.2
+### What's new in 0.2.2
 
 - Keep work in the selected project across the four main views: Layout, Chat, Files and Diff. Switch with `Cmd/Ctrl+1–4`; `Cmd/Ctrl+Shift+P` opens the command palette, and quick search can narrow to files or chats.
 - Use the Chat view as a team conversation list: personal chats appear first, followed by agent roots and their agent-to-agent subchats. Add your own comments to group conversations and invite more agents.

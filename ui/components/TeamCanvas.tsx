@@ -135,6 +135,7 @@ function Card({ data }: NodeProps) {
         (failed ? "has-failure " : "") +
         (resume ? "has-resume " : "")
       }
+      data-card-mode={data.simple ? "simple" : "detailed"}
       style={
         far
           ? ({
@@ -203,8 +204,12 @@ function Card({ data }: NodeProps) {
           {activity?.state ?? "idle"}
         </span>
       </div>
-      {!data.simple && (
-        <>
+      <div
+        className="card-details"
+        aria-hidden={!!data.simple}
+        inert={data.simple ? true : undefined}
+      >
+        <div className="card-details-inner">
           <p>{a.role || "Add a role and instructions"}</p>
           <div
             className="card-access"
@@ -273,8 +278,8 @@ function Card({ data }: NodeProps) {
               Setup
             </button>
           </div>
-        </>
-      )}
+        </div>
+      </div>
       {(failed || resume) && (
         <button
           className="failure nodrag"
@@ -510,23 +515,37 @@ export function TeamCanvas(p: Props) {
     "positions",
     {},
   );
+  const nodesRef = useRef(nodes);
+  nodesRef.current = nodes;
+  const skipModeFit = useRef(false);
+  const modeArrangeTimer = useRef<number | null>(null);
+  const arrangeRef = useRef<
+    (subset?: string[], fit?: boolean, cardMode?: boolean) => void
+  >(() => {});
+  useEffect(
+    () => () => {
+      if (modeArrangeTimer.current)
+        window.clearTimeout(modeArrangeTimer.current);
+    },
+    [],
+  );
   const assistantIds = p.data.agents
     .filter((a) => a.kind === "team-assistant")
     .map((a) => a.id);
   const memberIds = p.data.agents
     .filter((a) => a.kind !== "team-assistant")
     .map((a) => a.id);
-  const cardSize = (): Size => ({
+  const cardSize = (cardMode = simple): Size => ({
     width: CARD_WIDTH,
-    height: simple ? CARD_HEIGHT.compact : CARD_HEIGHT.detailed,
+    height: cardMode ? CARD_HEIGHT.compact : CARD_HEIGHT.detailed,
   });
   /**
    * Measured card sizes (React Flow), so rows fit compact and detailed cards alike. Below
    * FAR_ZOOM the cards show the smaller glance layout, so measurements taken then would be too
    * small once zoomed in again: the nominal sizes are used instead.
    */
-  const measuredSizes = (ns: Node[]) =>
-    Object.fromEntries(
+  const measuredSizes = (ns: Node[], cardMode = simple) => {
+    const measured = Object.fromEntries(
       ns
         .filter(
           (n) =>
@@ -539,8 +558,10 @@ export function TeamCanvas(p: Props) {
           { width: n.measured!.width!, height: n.measured!.height! },
         ]),
     );
+    return cardMode === simple ? (measured as Record<string, Size>) : {};
+  };
   /** The whole team's org layout for the current canvas width (compact when too wide). */
-  const bestLayout = () => {
+  const bestLayout = (cardMode = simple) => {
     const el = canvasRef.current;
     const maxWidth = el?.clientWidth
       ? (el.clientWidth - 2 * FIT_PADDING) / MIN_FIT_ZOOM
@@ -549,8 +570,8 @@ export function TeamCanvas(p: Props) {
       orgInput(p.data.agents),
       orgEdges(),
       {
-        sizes: measuredSizes(nodes),
-        defaultSize: cardSize(),
+        sizes: measuredSizes(nodesRef.current, cardMode),
+        defaultSize: cardSize(cardMode),
         origin: { x: 0, y: 0 },
         aside: assistantIds,
       },
@@ -567,7 +588,7 @@ export function TeamCanvas(p: Props) {
       null,
     );
     if (!last) return false;
-    const agentNodes = nodes.filter((n) => n.type === "agent");
+    const agentNodes = nodesRef.current.filter((n) => n.type === "agent");
     const same = (a: { x: number; y: number }, b?: { x: number; y: number }) =>
       !!b && Math.abs(a.x - b.x) < 1 && Math.abs(a.y - b.y) < 1;
     if (
@@ -591,14 +612,14 @@ export function TeamCanvas(p: Props) {
    * `subset`, only those agents are arranged, as their own tree to the right of the others (an
    * insert into an existing team keeps everyone else where the user put them). Then re-fit.
    */
-  function arrange(subset?: string[], fit = true) {
+  function arrange(subset?: string[], fit = true, cardMode = simple) {
     const only = subset ? new Set(subset) : null;
     const agents = only
       ? p.data.agents.filter((a) => only.has(a.id))
       : p.data.agents;
     let origin = { x: 0, y: 0 };
     if (only) {
-      const others = nodes.filter(
+      const others = nodesRef.current.filter(
         (n) =>
           n.type === "agent" && !only.has(n.id) && !assistantIds.includes(n.id),
       );
@@ -620,14 +641,14 @@ export function TeamCanvas(p: Props) {
           orgInput(agents),
           orgEdges(),
           {
-            sizes: measuredSizes(nodes),
-            defaultSize: cardSize(),
+            sizes: measuredSizes(nodesRef.current, cardMode),
+            defaultSize: cardSize(cardMode),
             origin,
             aside: [],
           },
           0,
         ).positions
-      : bestLayout();
+      : bestLayout(cardMode);
     persist("positions", { ...saved("positions", {}), ...result });
     // Remembered so a later canvas resize may re-flow this automatic arrangement (never a
     // hand-placed one).
@@ -637,6 +658,7 @@ export function TeamCanvas(p: Props) {
     );
     if (fit) setTimeout(() => fitRef.current("explicit"), 80);
   }
+  arrangeRef.current = arrange;
   // Automatic arrangement, once the cards have been measured: a pending request from an insert
   // (team, template, pack, example team) for this team, or a team none of whose agents has a
   // stored position yet (a new team). Manual drag positions are never touched otherwise.
@@ -674,6 +696,10 @@ export function TeamCanvas(p: Props) {
     if (fitKey.current === key) return;
     const first = fitKey.current === null;
     fitKey.current = key;
+    if (skipModeFit.current) {
+      skipModeFit.current = false;
+      return;
+    }
     if (first && fitState.current.manual) return; // restored viewport: leave it
     fitRef.current("nodes", first ? 0 : 200);
   }, [flow, nodes, simple]);
@@ -938,8 +964,38 @@ export function TeamCanvas(p: Props) {
           aria-pressed={!simple}
           title="Show more on each card: folders, invocations, priority and quick actions"
           onClick={() => {
-            setSimple(!simple);
-            persist("simpleCards", !simple);
+            const nextMode = !simple;
+            const arranged = saved<Record<
+              string,
+              { x: number; y: number }
+            > | null>(arrangedKey, null);
+            const current = nodesRef.current.filter(
+              (node) => node.type === "agent",
+            );
+            const isAutoArranged =
+              !!arranged &&
+              current.length === Object.keys(arranged).length &&
+              current.every(
+                (node) =>
+                  Math.abs(
+                    node.position.x - (arranged[node.id]?.x ?? Infinity),
+                  ) < 1 &&
+                  Math.abs(
+                    node.position.y - (arranged[node.id]?.y ?? Infinity),
+                  ) < 1,
+              );
+            skipModeFit.current = isAutoArranged;
+            setSimple(nextMode);
+            persist("simpleCards", nextMode);
+            if (modeArrangeTimer.current)
+              window.clearTimeout(modeArrangeTimer.current);
+            if (isAutoArranged) {
+              modeArrangeTimer.current = window.setTimeout(() => {
+                modeArrangeTimer.current = null;
+                arrangeRef.current(undefined, false, nextMode);
+                window.setTimeout(() => fitRef.current("nodes", 180), 100);
+              }, 220);
+            }
           }}
         >
           {simple ? "Detailed cards" : "Simple cards"}
@@ -1104,8 +1160,8 @@ export function TeamCanvas(p: Props) {
           <Background
             gap={24}
             size={1}
-            bgColor={theme === "light" ? "#eef1f5" : "#121821"}
-            color={theme === "light" ? "#d5dbe3" : "#262e3b"}
+            bgColor={theme === "light" ? "#eee8dd" : "#1b1217"}
+            color={theme === "light" ? "#e8d9c8" : "#402632"}
           />
           <Controls
             showInteractive={false}
@@ -1123,8 +1179,8 @@ export function TeamCanvas(p: Props) {
           </Controls>
           {members.length > 12 && (
             <MiniMap
-              nodeColor={theme === "light" ? "#c9d6dc" : "#344c51"}
-              maskColor={theme === "light" ? "#eef1f566" : "#10141cbb"}
+              nodeColor={theme === "light" ? "#e8dece" : "#36222d"}
+              maskColor={theme === "light" ? "#eee8dd66" : "#1b1217bb"}
               pannable
             />
           )}

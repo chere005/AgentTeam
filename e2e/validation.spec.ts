@@ -98,8 +98,6 @@ test("validation gate: Wolfram team project, model verification, panel, cancel, 
     expect(refused).toContain("Verify the model mapping");
 
     // Validation panel on the first validation-required task.
-    const taskList = wf.locator("details.project-tasks");
-    await taskList.locator(":scope > summary").click();
     const task = wf.locator("details.task", {
       has: page.locator("summary", { hasText: "Derive and validate claim" }),
     });
