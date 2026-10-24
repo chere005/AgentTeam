@@ -1,5 +1,5 @@
 {
-  "curatedOn": "2026-10-18",
+  "curatedOn": "2026-10-23",
   "selectionPolicy": "First-party guidance where available; focused, established community language specialists. This is an editorial starter set, not an objective ranking. Bundled content is pinned and not executed during curation.",
   "skills": [
     {
@@ -343,6 +343,26 @@
       "skillSha256": "cbe6b04b18fa956f2a6563d996dde44a4c14e13862f58fdbe9eb891e65acf562"
     },
     {
+      "id": "curated:jeffallan--react-expert",
+      "name": "react-expert",
+      "title": "React Expert",
+      "description": "Use when building React 18+ applications in .jsx or .tsx files, Next.js App Router projects, or create-react-app setups. Creates components, implements custom hooks, debugs rendering issues, migrates class components to functional, and implements state management. Invoke for Server Components, Suspense boundaries, useActionState forms, performance optimization, or React 19 features.",
+      "category": "Frameworks",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/react-expert",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "d513fbf10bff343c9d641145e06876edb5f924fca0de4878ce685d3518b41010"
+    },
+    {
       "id": "curated:jeffallan--vue-expert",
       "name": "vue-expert",
       "title": "Vue Expert",
@@ -463,6 +483,26 @@
       "skillSha256": "9f5feff0c3957fa4f1a872833f5df9cef7d3b68ec4d94812e1e659e0aeb28d21"
     },
     {
+      "id": "curated:jeffallan--code-documenter",
+      "name": "code-documenter",
+      "title": "Code Documenter",
+      "description": "Generates, formats, and validates technical documentation — including docstrings, OpenAPI/Swagger specs, JSDoc annotations, doc portals, and user guides. Use when adding docstrings to functions or classes, creating API documentation, building documentation sites, or writing tutorials and user guides. Invoke for OpenAPI/Swagger specs, JSDoc, doc portals, getting started guides.",
+      "category": "Quality",
+      "publisher": "Jeff Allan · Community",
+      "source": "https://github.com/Jeffallan/claude-skills",
+      "sourcePath": "skills/code-documenter",
+      "commit": "36f3fe8052da7c57083783268c6ea3265d075265",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "c317493f9b94df59ccb48a6783492bcb48e7f1c3d5299ed44718bd568eb8cdb0"
+    },
+    {
       "id": "curated:jeffallan--devops-engineer",
       "name": "devops-engineer",
       "title": "Devops Engineer",
@@ -561,6 +601,86 @@
         "wolfram": "not validated"
       },
       "skillSha256": "d91970639e9f5c37682ac7ab60094d35f1c7c1f38d731bd56396563aee10c1d3"
+    },
+    {
+      "id": "curated:anthropic--webapp-testing",
+      "name": "webapp-testing",
+      "title": "Webapp Testing",
+      "description": "Toolkit for interacting with and testing local web applications using Playwright. Supports verifying frontend functionality, debugging UI behavior, capturing browser screenshots, and viewing browser logs.",
+      "category": "Quality",
+      "publisher": "Anthropic · First party",
+      "source": "https://github.com/anthropics/skills",
+      "sourcePath": "skills/webapp-testing",
+      "commit": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+      "license": "Apache-2.0",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "51b7349e77ec63b7744a6f63647e7566a0b4d2e301121cc10e8c2113af6556a2"
+    },
+    {
+      "id": "curated:nextlevelbuilder--ui-ux-pro-max",
+      "name": "ui-ux-pro-max",
+      "title": "Ui Ux Pro Max",
+      "description": "UI/UX design intelligence for web, mobile, and desktop. This skill should be used when designing, building, reviewing, or fixing interfaces, including pages, components, design systems, accessibility, interaction, responsive layout, typography, color, charts, and stack-specific UI implementation. Searchable local data: 79 searchable styles (50 active), 192 product palettes and reasoning profiles, 74 font pairings, 119 UX guidelines, 105 icons, 17 GSAP presets, 25 chart types, and 22 stacks.",
+      "category": "Design",
+      "publisher": "Next Level Builder · Community",
+      "source": "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill",
+      "sourcePath": ".claude/skills/ui-ux-pro-max",
+      "commit": "d14efff8ed1faa4187f004f79926f428c8074ec7",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "ea087c341bfb5b23195c7302027268ede86da802554c18a5c4896a6017b439f9"
+    },
+    {
+      "id": "curated:wshobson--bash-defensive-patterns",
+      "name": "bash-defensive-patterns",
+      "title": "Bash Defensive Patterns",
+      "description": "Master defensive Bash programming techniques for production-grade scripts. Use when writing robust shell scripts, CI/CD pipelines, or system utilities requiring fault tolerance and safety.",
+      "category": "Languages",
+      "publisher": "Seth Hobson · Community",
+      "source": "https://github.com/wshobson/agents",
+      "sourcePath": "plugins/shell-scripting/skills/bash-defensive-patterns",
+      "commit": "0874a27b17a22e2b7c2e2bcd725768e0803cad06",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "741b42d1fa3167f2131a17f3e0fe891e93be4fc87aa3c19e1de5fd26d763f711"
+    },
+    {
+      "id": "curated:agentteam--electron-desktop",
+      "name": "electron-desktop",
+      "title": "Electron Desktop",
+      "description": "Build or review an Electron desktop app's main process, preload bridge, renderer security, IPC, window lifecycle, packaging and Playwright desktop tests.",
+      "category": "Frameworks",
+      "publisher": "AgentTeam · First party",
+      "source": "https://github.com/chere005/AgentTeam",
+      "sourcePath": "assets/skills/agentteam--electron-desktop",
+      "commit": "22c76299fd66f964f31ad82b50ada8fd36fb06bd",
+      "license": "MIT",
+      "licenseFile": "UPSTREAM-LICENSE.txt",
+      "bundled": true,
+      "environmentSupport": {
+        "codex": "format-compatible; execution not validated",
+        "claude": "native skill format; execution not validated",
+        "wolfram": "not validated"
+      },
+      "skillSha256": "ce2cf265547f79d5faf287dc253def1a3a11dd5a1499b66bb2c79e358827604a"
     },
     {
       "id": "recommended:vercel--react-best-practices",

@@ -7,6 +7,8 @@ Diff review and editor polish; one light theme.
 - Diff: a changed-files rail beside the selected file, new files shown as one green addition, redundant Git headers hidden, compact file/hunk navigation and compare controls, and wider side-by-side columns. Keyboard navigation keeps focus in the diff.
 - Editor: a Sublime-style status footer with cursor position, indentation and language.
 - Appearance: Sand Ink is the only theme; an earlier dark or system choice moves to it. The code editor keeps its own dark canvas.
+- Six more bundled skills for your agents: React Expert, Code Documenter, Webapp Testing (Anthropic), UI/UX Pro Max, Bash Defensive Patterns, and AgentTeam's own Electron Desktop skill. Each is pinned to its upstream revision with its license.
+- Fixed: choosing the theme from the desktop shell threw an error.
 - Releases publish as soon as the macOS builds pass; Windows and Linux installers are attached afterwards when they build.
 - Verification on macOS: backend suite **483 passed, 1 skipped**; desktop workflows **70/70**. Live provider compatibility was not exercised.
 

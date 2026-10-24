@@ -1,0 +1,9 @@
+{
+  "catalogId": "wshobson--bash-defensive-patterns",
+  "environments": [
+    "codex",
+    "claude"
+  ],
+  "requiresTools": [],
+  "compatibilityEvidence": "format-only"
+}

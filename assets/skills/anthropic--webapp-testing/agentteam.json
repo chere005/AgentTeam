@@ -1,0 +1,9 @@
+{
+  "catalogId": "anthropic--webapp-testing",
+  "environments": [
+    "codex",
+    "claude"
+  ],
+  "requiresTools": [],
+  "compatibilityEvidence": "format-only"
+}
