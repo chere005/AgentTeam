@@ -10,7 +10,7 @@ Node 24+ is required (TypeScript runs directly via `node`, no transpile step for
 
 ```sh
 npm ci
-npm run typecheck                 # tsc for backend + tsconfig.ui.json for UI
+npm run typecheck                 # tsc for backend, tsconfig.ui.json (UI), tsconfig.desktop.json (Electron main/preload)
 npm test                          # node --test test/*.test.ts
 node --test test/scheduler.test.ts                          # single test file
 node --test --test-name-pattern="<regex>" test/core.test.ts # single test by name
@@ -69,6 +69,8 @@ Backend layering (all policy lives here; UI and provider tool paths must hit the
 UI shell (progressive disclosure, `docs/ui-design.md`): `App.tsx` shows the canvas plus a side panel (chat, or the selected agent's `AgentPanel.tsx`; the same sections back the New agent dialog, with a collapsed Advanced section). Every other view is a feature in `ui/features.ts` (id, name, group, one-line description; pure, tested in `test/ui-logic.test.ts`) opened as a closable tab from the top-bar More button / Ctrl+K palette (`CommandMenu.tsx`) or contextual buttons; tabs are stored per team (`agentteam.tabs`), layouts (`ui/workspace.ts`, Settings → Layouts via `LayoutMenu.tsx`) are saved sets of tabs. There is no left navigation. E2E specs reach views with `openFeature(page, name)` from `e2e/helpers.ts`.
 
 Resource locks cover only AgentTeam-run work, not external CLI/native sessions or editors.
+
+- Terminal tab (feature `terminal`, `ui/components/Terminal.tsx`, sessions kept across tab switches in `ui/terminal-sessions.ts`, xterm.js 5 + fit/search/web-links/unicode11/WebGL addons): the user's own login shell (validated `$SHELL` or the platform default) in a `node-pty` PTY in the main process (`src/terminal.ts`, IPC `terminal-*` in `desktop/main.ts`), with the user's permissions and OUTSIDE AgentTeam's agent locks, leases, access rules and filesystem policy. The renderer names only a starting folder (home, or a folder attached to an agent or project), never an executable; every PTY ends on window close, reload and quit. node-pty is external to the esbuild bundle, unpacked from the asar (`asarUnpack`), uses its N-API prebuilds (no Electron rebuild; `npmRebuild: false`; Linux builds from source at `npm ci` via `allowScripts`), and `scripts/native-deps.mjs` (from `prepare`) restores the macOS `spawn-helper` execute bit.
 
 ## Release
 

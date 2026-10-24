@@ -28,7 +28,13 @@ import {
   recordPreviewConsole,
   shutdownDevServers,
 } from "../src/devserver.ts";
-import type { Agent, Session } from "../src/model.ts";
+import type { Agent, Session, Workflow } from "../src/model.ts";
+import {
+  TerminalSessions,
+  TerminalError,
+  type SpawnPty,
+} from "../src/terminal.ts";
+import { ensureSpawnHelper } from "../src/terminal-native.ts";
 app.setName("AgentTeam");
 if (process.env.AGENTTEAM_DATA_DIR)
   app.setPath("userData", process.env.AGENTTEAM_DATA_DIR);
@@ -119,6 +125,104 @@ async function start() {
           result.error,
       );
     return result;
+  });
+  // Terminal tab (src/terminal.ts): the user's own login shell in a PTY, outside AgentTeam's
+  // agent locks. The renderer names only a starting folder (home or an attached folder), never
+  // an executable; every PTY ends when the window closes or the app quits.
+  let spawnPty: SpawnPty | null = null;
+  const loadPty = (): SpawnPty => {
+    if (spawnPty) return spawnPty;
+    // node-pty is a native module kept outside the esbuild bundle (scripts/build.mjs).
+    const pty = require("node-pty") as typeof import("node-pty");
+    ensureSpawnHelper(require.resolve("node-pty"));
+    spawnPty = (file, args, options) => pty.spawn(file, args, options);
+    return spawnPty;
+  };
+  const sendTerminal = (channel: string, payload: unknown) => {
+    if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+  };
+  const terminals = new TerminalSessions({
+    spawn: (file, args, options) => loadPty()(file, args, options),
+    home: app.getPath("home"),
+    folders: () => [
+      ...store
+        .list<Agent>("agent")
+        .flatMap((a) => a.workspaces.map((w) => w.path)),
+      ...store
+        .list<Workflow & { setup?: { workspace?: unknown } }>("workflow")
+        .map((w) => w.setup?.workspace)
+        .filter((p): p is string => typeof p === "string"),
+    ],
+    onData: (event) => sendTerminal("terminal-data", event),
+    onExit: (event) => sendTerminal("terminal-exit", event),
+  });
+  const terminalCall =
+    <A extends unknown[], R>(fn: (...args: A) => R) =>
+    (event: Electron.IpcMainInvokeEvent, ...args: A) => {
+      trusted(event);
+      try {
+        return fn(...args);
+      } catch (error) {
+        throw new Error(
+          error instanceof TerminalError
+            ? error.message
+            : "Terminal failed: " + String((error as Error)?.message ?? error),
+        );
+      }
+    };
+  ipcMain.handle(
+    "terminal-create",
+    terminalCall((options: unknown) => terminals.create(options)),
+  );
+  ipcMain.handle(
+    "terminal-kill",
+    terminalCall((id: unknown) => terminals.kill(id)),
+  );
+  // Keystrokes and resizes are fire-and-forget; an untrusted sender or bad argument is dropped.
+  ipcMain.on("terminal-write", (event, id, data) => {
+    if (
+      event.sender !== win?.webContents ||
+      event.senderFrame !== win.webContents.mainFrame
+    )
+      return;
+    try {
+      terminals.write(id, data);
+    } catch {
+      /* ended or invalid */
+    }
+  });
+  ipcMain.on("terminal-resize", (event, id, cols, rows) => {
+    if (
+      event.sender !== win?.webContents ||
+      event.senderFrame !== win.webContents.mainFrame
+    )
+      return;
+    try {
+      terminals.resize(id, cols, rows);
+    } catch {
+      /* ended or invalid */
+    }
+  });
+  // Cmd/Ctrl+click on a link in the terminal: http(s) only, opened in the system browser
+  // (recorded instead under AGENTTEAM_TEST=1).
+  ipcMain.handle("terminal-open-link", async (event, url) => {
+    trusted(event);
+    let parsed: URL;
+    try {
+      parsed = new URL(String(url));
+    } catch {
+      throw new Error("Invalid link");
+    }
+    if (
+      typeof url !== "string" ||
+      url.length > 4096 ||
+      !["http:", "https:"].includes(parsed.protocol)
+    )
+      throw new Error("Only http and https links open from the terminal");
+    if (process.env.AGENTTEAM_TEST === "1")
+      server.launches.push({ kind: "url", url: parsed.href });
+    else await shell.openExternal(parsed.href);
+    return true;
   });
   ipcMain.handle("choose-executable", async (event) => {
     trusted(event);
@@ -285,6 +389,11 @@ async function start() {
       return { action: "deny" };
     });
     win.webContents.on("will-navigate", (event) => event.preventDefault());
+    // No orphaned shells: closing the window (or a renderer reload) ends its terminals.
+    win.on("closed", () => terminals.killAll());
+    win.webContents.on("did-start-navigation", (details) => {
+      if (details.isMainFrame && !details.isSameDocument) terminals.killAll();
+    });
     // The renderer vetoes unload only while an agent has unsaved edits (ui/components/
     // UnsavedGuard.tsx). Ask instead of silently keeping the window open; Esc/Cancel keeps
     // editing. Test mode never shows a dialog and always lets the window close.
@@ -372,6 +481,7 @@ async function start() {
     if (closing) return;
     closing = true;
     event.preventDefault();
+    terminals.killAll();
     scheduler.stop();
     runs.close();
     void shutdownDevServers();

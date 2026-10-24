@@ -1,0 +1,158 @@
+/* Terminal tab: Sand Ink chrome around a dark canvas that matches the code editor. Canvas
+   colours come from --term-* (ui/terminal-theme.ts TERMINAL_CANVAS, set inline) so the
+   light-theme twin plugin never mirrors them. */
+.terminal-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+  padding: 10px 12px 8px;
+  box-sizing: border-box;
+}
+.terminal-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.terminal-tabs {
+  display: flex;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.terminal-tab {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-1);
+  flex: 0 0 auto;
+}
+.terminal-tab.active {
+  background: var(--term-bg);
+  border-color: var(--term-bg);
+}
+.terminal-tab > button {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  min-height: 0;
+}
+.terminal-tab > button[role="tab"] {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 4px 5px 10px;
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: 12px;
+  color: var(--text);
+  max-width: 220px;
+}
+.terminal-tab > button[role="tab"] span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.terminal-tab.active > button {
+  color: var(--term-fg);
+}
+.terminal-tab.active > button[role="tab"] svg {
+  color: var(--term-accent);
+}
+.terminal-tab-close {
+  padding: 4px 6px;
+  opacity: 0.6;
+  color: inherit;
+}
+.terminal-tab-close:hover {
+  opacity: 1;
+}
+.terminal-ended {
+  font-style: normal;
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--term-ended-bg);
+  color: var(--term-ended-fg);
+}
+.terminal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.terminal-actions select {
+  max-width: 240px;
+}
+.terminal-check {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.terminal-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-end;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 4px 14px var(--term-shadow);
+}
+.terminal-search input {
+  width: 240px;
+}
+.terminal-count {
+  min-width: 70px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.terminal-error {
+  margin: 0;
+  color: var(--diff-del-ink);
+}
+.terminal-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 120px;
+  border-radius: 10px;
+  background: var(--term-bg);
+  box-shadow:
+    inset 0 0 0 1px var(--term-edge),
+    0 6px 20px var(--term-shadow);
+  overflow: hidden;
+}
+.terminal-host {
+  position: absolute;
+  inset: 12px 6px 10px 14px;
+}
+.terminal-host[hidden] {
+  display: none;
+}
+.terminal-host .xterm {
+  height: 100%;
+}
+.terminal-host .xterm-viewport {
+  background-color: var(--term-bg) !important;
+  scrollbar-width: thin;
+  scrollbar-color: var(--term-scroll) transparent;
+}
+.terminal-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  color: var(--term-muted);
+  font-size: 13px;
+}
+.terminal-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}

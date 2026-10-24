@@ -12,6 +12,7 @@ export const FEATURE_IDS = [
   "files",
   "git",
   "preview",
+  "terminal",
   "library",
   "team-settings",
   "capabilities",
@@ -99,6 +100,14 @@ export const FEATURES: readonly Feature[] = [
     group: "Workspace",
     description: "Run a local dev server and preview the app it serves.",
     keywords: "dev server browser localhost",
+  },
+  {
+    id: "terminal",
+    name: "Terminal",
+    group: "Workspace",
+    description:
+      "Your own shell in a home, project or agent folder, with tabs and search.",
+    keywords: "shell console command line pty bash zsh powershell",
   },
   {
     id: "library",

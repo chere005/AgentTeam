@@ -59,6 +59,8 @@ import { TeamChatView } from "./components/TeamChatView";
 import { HelpMenu } from "./components/HelpMenu";
 import { ProjectTrace } from "./components/ProjectTrace";
 import { UsageAndLimits } from "./components/UsageAndLimits";
+import { TerminalView } from "./components/Terminal";
+import { shellOwnsKey } from "./terminal-theme";
 import { canLeaveFileEditor } from "./file-editor-guard";
 import { isProjectWorkflow } from "./project-kind";
 import {
@@ -441,6 +443,8 @@ export default function App() {
         !!t &&
         (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      // Plain Ctrl chords typed in the Terminal tab belong to the shell (ui/terminal-theme.ts).
+      if (t?.closest?.(".xterm") && shellOwnsKey(e)) return;
       if (e.key === "F6") {
         e.preventDefault();
         const regions = [
@@ -574,6 +578,8 @@ export default function App() {
         return (
           <Workspace {...props} view={id} currentProject={currentProject} />
         );
+      case "terminal":
+        return <TerminalView data={view} currentProject={currentProject} />;
       case "settings":
         return (
           <Preferences

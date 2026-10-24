@@ -77,6 +77,28 @@ declare global {
       /** Mirrors Settings -> Appearance to the main process (window background, first paint). */
       setTheme?: (setting: "light") => Promise<unknown>;
       onEvent: (callback: (event: TeamEvent) => void) => () => void;
+      /** Terminal tab PTYs in the main process (src/terminal.ts); absent outside the desktop app. */
+      terminal?: {
+        create: (options: {
+          cwd: string | null;
+          cols: number;
+          rows: number;
+        }) => Promise<{ id: string; shell: string; cwd: string; pid: number }>;
+        write: (id: string, data: string) => void;
+        resize: (id: string, cols: number, rows: number) => void;
+        kill: (id: string) => Promise<void>;
+        openLink: (url: string) => Promise<boolean>;
+        onData: (
+          callback: (event: { id: string; data: string }) => void,
+        ) => () => void;
+        onExit: (
+          callback: (event: {
+            id: string;
+            exitCode: number;
+            signal: number | null;
+          }) => void,
+        ) => () => void;
+      };
       platform: string;
     };
   }

@@ -18,6 +18,8 @@ const tryIt: Record<FeatureId, string> = {
   files: "Select an agent with a folder and open a file.",
   git: "Attach a Git repository to an agent, then inspect its branch and changes.",
   preview: "Start a local dev server from an agent’s workspace.",
+  terminal:
+    "Open a shell in the current project’s folder, then press ⌘F or Ctrl+F to search its output.",
   library: "Insert an example team to explore a ready-made setup.",
   "team-settings": "Review the team’s roles, models and worker limits.",
   capabilities: "Open an agent’s skills, tools or knowledge section.",

@@ -8,7 +8,7 @@ await build({
   banner: {
     js: "import {createRequire} from 'node:module';const require=createRequire(import.meta.url);",
   },
-  external: ["electron"],
+  external: ["electron", "node-pty"],
   target: "node22",
 });
 await build({
