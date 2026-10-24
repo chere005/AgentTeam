@@ -74,6 +74,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
         continue-on-error: true
+      - run: npm run build
       - run: node scripts/package.mjs --x64
       # Attach to the release the mac/publish jobs created (it may still be in progress).
       - if: startsWith(github.ref, 'refs/tags/v')
