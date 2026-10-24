@@ -11,7 +11,7 @@ contextBridge.exposeInMainWorld("agentteam", {
     ipcRenderer.invoke("api", method, path, body),
   chooseExecutable: () => ipcRenderer.invoke("choose-executable"),
   chooseFolder: () => ipcRenderer.invoke("choose-folder"),
-  setTheme: (_setting: "light") => ipcRenderer.invoke("set-theme", setting),
+  setTheme: (setting: "light") => ipcRenderer.invoke("set-theme", setting),
   saveDiagnostics: (format: "zip" | "json") =>
     ipcRenderer.invoke("save-diagnostics", format),
   saveTextFile: (name: string, content: string) =>

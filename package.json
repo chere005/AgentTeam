@@ -11,7 +11,7 @@
     "start": "npm run build && electron .",
     "dev": "node --watch src/server.ts",
     "test": "node --test test/*.test.ts",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.ui.json --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.ui.json --noEmit && tsc -p tsconfig.desktop.json --noEmit",
     "skills": "node src/cli.ts skills",
     "backend": "node src/server.ts",
     "dev:ui": "vite",

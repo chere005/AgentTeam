@@ -45,6 +45,7 @@ AgentTeam is a local, cross-platform desktop workspace for configuring and orche
 
 ## Implementation rules
 
+- Skills for this stack (Electron, TypeScript, React, UI/UX, the editor's languages) are symlinked in `.claude/skills` and `.agents/skills` from a sibling `../AgentSuite/skills` checkout; load the relevant one before working in that area. Edit them in AgentSuite, not here.
 - Follow existing TypeScript and formatting conventions. Prefer focused changes over unrelated refactors; avoid repository-wide formatting for a small patch.
 - Validate external inputs with strict schemas. Update API/UI types with domain changes; keep existing persisted records readable through defaults or explicit migrations.
 - Make related state changes atomic. SQLite transactions are synchronous: finish async filesystem/provider work outside them. Publish state-change events only after successful commit.
