@@ -4,7 +4,7 @@ import { test, expect, _electron as electron } from "@playwright/test";
 import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openChatWith, openFeature } from "./helpers";
+import { openChatWith, openFeature, waitForStableCanvas } from "./helpers";
 test("desktop connects, persists agents, configures limits and queues chat", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentteam-e2e-"));
   const app = await electron.launch({
@@ -73,7 +73,40 @@ test("desktop connects, persists agents, configures limits and queues chat", asy
       .locator(".react-flow__node")
       .filter({ hasText: "Database Architect" })
       .locator(".react-flow__handle.target");
-    await source.dragTo(target);
+    await page.getByRole("button", { name: "Fit view" }).click();
+    await waitForStableCanvas(page);
+    await expect(source).toBeVisible();
+    await expect(target).toBeVisible();
+    const sourceBounds = await source.boundingBox();
+    const targetBounds = await target.boundingBox();
+    if (!sourceBounds || !targetBounds)
+      throw new Error("Connection handles are missing");
+    const sourcePoint = {
+      x: sourceBounds.x + sourceBounds.width / 2,
+      y: sourceBounds.y + sourceBounds.height / 2,
+    };
+    const targetPoint = {
+      x: targetBounds.x + targetBounds.width / 2,
+      y: targetBounds.y + targetBounds.height / 2,
+    };
+    // React Flow listens for a mouse-down on the source handle followed by a
+    // sustained move and mouse-up on the target. locator.dragTo can compress
+    // that gesture enough to lose the connection start in Electron CI.
+    await page.mouse.move(sourcePoint.x, sourcePoint.y);
+    await page.mouse.down();
+    await page.waitForTimeout(80);
+    await page.mouse.move(targetPoint.x, targetPoint.y, { steps: 32 });
+    await page.waitForTimeout(80);
+    // React Flow may auto-pan while the source starts near the canvas edge;
+    // aim at the target's live position after that pan, then wait for its valid state.
+    const liveTargetBounds = await target.boundingBox();
+    if (!liveTargetBounds) throw new Error("Connection target disappeared");
+    await page.mouse.move(
+      liveTargetBounds.x + liveTargetBounds.width / 2,
+      liveTargetBounds.y + liveTargetBounds.height / 2,
+    );
+    await expect(target).toHaveClass(/connectingto/);
+    await page.mouse.up();
     await expect(
       page.getByRole("dialog", { name: "Connection settings" }),
     ).toBeVisible();

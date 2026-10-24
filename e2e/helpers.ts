@@ -22,6 +22,47 @@ export async function openFeature(page: Page, name: string) {
   await expect(palette).toHaveCount(0);
 }
 
+/** Waits for React Flow's animated fit/zoom transform to stop moving. */
+export async function waitForStableCanvas(page: Page) {
+  await page.waitForFunction(
+    () =>
+      new Promise<boolean>((resolve) => {
+        const viewport = document.querySelector<HTMLElement>(
+          ".react-flow__viewport",
+        );
+        if (!viewport) return resolve(false);
+        const signature = () => {
+          const bounds = (selector: string) =>
+            Array.from(document.querySelectorAll<HTMLElement>(selector)).map(
+              (element) => {
+                const rect = element.getBoundingClientRect();
+                return [rect.x, rect.y, rect.width, rect.height];
+              },
+            );
+          return JSON.stringify({
+            transform: getComputedStyle(viewport).transform,
+            cards: bounds(".agent-card"),
+            handles: bounds(".react-flow__handle"),
+          });
+        };
+        let previous = signature();
+        let stableFrames = 0;
+        let frames = 0;
+        const sample = () => {
+          const current = signature();
+          stableFrames = current === previous ? stableFrames + 1 : 0;
+          previous = current;
+          if (stableFrames >= 3) return resolve(true);
+          if (++frames >= 120) return resolve(false);
+          requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(sample);
+      }),
+    null,
+    { timeout: 5000 },
+  );
+}
+
 /** Opens an agent's setup explicitly; selecting the card itself follows the active pane. */
 export async function openSetup(page: Page, agentName: string) {
   const card = page
