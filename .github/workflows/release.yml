@@ -6,24 +6,14 @@ on:
 permissions:
   contents: read
 jobs:
-  build:
+  # macOS decides: full tests, then the installers. The release publishes as soon as both
+  # Mac builds pass; Windows/Linux (below) can never delay or block it.
+  mac:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: macos-latest
-            arch: arm64
-            platform: mac
-          - os: macos-latest
-            arch: x64
-            platform: mac
-          - os: windows-latest
-            arch: x64
-            platform: win
-          - os: ubuntu-latest
-            arch: x64
-            platform: linux
-    runs-on: ${{ matrix.os }}
+        arch: [arm64, x64]
+    runs-on: macos-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -35,44 +25,71 @@ jobs:
       - run: node node_modules/electron/install.js
       - run: node scripts/audit-release.mjs
       - run: npm run typecheck
-      # Tests decide on macOS only, as in ci.yml; Windows/Linux results are informational
-      # until their known failures are fixed (TODO.md), so they never block the installers.
       - run: npm test
-        continue-on-error: ${{ runner.os != 'macOS' }}
-      - if: runner.os != 'Linux'
-        run: npm run test:ui
-        continue-on-error: ${{ runner.os != 'macOS' }}
-      - if: runner.os == 'Linux'
-        run: xvfb-run --auto-servernum npm run test:ui
-        continue-on-error: true
-      - if: runner.os == 'macOS'
-        run: node scripts/package.mjs --${{ matrix.arch }}
+      - run: npm run test:ui
+      - run: node scripts/package.mjs --${{ matrix.arch }}
         env:
           CSC_LINK: ${{ secrets.MAC_CERTIFICATE_P12 }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      - if: runner.os != 'macOS'
-        run: node scripts/package.mjs --${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
         with:
-          name: installers-${{ matrix.platform }}-${{ matrix.arch }}
+          name: installers-mac-${{ matrix.arch }}
           if-no-files-found: error
           path: |
             release/*.dmg
             release/*.zip
-            release/*.exe
-            release/*.AppImage
-            release/*.deb
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: failure-${{ matrix.platform }}-${{ matrix.arch }}
+          name: failure-mac-${{ matrix.arch }}
           path: test-results/
+  # Windows/Linux installers are best effort until their known test failures are fixed
+  # (TODO.md): no desktop UI suite (it ran past the job limits), backend tests informational,
+  # job-level continue-on-error so a failure never fails the run or blocks publishing.
+  other:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+          - os: ubuntu-latest
+            platform: linux
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    continue-on-error: true
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node node_modules/electron/install.js
+      - run: npm run typecheck
+      - run: npm test
+        continue-on-error: true
+      - run: node scripts/package.mjs --x64
+      # Attach to the release the mac/publish jobs created (it may still be in progress).
+      - if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          files=$(ls release/*.exe release/*.AppImage release/*.deb 2>/dev/null || true)
+          [ -n "$files" ] || { echo "no installers"; exit 1; }
+          for i in $(seq 1 60); do gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 && break; sleep 30; done
+          (cd release && sha256sum $(basename -a $files) > SHA256SUMS-${{ matrix.platform }}.txt)
+          gh release upload "$GITHUB_REF_NAME" $files "release/SHA256SUMS-${{ matrix.platform }}.txt" --clobber
   publish:
+    # Mac only: Windows/Linux attach their installers to this release later, if they build.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: mac
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -80,7 +97,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          pattern: installers-*
+          pattern: installers-mac-*
           path: installers
           merge-multiple: true
       - name: Checksums

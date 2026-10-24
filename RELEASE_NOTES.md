@@ -1,8 +1,22 @@
-# AgentTeam 0.2.3
+# AgentTeam 0.3.0
+
+Diff review and editor polish; one light theme.
+
+## What's new in 0.3.0
+
+- Diff: a changed-files rail beside the selected file, new files shown as one green addition, redundant Git headers hidden, compact file/hunk navigation and compare controls, and wider side-by-side columns. Keyboard navigation keeps focus in the diff.
+- Editor: a Sublime-style status footer with cursor position, indentation and language.
+- Appearance: Sand Ink is the only theme; an earlier dark or system choice moves to it. The code editor keeps its own dark canvas.
+- Releases publish as soon as the macOS builds pass; Windows and Linux installers are attached afterwards when they build.
+- Verification on macOS: backend suite **483 passed, 1 skipped**; desktop workflows **70/70**. Live provider compatibility was not exercised.
+
+Installers are unsigned and the macOS app is not notarized. Your OS may ask you to approve the application. Windows and Linux installers are best effort: their test suites still have known failures.
+
+## Earlier release notes: 0.2.3
 
 Editor and theme update.
 
-## What's new in 0.2.3
+### What's new in 0.2.3
 
 - Dark mode uses Burgundy Rose and light mode uses Sand Ink; native window colors match the selected theme from launch. Contrast checks cover both palettes.
 - The built-in editor reads Sublime Text's global `Preferences.sublime-settings` and the selected workspace's matching `.sublime-project` settings. Supported settings are font size, tab width, tabs versus spaces, word wrap and rulers. Project `folders`, packages and color schemes are not imported, so editor preferences never silently grant workspace access.

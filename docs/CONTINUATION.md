@@ -1,8 +1,8 @@
 # AgentTeam continuation handoff
 
-## Current handoff: Diff/editor polish and Sand Ink-only appearance (October 23, 2026)
+## Current handoff: v0.3.0 — diff/editor polish and Sand Ink-only appearance (October 23, 2026)
 
-Merged to `main` on October 23, 2026 from `codex/diff-review-polish` (based on `5fb2ff2`). The user asked for the lighter Sand Ink palette only. Not released yet.
+Released as v0.3.0 (tag on `main`). The user asked for the lighter Sand Ink palette only. The release workflow now publishes on the two macOS jobs alone; Windows/Linux build without the desktop UI suite and attach their installers (and `SHA256SUMS-<platform>.txt`) afterwards when they build.
 
 - Diff work: changed-files rail and selected-file pane; new files render as a full green addition; redundant Git headers are hidden; file/hunk navigation, collapse controls and compare controls are compacted. Side-by-side columns were widened for readable code. Review keyboard navigation keeps focus in the diff.
 - Editor: Sublime-style status footer now shows cursor position, indentation settings and language, while removing verbose path/access/size details.
