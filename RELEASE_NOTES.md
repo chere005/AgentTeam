@@ -1,8 +1,20 @@
-# AgentTeam 0.3.0
+# AgentTeam 0.4.0
+
+A built-in terminal.
+
+## What's new in 0.4.0
+
+- Terminal tab: your own shell in a real terminal (xterm.js with node-pty), true color, clickable links (Cmd/Ctrl+click), search (Cmd/Ctrl+F), several sessions side by side as sub-tabs, start in your home folder or any agent's folder, optional copy on select, and a Nerd-Font-ready font stack on a dark canvas that matches the code editor.
+- The terminal runs with your own permissions; AgentTeam's agent locks, folder leases and access rules do not apply to it. Every shell is closed when you quit.
+- Verification on macOS: backend suite **491 passed, 1 skipped**; desktop workflows **71/71**, including a terminal round trip; a packaged arm64 build opened a working shell.
+
+Installers are unsigned and the macOS app is not notarized. Your OS may ask you to approve the application. Windows and Linux installers are best effort: their test suites still have known failures, and the terminal is untested there.
+
+## Earlier release notes: 0.3.0
 
 Diff review and editor polish; one light theme.
 
-## What's new in 0.3.0
+### What's new in 0.3.0
 
 - Diff: a changed-files rail beside the selected file, new files shown as one green addition, redundant Git headers hidden, compact file/hunk navigation and compare controls, and wider side-by-side columns. Keyboard navigation keeps focus in the diff.
 - Editor: a Sublime-style status footer with cursor position, indentation and language.
