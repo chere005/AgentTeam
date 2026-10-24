@@ -85,7 +85,10 @@ test("review: branch compare, side-by-side, keyboard navigation and narrow layou
     await expect(split).toBeVisible();
     await expect(split.locator(".tok-str").first()).toContainText("changed");
     await expect(split.locator(".tok-com").first()).toContainText("// note");
-
+    await review.getByRole("button", { name: "Collapse all hunks" }).click();
+    await expect(split.locator(".tok-str").first()).toBeHidden();
+    await review.getByRole("button", { name: "Expand all hunks" }).click();
+    await expect(split.locator(".tok-str").first()).toBeVisible();
     // Keyboard: hunks, then files.
     await expect(page.getByTestId("hunk-position")).toHaveText("Hunk 1 of 2");
     await review.getByLabel("Diff content").focus();
@@ -101,6 +104,9 @@ test("review: branch compare, side-by-side, keyboard navigation and narrow layou
       "Renamed from move-me.txt",
     );
     await page.keyboard.press("]");
+    await expect(
+      files.getByRole("button", { name: /run\.sh/ }),
+    ).toHaveAttribute("aria-current", "true");
     await expect(review.getByLabel("File change details")).toContainText(
       "File mode changed 100644 → 100755",
     );

@@ -135,19 +135,8 @@ test("team assistant chat: proposal card, approve & apply adds skills, reject, i
         .skills,
     ).toEqual([]);
     await card.scrollIntoViewIfNeeded();
-    for (const theme of ["dark", "light"]) {
-      await page.evaluate((t) => {
-        document.documentElement.dataset.theme = t;
-        document.documentElement.style.colorScheme = t;
-      }, theme);
-      await page.screenshot({
-        path: join(shots, `proposal-card-${theme}.png`),
-      });
-    }
-    await page.evaluate(() => {
-      document.documentElement.dataset.theme = "dark";
-      document.documentElement.style.colorScheme = "dark";
-    });
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    await page.screenshot({ path: join(shots, "proposal-card-light.png") });
     await json.locator("summary").click();
     await expect(json.locator("pre")).toContainText('"op": "agent.skills"');
 

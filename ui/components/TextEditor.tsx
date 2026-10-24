@@ -304,22 +304,34 @@ export function TextEditor({
         </div>
       )}
       <footer className="text-editor-footer">
-        {isNew
-          ? `New file in ${workspace}`
-          : `You can edit · agent access: ${doc?.access === "write" ? "write" : "read only"}`}
-        <span title={`Sublime settings: ${settingsSource}`}>
-          Ln {cursor.line}, Col {cursor.column}
+        <span
+          className="editor-cursor-status"
+          title={`Sublime settings: ${settingsSource}`}
+        >
+          Line {cursor.line}, Column {cursor.column}
           {cursor.selections > 1
             ? ` · ${cursor.selections} selections`
             : cursor.selected
               ? ` · ${cursor.selected} selected`
               : ""}{" "}
-          · {editorLanguage(newPath).name} ·{" "}
-          {preferences.translateTabsToSpaces ? "Spaces" : "Tabs"}:{" "}
-          {preferences.tabSize} · {draft.split("\n").length} lines ·{" "}
-          {new TextEncoder().encode(draft).length.toLocaleString()} bytes
+        </span>
+        <span className="editor-status-settings">
+          <span>
+            {preferences.translateTabsToSpaces ? "Spaces" : "Tabs"}:{" "}
+            {preferences.tabSize}
+          </span>
+          <span>{editorStatusLanguage(newPath)}</span>
         </span>
       </footer>
     </section>
   );
+}
+
+function editorStatusLanguage(path: string) {
+  const filename = path.split(/[\\/]/).pop()?.toLowerCase() ?? "";
+  const ext = filename.split(".").pop();
+  if (["cpp", "cc", "cxx", "hpp", "hh", "hxx"].includes(ext ?? ""))
+    return "C++";
+  if (["c", "h"].includes(ext ?? "")) return "C";
+  return editorLanguage(path).name;
 }

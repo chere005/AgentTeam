@@ -185,13 +185,10 @@ async function start() {
       },
     );
   });
-  // Appearance (Settings -> Appearance; the renderer keeps it in localStorage and mirrors it
-  // here): the window background, native dialogs/menus and prefers-color-scheme follow it, and the
-  // preload marks <html> with it before the page paints, so light mode never flashes dark.
+  // Appearance is fixed to Sand Ink; legacy dark/system preferences migrate on next launch.
   ipcMain.handle("set-theme", async (event, setting) => {
     trusted(event);
-    if (setting !== "system" && setting !== "light" && setting !== "dark")
-      throw new Error("Invalid theme");
+    if (setting !== "light") throw new Error("Invalid theme");
     if (setting !== storedTheme())
       store.put("settings", { id: "appearance", theme: setting });
     nativeTheme.themeSource = setting;
@@ -240,21 +237,22 @@ async function start() {
         "Finish active work and Take control before resuming this session externally.",
     };
   });
-  function storedTheme(): "system" | "light" | "dark" {
+  function storedTheme(): "light" {
     try {
-      const v = store.get<{ theme?: string }>("settings", "appearance").theme;
-      return v === "light" || v === "dark" ? v : "system";
+      const current = store.get<{ theme?: string }>("settings", "appearance");
+      if (current.theme !== "light")
+        store.put("settings", { ...current, id: "appearance", theme: "light" });
+      return "light";
     } catch {
-      return "system";
+      return "light";
     }
   }
-  /** Page background of the resolved theme (ui/theme-light.css --bg, dark #1b1217). */
+  /** Sand Ink page background from ui/theme-light.css. */
   function windowBackground() {
-    return nativeTheme.shouldUseDarkColors ? "#1b1217" : "#eee8dd";
+    return "#eee8dd";
   }
   function createWindow() {
-    const theme = storedTheme();
-    nativeTheme.themeSource = theme;
+    nativeTheme.themeSource = storedTheme();
     win = new BrowserWindow({
       width: 1500,
       height: 960,
@@ -270,7 +268,6 @@ async function start() {
       webPreferences: {
         // A hidden test window must keep timers and animation frames running.
         backgroundThrottling: !hiddenWindow,
-        additionalArguments: [`--agentteam-theme=${theme}`],
         preload: join(here, "preload.cjs"),
         contextIsolation: true,
         nodeIntegration: false,

@@ -42,7 +42,15 @@ for _ in $(seq 1 45); do
 done
 if [ -z "$run" ]; then echo "preflight: the run did not appear" >&2; exit 1; fi
 echo "preflight: https://github.com/${REPO}/actions/runs/${run}"
-gh run watch "$run" --repo "$REPO" --interval 30 > /dev/null 2>&1 || true
+# Wait for the deciding jobs only; optional ones (Windows, Linux) can take far longer and
+# are cancelled once the verdict is in, which never mails.
+while :; do
+  pending="$(gh run view "$run" --repo "$REPO" --json jobs \
+    --jq '[.jobs[] | select((.name | test("optional") | not) and .status != "completed")] | length')"
+  [ "$pending" = "0" ] && break
+  sleep 30
+done
+gh run cancel "$run" --repo "$REPO" > /dev/null 2>&1 || true
 
 jobs="$(gh run view "$run" --repo "$REPO" --json jobs --jq '.jobs[] | [.name, .conclusion] | @tsv')"
 echo "$jobs" | sed 's/^/  /'

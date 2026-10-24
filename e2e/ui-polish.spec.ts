@@ -371,13 +371,14 @@ const isLight = (rgb: string) => {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b > 180;
 };
 
-test("theme: Settings → Appearance switches light/dark, persists across a relaunch, System follows the OS", async () => {
+test("theme: Sand Ink is the only theme and survives a relaunch", async () => {
   await withApp(async ({ start }) => {
     let { page, app, errors } = await start();
     await openFeature(page, "Settings");
-    const theme = page.getByRole("combobox", { name: "Theme" });
-    await expect(theme).toHaveValue("system");
-    await theme.selectOption("light");
+    await expect(
+      page.getByRole("heading", { name: "Appearance" }),
+    ).toBeVisible();
+    await expect(page.getByText("Sand Ink", { exact: true })).toBeVisible();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
     expect(isLight(await background(page))).toBe(true);
     await app.close();
@@ -394,24 +395,21 @@ test("theme: Settings → Appearance switches light/dark, persists across a rela
       }));
     expect(await shell()).toEqual({ bg: "#eee8dd", source: "light" });
     await openFeature(page, "Settings");
-    await expect(page.getByRole("combobox", { name: "Theme" })).toHaveValue(
-      "light",
-    );
-    await page.getByRole("combobox", { name: "Theme" }).selectOption("dark");
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-    expect(isLight(await background(page))).toBe(false);
-    await expect.poll(shell).toEqual({ bg: "#1b1217", source: "dark" });
-    // System: follows prefers-color-scheme.
-    await page.getByRole("combobox", { name: "Theme" }).selectOption("system");
-    await page.emulateMedia({ colorScheme: "light" });
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
     await page.emulateMedia({ colorScheme: "dark" });
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    await page.evaluate(() =>
+      localStorage.setItem("agentteam.theme", '"dark"'),
+    );
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    await expect
+      .poll(() => page.evaluate(() => localStorage.getItem("agentteam.theme")))
+      .toBe('"light"');
     expect(errors).toEqual([]);
   });
 });
 
-test("screenshots: empty team, example team with an agent selected, More, a feature tab, Settings and 1100 px, in both themes", async () => {
+test("screenshots: Sand Ink empty/example team, More, a feature tab, Settings and 1100 px", async () => {
   await mkdir(shots, { recursive: true });
   await withApp(async ({ start }) => {
     const { page, app, errors } = await start();
@@ -426,64 +424,46 @@ test("screenshots: empty team, example team with an agent selected, More, a feat
       await page.waitForTimeout(500);
       await page.screenshot({ path: join(shots, `${themeName}-${name}.png`) });
     };
-    for (const t of ["dark", "light"] as const) {
-      await page.evaluate(
-        (v) => localStorage.setItem("agentteam.theme", JSON.stringify(v)),
-        t,
-      );
-      await page.reload();
-      await expect(page.locator("html")).toHaveAttribute("data-theme", t);
-      if (t === "dark") {
-        await shoot(t, "empty-team");
-        await api(page, "POST", "/teams/examples/product-feature-team/insert", {
-          acceptUnverifiedModels: true,
-        });
-        await page.reload();
-      } else {
-        // The empty Main team again for the light shot.
-        const snap = await api(page, "GET", "/snapshot");
-        const product = snap.activeTeamId;
-        await api(page, "PUT", "/team-spaces/active", { teamId: "main" });
-        await page.reload();
-        await shoot(t, "empty-team");
-        await api(page, "PUT", "/team-spaces/active", { teamId: product });
-        await page.reload();
-      }
-      await expect(page.locator(".agent-card")).toHaveCount(8);
-      await settled(page);
-      await shoot(t, "example-team");
-      await openSetup(page, "Backend Engineer");
-      await settled(page);
-      await shoot(t, "example-agent-selected");
-      // Hover the Engineering Manager → Backend Engineer connector near its child end.
-      const edge = page.locator(".react-flow__edge.selectable", {
-        has: page.locator("path.edge-tree"),
-      });
-      const target = (await page
-        .locator(".react-flow__node", { hasText: "Backend Engineer" })
-        .boundingBox())!;
-      await page.mouse.move(target.x + target.width / 2, target.y - 6);
-      await expect(edge.first()).toBeVisible();
-      await shoot(t, "edge-hover");
-      await page.mouse.move(5, 400);
-      await page.getByRole("button", { name: "More", exact: true }).click();
-      await shoot(t, "more-menu");
-      await page.keyboard.press("Escape");
-      await openFeature(page, "Projects");
-      await shoot(t, "feature-tab");
-      await openFeature(page, "Settings");
-      await shoot(t, "settings");
-      await openFeature(page, "Canvas");
-      await size(1100, 760);
-      await settled(page);
-      await shoot(t, "narrow-1100");
-      await page.getByRole("button", { name: "Close agent panel" }).click();
-      await settled(page);
-      await shoot(t, "narrow-1100-chat");
-      await size(1440, 900);
-      for (const tab of ["Projects", "Settings"])
-        await page.getByRole("button", { name: `Close ${tab}` }).click();
-    }
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    await shoot("light", "empty-team");
+    await api(page, "POST", "/teams/examples/product-feature-team/insert", {
+      acceptUnverifiedModels: true,
+    });
+    await page.reload();
+    await expect(page.locator(".agent-card")).toHaveCount(8);
+    await settled(page);
+    await shoot("light", "example-team");
+    await openSetup(page, "Backend Engineer");
+    await settled(page);
+    await shoot("light", "example-agent-selected");
+    // Hover the Engineering Manager → Backend Engineer connector near its child end.
+    const edge = page.locator(".react-flow__edge.selectable", {
+      has: page.locator("path.edge-tree"),
+    });
+    const target = (await page
+      .locator(".react-flow__node", { hasText: "Backend Engineer" })
+      .boundingBox())!;
+    await page.mouse.move(target.x + target.width / 2, target.y - 6);
+    await expect(edge.first()).toBeVisible();
+    await shoot("light", "edge-hover");
+    await page.mouse.move(5, 400);
+    await page.getByRole("button", { name: "More", exact: true }).click();
+    await shoot("light", "more-menu");
+    await page.keyboard.press("Escape");
+    await openFeature(page, "Projects");
+    await shoot("light", "feature-tab");
+    await openFeature(page, "Settings");
+    await shoot("light", "settings");
+    await openFeature(page, "Canvas");
+    await size(1100, 760);
+    await settled(page);
+    await shoot("light", "narrow-1100");
+    await page.getByRole("button", { name: "Close agent panel" }).click();
+    await settled(page);
+    await shoot("light", "narrow-1100-chat");
+    await size(1440, 900);
+    for (const tab of ["Projects", "Settings"])
+      await page.getByRole("button", { name: `Close ${tab}` }).click();
     expect(errors).toEqual([]);
   });
 });
@@ -571,32 +551,25 @@ async function contrastFailures(page: Page) {
   });
 }
 
-test("rendered text contrast meets WCAG AA in both themes (canvas, agent panel, Projects, Team settings, Settings)", async () => {
+test("Sand Ink text contrast meets WCAG AA (canvas, agent panel, Projects, Team settings, Settings)", async () => {
   await withApp(async ({ start }) => {
     const { page, errors } = await start();
     await api(page, "POST", "/teams/examples/product-feature-team/insert", {
       acceptUnverifiedModels: true,
     });
     const report: string[] = [];
-    for (const t of ["dark", "light"] as const) {
-      await page.evaluate(
-        (v) => localStorage.setItem("agentteam.theme", JSON.stringify(v)),
-        t,
-      );
-      await page.reload();
-      await expect(page.locator("html")).toHaveAttribute("data-theme", t);
-      await expect(page.locator(".agent-card")).toHaveCount(8);
-      await openSetup(page, "Backend Engineer");
-      await page.waitForTimeout(400);
-      for (const f of ["Canvas", "Projects", "Team settings", "Settings"]) {
-        await openFeature(page, f);
-        await page.waitForTimeout(300);
-        for (const line of await contrastFailures(page))
-          report.push(`${t} / ${f}: ${line}`);
-      }
-      for (const f of ["Projects", "Team settings", "Settings"])
-        await page.getByRole("button", { name: `Close ${f}` }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    await expect(page.locator(".agent-card")).toHaveCount(8);
+    await openSetup(page, "Backend Engineer");
+    await page.waitForTimeout(400);
+    for (const f of ["Canvas", "Projects", "Team settings", "Settings"]) {
+      await openFeature(page, f);
+      await page.waitForTimeout(300);
+      for (const line of await contrastFailures(page))
+        report.push(`${f}: ${line}`);
     }
+    for (const f of ["Projects", "Team settings", "Settings"])
+      await page.getByRole("button", { name: `Close ${f}` }).click();
     expect(report, report.join("\n")).toEqual([]);
     expect(errors).toEqual([]);
   });

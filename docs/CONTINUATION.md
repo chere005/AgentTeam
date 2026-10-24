@@ -1,6 +1,19 @@
 # AgentTeam continuation handoff
 
-## Current handoff: v0.2.3 macOS release (October 23, 2026)
+## Current handoff: Diff/editor polish and Sand Ink-only appearance (October 23, 2026)
+
+Merged to `main` on October 23, 2026 from `codex/diff-review-polish` (based on `5fb2ff2`). The user asked for the lighter Sand Ink palette only. Not released yet.
+
+- Diff work: changed-files rail and selected-file pane; new files render as a full green addition; redundant Git headers are hidden; file/hunk navigation, collapse controls and compare controls are compacted. Side-by-side columns were widened for readable code. Review keyboard navigation keeps focus in the diff.
+- Editor: Sublime-style status footer now shows cursor position, indentation settings and language, while removing verbose path/access/size details.
+- Theme: Sand Ink is now the app's only theme. Settings displays that plainly; localStorage and desktop-shell dark/system preferences are migrated to light. The code editor's independent dark Sublime-style canvas is preserved. The generated light stylesheet still uses the base stylesheet as its source; it is not a selectable plum theme.
+- Docs/tests updated to describe and capture Sand Ink only. The workspace Diff E2E assertion now checks each new-file line independently after selecting the file, avoiding stale previous-file rows and a multi-element assertion mismatch.
+- Verification on this checkpoint: `npm run typecheck` passed; `npm run build` passed with the existing Vite large-chunk advisory (about 1.96 MB JS); `npm test` passed **483**, failed **0**, skipped **1** (opt-in Wolfram kernel smoke). `git diff --check` passed. No live provider run was made. Desktop Playwright suite on this tree: **70/70 passed** (hidden windows, macOS, 3.2 min).
+- The remaining UI verification was proposed to Sean's ticket Inbox for approval; it has not been added directly to the board.
+
+Next: the generated Sand Ink screenshots were not inspected by eye; the live provider MCP/ACP validation (board #40, #41) is the next engineering priority.
+
+## Previous handoff: v0.2.3 macOS release (October 23, 2026)
 
 The release is published at [v0.2.3](https://github.com/chere005/AgentTeam/releases/tag/v0.2.3) with macOS arm64 and Intel ZIP/DMG installers and SHA256 checksums. The apps are unsigned and not notarized. Windows and Linux installers are not included: their optional UI jobs did not finish, so those platforms remain unverified.
 

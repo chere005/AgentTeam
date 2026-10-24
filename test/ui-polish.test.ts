@@ -75,22 +75,17 @@ test("fitStep: auto re-fit until a manual pan/zoom; then only the hint; an expli
   );
 });
 
-test("theme: System follows the OS, Light/Dark override it, junk falls back to System", () => {
-  assert.equal(resolveTheme("system", true), "dark");
-  assert.equal(resolveTheme("system", false), "light");
+test("theme: Sand Ink is fixed and legacy preferences migrate to it", () => {
   assert.equal(resolveTheme("light", true), "light");
-  assert.equal(resolveTheme("dark", false), "dark");
+  assert.equal(resolveTheme("light", false), "light");
   assert.equal(sanitizeTheme("light"), "light");
-  assert.equal(sanitizeTheme("dark"), "dark");
-  assert.equal(sanitizeTheme("purple"), "system");
-  assert.equal(sanitizeTheme(null), "system");
+  assert.equal(sanitizeTheme("dark"), "light");
+  assert.equal(sanitizeTheme("system"), "light");
+  assert.equal(sanitizeTheme("purple"), "light");
+  assert.equal(sanitizeTheme(null), "light");
 });
 
-test("Burgundy Rose and Sand Ink theme tokens keep readable text and actions", () => {
-  const darkCss = readFileSync(
-    new URL("../ui/style.css", import.meta.url),
-    "utf8",
-  );
+test("Sand Ink theme tokens keep readable text and actions", () => {
   const lightCss = readFileSync(
     new URL("../ui/theme-light.css", import.meta.url),
     "utf8",
@@ -100,39 +95,25 @@ test("Burgundy Rose and Sand Ink theme tokens keep readable text and actions", (
     assert.ok(value, `missing --${name}`);
     return value;
   };
-  for (const [name, css] of [
-    ["Burgundy Rose", darkCss],
-    ["Sand Ink", lightCss],
-  ] as const) {
-    const page = token(css, "bg");
-    const surfaces = [
-      page,
-      token(css, "panel"),
-      token(css, "surface-1"),
-      token(css, "surface-2"),
-      token(css, "selected"),
-    ];
-    const text = token(css, "text");
-    const muted = token(css, "muted");
-    for (const surface of surfaces) {
-      assert.ok(
-        contrast(text, surface) >= 4.5,
-        `${name}: text ${text} on ${surface}`,
-      );
-      assert.ok(
-        contrast(muted, surface) >= 4.5,
-        `${name}: muted ${muted} on ${surface}`,
-      );
-    }
-    assert.ok(
-      contrast(token(css, "accent"), page) >= 4.5,
-      `${name}: accent on page`,
-    );
-    assert.ok(
-      contrast(token(css, "accent-contrast"), token(css, "accent")) >= 4.5,
-      `${name}: primary button label`,
-    );
+  const page = token(lightCss, "bg");
+  const surfaces = [
+    page,
+    token(lightCss, "panel"),
+    token(lightCss, "surface-1"),
+    token(lightCss, "surface-2"),
+    token(lightCss, "selected"),
+  ];
+  const text = token(lightCss, "text");
+  const muted = token(lightCss, "muted");
+  for (const surface of surfaces) {
+    assert.ok(contrast(text, surface) >= 4.5, `Sand Ink: text on ${surface}`);
+    assert.ok(contrast(muted, surface) >= 4.5, `Sand Ink: muted on ${surface}`);
   }
+  assert.ok(contrast(token(lightCss, "accent"), page) >= 4.5);
+  assert.ok(
+    contrast(token(lightCss, "accent-contrast"), token(lightCss, "accent")) >=
+      4.5,
+  );
 });
 
 /** WCAG relative luminance contrast ratio. */

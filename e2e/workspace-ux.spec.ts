@@ -266,7 +266,10 @@ test("main view shortcuts keep the current project and Files can edit a text fil
     await expect(textEditor.locator(".cm-content")).toHaveClass(
       /cm-lineWrapping/,
     );
-    await expect(page.locator(".text-editor-footer")).toContainText("Tabs: 4");
+    const statusBar = page.locator(".text-editor-footer");
+    await expect(statusBar).toContainText("Line 1, Column 1");
+    await expect(statusBar).toContainText("Tabs: 4");
+    await expect(statusBar).toContainText("Markdown");
     const ruler = await textEditor
       .locator(".cm-content")
       .evaluate((el) => getComputedStyle(el).backgroundImage);
@@ -292,28 +295,29 @@ test("main view shortcuts keep the current project and Files can edit a text fil
       .fill("example.py");
     await page
       .getByRole("textbox", { name: "File contents" })
-      .fill("print('ready')\n");
+      .fill("print('ready')\nprint('second line')\n");
     page.once("dialog", (dialog) => void dialog.accept());
     await page.getByRole("button", { name: /^Save in / }).click();
     await expect(
       page.getByText("example.py", { exact: true }).first(),
     ).toBeVisible();
     expect(await readFile(join(root, "example.py"), "utf8")).toBe(
-      "print('ready')\n",
+      "print('ready')\nprint('second line')\n",
     );
     const fileTabs = page.getByRole("tablist", { name: "Open files" });
     await expect(fileTabs.getByRole("tab")).toHaveCount(9);
     await page.getByRole("button", { name: "Edit file" }).click();
     const pythonEditor = page.getByRole("textbox", { name: "File contents" });
-    await pythonEditor.fill("print('unsaved draft')\n");
+    await pythonEditor.fill("print('unsaved draft')\nprint('second line')\n");
     await fileTabs.getByRole("tab", { name: "README.md" }).click();
     await expect(
       page.getByRole("textbox", { name: "File contents" }),
     ).toContainText("Edited in AgentTeam.");
     await fileTabs.getByRole("tab", { name: "example.py" }).click();
-    await expect(
-      page.getByRole("textbox", { name: "File contents" }),
-    ).toHaveText("print('unsaved draft')");
+    const draftEditor = page.getByRole("textbox", { name: "File contents" });
+    await expect(draftEditor.locator(".cm-line")).toHaveCount(3);
+    await expect(draftEditor).toContainText("print('unsaved draft')");
+    await expect(draftEditor).toContainText("print('second line')");
     page.once("dialog", (dialog) => void dialog.accept());
     await page
       .locator(
@@ -333,11 +337,18 @@ test("main view shortcuts keep the current project and Files can edit a text fil
     await expect(changed).toContainText("README.md");
     await expect(changed).toContainText("example.py");
     await changed.getByRole("button", { name: /example\.py/ }).click();
+    await expect(page.locator(".review-file-heading strong")).toHaveText(
+      "example.py",
+    );
     const addedFile = page.getByRole("table", { name: "Unified diff" });
-    await expect(addedFile.locator("tbody tr.diff-added")).toHaveCount(1);
-    await expect(addedFile.locator("tbody tr.diff-added")).toContainText(
+    await expect(addedFile.locator("tbody tr.diff-added")).toHaveCount(2);
+    await expect(addedFile.locator("tbody tr.diff-added").nth(0)).toContainText(
       "print('unsaved draft')",
     );
+    await expect(addedFile.locator("tbody tr.diff-added").nth(1)).toContainText(
+      "print('second line')",
+    );
+    await expect(addedFile.locator("tbody tr.diff-removed")).toHaveCount(0);
     await expect(page.locator(".review-added-label")).toHaveText("New file");
     await expect(projectPicker).toHaveValue(project.id);
     expect(errors).toEqual([]);

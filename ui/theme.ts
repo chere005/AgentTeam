@@ -1,45 +1,38 @@
 import { useEffect, useState } from "react";
 
-/**
- * Colour theme: "system" follows the OS (prefers-color-scheme); Settings can force light or dark.
- * The choice is stored in localStorage (`agentteam.theme`) and applied as `data-theme` on <html>
- * (styles: `ui/theme-light.ts` derives the light twin of every rule at build time).
- */
-export type ThemeSetting = "system" | "light" | "dark";
-export type Theme = "light" | "dark";
+/** Sand Ink is the app theme; the code editor keeps its independent Sublime-style canvas. */
+export type ThemeSetting = "light";
+export type Theme = "light";
 export const THEME_KEY = "agentteam.theme";
 const EVENT = "agentteam:theme";
 
-export function sanitizeTheme(value: unknown): ThemeSetting {
-  return value === "light" || value === "dark" ? value : "system";
+export function sanitizeTheme(_value: unknown): ThemeSetting {
+  return "light";
 }
-export function resolveTheme(setting: ThemeSetting, osDark: boolean): Theme {
-  return setting === "system" ? (osDark ? "dark" : "light") : setting;
+export function resolveTheme(_setting: ThemeSetting, _osDark: boolean): Theme {
+  return "light";
 }
 
 function storedSetting(): ThemeSetting {
   try {
-    return sanitizeTheme(JSON.parse(localStorage.getItem(THEME_KEY) ?? "null"));
+    const stored = localStorage.getItem(THEME_KEY);
+    if (stored !== JSON.stringify("light"))
+      localStorage.setItem(THEME_KEY, JSON.stringify("light"));
+    return "light";
   } catch {
-    return "system";
+    return "light";
   }
 }
-const osQuery = () =>
-  typeof matchMedia === "function"
-    ? matchMedia("(prefers-color-scheme: dark)")
-    : null;
-
-/** Applies the stored (or given) setting to <html>; returns the resolved theme. */
+/** Applies Sand Ink to <html>; returns the selected theme. */
 export function applyTheme(setting = storedSetting()): Theme {
-  const theme = resolveTheme(setting, osQuery()?.matches ?? true);
+  const theme = resolveTheme(setting, false);
   document.documentElement.dataset.theme = theme;
   document.documentElement.style.colorScheme = theme;
   return theme;
 }
 
 /**
- * Tell the desktop main process (window background colour, native theme, and the theme the preload
- * marks <html> with before the next launch's first paint). Absent outside the desktop app.
+ * Tell the desktop main process to keep its native window and dialogs on Sand Ink.
  */
 export function syncThemeToShell(setting = storedSetting()) {
   try {
@@ -65,13 +58,13 @@ export function setThemeSetting(setting: ThemeSetting) {
   window.dispatchEvent(new CustomEvent(EVENT, { detail: setting }));
 }
 
-/** Current setting and resolved theme; follows Settings changes and OS changes. */
+/** Current setting and resolved theme. */
 export function useTheme(): { setting: ThemeSetting; theme: Theme } {
   const read = () => {
     const setting = storedSetting();
     return {
       setting,
-      theme: resolveTheme(setting, osQuery()?.matches ?? true),
+      theme: resolveTheme(setting, false),
     };
   };
   const [state, setState] = useState(read);
@@ -80,11 +73,8 @@ export function useTheme(): { setting: ThemeSetting; theme: Theme } {
       applyTheme();
       setState(read());
     };
-    const query = osQuery();
-    query?.addEventListener("change", update);
     window.addEventListener(EVENT, update);
     return () => {
-      query?.removeEventListener("change", update);
       window.removeEventListener(EVENT, update);
     };
   }, []);

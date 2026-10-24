@@ -75,7 +75,7 @@ declare global {
         content: string,
       ) => Promise<{ path: string } | null>;
       /** Mirrors Settings -> Appearance to the main process (window background, first paint). */
-      setTheme?: (setting: "system" | "light" | "dark") => Promise<unknown>;
+      setTheme?: (setting: "light") => Promise<unknown>;
       onEvent: (callback: (event: TeamEvent) => void) => () => void;
       platform: string;
     };

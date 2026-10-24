@@ -91,7 +91,6 @@ function MetaNotes({ review, path }: { review: Review; path: string }) {
     );
   if (m?.oldMode && m.newMode && m.oldMode !== m.newMode)
     notes.push(`File mode changed ${m.oldMode} → ${m.newMode}.`);
-  if (m?.kind === "added" && !m.noHunks) notes.push("New file.");
   if (m?.kind === "added" && m.noHunks && !m.binary)
     notes.push("New empty file.");
   if (m?.kind === "deleted") notes.push("File deleted.");
@@ -101,6 +100,7 @@ function MetaNotes({ review, path }: { review: Review; path: string }) {
   if (review.unreadable) notes.push(review.unreadable);
   if (!notes.length && !review.diff)
     notes.push("No text changes to show for this file.");
+  if (!notes.length) return null;
   return (
     <ul className="review-meta" aria-label="File change details">
       {notes.map((n) => (
@@ -138,6 +138,9 @@ export function ChangesReview({
   const [view, setView] = useState<"split" | "unified">("split"),
     [width, setWidth] = useState(1000),
     [hunk, setHunk] = useState(0);
+  const [collapsedHunks, setCollapsedHunks] = useState<Set<number>>(
+    () => new Set(),
+  );
   const [comment, setComment] = useState<CommentTarget | null>(null);
   const [text, setText] = useState(""),
     [recipient, setRecipient] = useState(agentId);
@@ -207,10 +210,22 @@ export function ChangesReview({
     };
   }, [agentId, workspace, scopeKey, path, revision]);
 
-  useEffect(() => setHunk(0), [path, scopeKey]);
+  useEffect(() => {
+    setHunk(0);
+    setCollapsedHunks(new Set());
+  }, [path, scopeKey]);
 
   const rows = useMemo(() => diffRows(review?.diff ?? ""), [review?.diff]);
-  const pairs = useMemo(() => splitRows(rows), [rows]);
+  // File metadata is summarized above; keep only meaningful diff rows in the viewport.
+  const displayRows = useMemo(
+    () =>
+      rows.filter(
+        (row) =>
+          !(row.kind === "meta" && row.hunk < 0 && !row.line.startsWith("\\")),
+      ),
+    [rows],
+  );
+  const pairs = useMemo(() => splitRows(displayRows), [displayRows]);
   const hunkCount = rows.filter((r) => r.kind === "hunk").length;
   const added = rows.filter((r) => r.kind === "added").length;
   const removed = rows.filter((r) => r.kind === "removed").length;
@@ -226,11 +241,29 @@ export function ChangesReview({
       ?.querySelector(`[data-hunk="${n}"]`)
       ?.scrollIntoView?.({ block: "nearest" });
   }
+  function toggleHunk(index: number) {
+    setCollapsedHunks((current) => {
+      const next = new Set(current);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }
+  function toggleAllHunks() {
+    setCollapsedHunks((current) =>
+      current.size === hunkCount
+        ? new Set()
+        : new Set(Array.from({ length: hunkCount }, (_, index) => index)),
+    );
+  }
   function goFile(delta: number) {
     const i = visibleFiles.findIndex((f) => f.path === path);
     const f =
       visibleFiles[Math.max(0, Math.min(visibleFiles.length - 1, i + delta))];
-    if (f && f.path !== path) setPath(f.path);
+    if (f && f.path !== path) {
+      root.current?.focus({ preventScroll: true });
+      setPath(f.path);
+    }
   }
   function onKeyDown(e: React.KeyboardEvent) {
     const t = e.target as HTMLElement;
@@ -323,6 +356,7 @@ export function ChangesReview({
       className="changes-review"
       aria-label="Code review"
       ref={root}
+      tabIndex={0}
       onKeyDown={onKeyDown}
     >
       <div className="row between changes-review-header">
@@ -574,38 +608,44 @@ export function ChangesReview({
             </p>
           )}
           <div className="review-layout">
-            <nav className="review-files" aria-label="Changed files">
-              {visibleFiles.map((file) => (
-                <button
-                  key={file.path}
-                  className={path === file.path ? "active" : ""}
-                  aria-current={path === file.path ? "true" : undefined}
-                  title={STATUS[file.status.trim()[0] ?? ""] ?? file.status}
-                  onClick={() => setPath(file.path)}
-                >
-                  <code>{file.status.trim()}</code>
-                  <span>
-                    {file.path}
-                    {file.from && <small> ← {file.from}</small>}
-                  </span>
-                </button>
-              ))}
-              {!review.files.length && (
-                <p className="hint">
-                  {review.source === "folder"
-                    ? "No pending changes."
-                    : `No ${mode === "compare" ? "committed differences between these revisions" : `${mode} changes`}.`}
-                </p>
-              )}
-            </nav>
+            <aside className="review-files-panel">
+              <div className="review-files-heading">
+                <strong>Changed files</strong>
+                <span>{visibleFiles.length}</span>
+              </div>
+              <nav className="review-files" aria-label="Changed files">
+                {visibleFiles.map((file) => (
+                  <button
+                    key={file.path}
+                    className={path === file.path ? "active" : ""}
+                    aria-current={path === file.path ? "true" : undefined}
+                    title={STATUS[file.status.trim()[0] ?? ""] ?? file.status}
+                    onClick={() => setPath(file.path)}
+                  >
+                    <code>{file.status.trim()}</code>
+                    <span>
+                      {file.path}
+                      {file.from && <small> ← {file.from}</small>}
+                    </span>
+                  </button>
+                ))}
+                {!review.files.length && (
+                  <p className="hint">
+                    {review.source === "folder"
+                      ? "No pending changes."
+                      : `No ${mode === "compare" ? "committed differences between these revisions" : `${mode} changes`}.`}
+                  </p>
+                )}
+              </nav>
+            </aside>
             {path && review.files.length > 0 && (
               <div
                 className={`review-diff${wholeFileAdded ? " review-diff-added-file" : ""}`}
                 aria-label={wholeFileAdded ? "New file contents" : undefined}
               >
-                <div className="row between">
+                <div className="review-file-heading">
                   <strong>{path}</strong>
-                  <span>
+                  <span className="review-file-stats">
                     {wholeFileAdded && (
                       <span className="review-added-label">New file</span>
                     )}{" "}
@@ -643,6 +683,20 @@ export function ChangesReview({
                       ? `Hunk ${hunk + 1} of ${hunkCount}`
                       : "No hunks"}
                   </span>
+                  <button
+                    className="review-collapse-hunks"
+                    disabled={!hunkCount}
+                    aria-label={
+                      hunkCount > 0 && collapsedHunks.size === hunkCount
+                        ? "Expand all hunks"
+                        : "Collapse all hunks"
+                    }
+                    onClick={toggleAllHunks}
+                  >
+                    {hunkCount > 0 && collapsedHunks.size === hunkCount
+                      ? "Expand all"
+                      : "Collapse all"}
+                  </button>
                   <span className="tabs" role="group" aria-label="Diff layout">
                     <button
                       className={split ? "active" : ""}
@@ -666,10 +720,6 @@ export function ChangesReview({
                     </button>
                   </span>
                 </div>
-                <p className="hint">
-                  Keys: ] next file, [ previous file, n next hunk, p previous
-                  hunk.
-                </p>
                 {review.truncated && (
                   <p className="notice" role="note">
                     Truncated: {review.truncatedReason ?? "output was bounded"}.
@@ -677,7 +727,7 @@ export function ChangesReview({
                   </p>
                 )}
                 <MetaNotes review={review} path={path} />
-                {rows.length > 0 && (
+                {displayRows.length > 0 && (
                   <div
                     className="diff-scroll"
                     ref={scroller}
@@ -708,10 +758,28 @@ export function ChangesReview({
                                 }
                               >
                                 <td colSpan={6}>
-                                  <code>{p.row.line}</code>
+                                  {p.row.kind === "hunk" ? (
+                                    <button
+                                      className="diff-hunk-toggle"
+                                      aria-expanded={
+                                        !collapsedHunks.has(p.row.hunk)
+                                      }
+                                      aria-label={`${collapsedHunks.has(p.row.hunk) ? "Expand" : "Collapse"} hunk ${p.row.hunk + 1}`}
+                                      onClick={() => toggleHunk(p.row.hunk)}
+                                    >
+                                      <span aria-hidden="true">
+                                        {collapsedHunks.has(p.row.hunk)
+                                          ? "▸"
+                                          : "▾"}
+                                      </span>
+                                      <code>{p.row.line}</code>
+                                    </button>
+                                  ) : (
+                                    <code>{p.row.line}</code>
+                                  )}
                                 </td>
                               </tr>
-                            ) : (
+                            ) : collapsedHunks.has(p.hunk) ? null : (
                               <tr key={i}>
                                 <td className={cellClass(p.left)}>
                                   {p.left?.no}
@@ -757,47 +825,67 @@ export function ChangesReview({
                           </tr>
                         </thead>
                         <tbody>
-                          {rows.map((r, i) => (
-                            <tr
-                              key={i}
-                              className={`diff-${r.kind}${r.kind === "hunk" && r.hunk === hunk ? " current-hunk" : ""}`}
-                              data-hunk={r.kind === "hunk" ? r.hunk : undefined}
-                            >
-                              <td>{r.old ?? ""}</td>
-                              <td>{r.next ?? ""}</td>
-                              <td>
-                                {r.kind === "meta" || r.kind === "hunk" ? (
-                                  <code>{r.line}</code>
-                                ) : (
-                                  <>
-                                    <code className="diff-prefix">
-                                      {r.line[0]}
-                                    </code>
-                                    <Code text={body(r.line)} lang={lang} />
-                                  </>
-                                )}
-                              </td>
-                              <td>
-                                {r.kind !== "meta" && r.kind !== "hunk" && (
-                                  <button
-                                    disabled={!!comment}
-                                    aria-label={`Comment on ${r.kind === "removed" ? "old" : "new"} line ${r.kind === "removed" ? r.old : r.next}`}
-                                    onClick={() =>
-                                      startComment(
-                                        r,
-                                        r.kind === "removed" ? "old" : "new",
-                                        (r.kind === "removed"
-                                          ? r.old
-                                          : r.next) as number,
-                                      )
-                                    }
-                                  >
-                                    +
-                                  </button>
-                                )}
-                              </td>
-                            </tr>
-                          ))}
+                          {displayRows.map((r, i) =>
+                            collapsedHunks.has(r.hunk) &&
+                            r.kind !== "hunk" ? null : (
+                              <tr
+                                key={i}
+                                className={`diff-${r.kind}${r.kind === "hunk" && r.hunk === hunk ? " current-hunk" : ""}`}
+                                data-hunk={
+                                  r.kind === "hunk" ? r.hunk : undefined
+                                }
+                              >
+                                <td>{r.old ?? ""}</td>
+                                <td>{r.next ?? ""}</td>
+                                <td>
+                                  {r.kind === "hunk" ? (
+                                    <button
+                                      className="diff-hunk-toggle"
+                                      aria-expanded={
+                                        !collapsedHunks.has(r.hunk)
+                                      }
+                                      aria-label={`${collapsedHunks.has(r.hunk) ? "Expand" : "Collapse"} hunk ${r.hunk + 1}`}
+                                      onClick={() => toggleHunk(r.hunk)}
+                                    >
+                                      <span aria-hidden="true">
+                                        {collapsedHunks.has(r.hunk) ? "▸" : "▾"}
+                                      </span>
+                                      <code>{r.line}</code>
+                                    </button>
+                                  ) : r.kind === "meta" ? (
+                                    <code>{r.line}</code>
+                                  ) : (
+                                    <>
+                                      <code className="diff-prefix">
+                                        {r.line[0]}
+                                      </code>
+                                      <Code text={body(r.line)} lang={lang} />
+                                    </>
+                                  )}
+                                </td>
+                                <td>
+                                  {r.kind !== "meta" && r.kind !== "hunk" && (
+                                    <button
+                                      className="diff-comment"
+                                      disabled={!!comment}
+                                      aria-label={`Comment on ${r.kind === "removed" ? "old" : "new"} line ${r.kind === "removed" ? r.old : r.next}`}
+                                      onClick={() =>
+                                        startComment(
+                                          r,
+                                          r.kind === "removed" ? "old" : "new",
+                                          (r.kind === "removed"
+                                            ? r.old
+                                            : r.next) as number,
+                                        )
+                                      }
+                                    >
+                                      +
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                            ),
+                          )}
                         </tbody>
                       </table>
                     )}

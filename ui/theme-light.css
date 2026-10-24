@@ -26,6 +26,17 @@
   --editor-number: #9c471b;
   --editor-function: #006e65;
   --editor-selection: #789ec44d;
+  --diff-add-bg: #e1f3e7;
+  --diff-add-strong: #a6cfb1;
+  --diff-add-ink: #315d3e;
+  --diff-del-bg: #f8e8e5;
+  --diff-del-ink: #8b4547;
+  --diff-meta-bg: #e8dece;
+  --diff-meta-ink: #5c5144;
+  --diff-gutter: #f2eee6;
+  --diff-review-bg: #f0e7e4;
+  --diff-review-line: #d6b9b3;
+  --diff-scroll-bg: #faf7f1;
   background: #eee8dd;
   color: #29241e;
 }
@@ -78,4 +89,25 @@
 :where(:root[data-theme="light"]) .modal {
   background: var(--panel);
   box-shadow: 0 24px 70px #29241e33;
+}
+:where(:root[data-theme="light"]) .text-editor-footer {
+  border-top-color: #c8b8a2;
+  background: #e3d9ca;
+  color: #4f463c;
+}
+:where(:root[data-theme="light"]) .editor-status-settings > span {
+  border-left-color: #c8b8a2;
+}
+:where(:root[data-theme="light"]) .changes-review {
+  --diff-add-bg: #e1f3e7;
+  --diff-add-strong: #a6cfb1;
+  --diff-add-ink: #315d3e;
+  --diff-del-bg: #f8e8e5;
+  --diff-del-ink: #8b4547;
+  --diff-meta-bg: #e8dece;
+  --diff-meta-ink: #5c5144;
+  --diff-gutter: #f2eee6;
+  --diff-review-bg: #f0e7e4;
+  --diff-review-line: #d6b9b3;
+  --diff-scroll-bg: #faf7f1;
 }
