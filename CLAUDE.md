@@ -74,4 +74,4 @@ Resource locks cover only AgentTeam-run work, not external CLI/native sessions o
 
 ## Release
 
-`.github/workflows/ci.yml` checks macOS/Windows/Linux; `release.yml` builds the installers on a `v*` tag into one draft release and publishes it once every file is there (README "Releases"; no artifact uploads); macOS signing is in `SIGNING.md`. A configured workflow or version bump is not evidence of a published release.
+`.github/workflows/ci.yml` checks macOS/Windows/Linux; `release.yml` builds the installers on a `v*` tag into one draft release and publishes it once every file is there (docs/DETAILS.md "Releases"; no artifact uploads); macOS signing is in `SIGNING.md`. A configured workflow or version bump is not evidence of a published release.

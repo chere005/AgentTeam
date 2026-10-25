@@ -1,163 +1,80 @@
 # AgentTeam
 
-A local desktop workspace for building and coordinating teams of AI agents. Built with Electron, React, React Flow, TypeScript and SQLite. Targets **macOS, Windows and Linux**.
+A desktop app for running teams of AI agents on your own machine.
 
-**Current release: 0.4.0.** The desktop UI and orchestration are tested with fixtures. Live provider integrations require your own installed runtimes and accounts; support depends on each provider and has not all been validated against live subscriptions. Read the limitations below before running real work.
+## Disclaimer
 
-![AgentTeam canvas and conversation workspace](docs/team-canvas.png)
+Feel free to build it, change it, run your own teams on it, etc.
 
-See [the detailed feature backlog](TODO.md) for remaining work, partial implementations, and the planned implementation order.
+**This is a personal project to have some fun with claude code and codex, which generated essentially all of the code, and the rest of this readme:**
 
-## Install
+## Quick start / Install
 
-Download the appropriate artifact from [GitHub Releases](https://github.com/chere005/AgentTeam/releases).
+1. Download from [GitHub Releases](https://github.com/chere005/AgentTeam/releases). Unsigned, so macOS and Windows ask before the first launch.
+2. Install and sign in to the provider you want to use: Claude Code, Codex or wolframscript.
+3. Open AgentTeam, insert an example team from the library, assign it a project.
 
-- **macOS:** open the DMG and drag AgentTeam to Applications, or unpack the ZIP. Choose arm64 for Apple Silicon and x64 for Intel. The app is unsigned and not notarized; macOS may require approval in Privacy & Security after an initial launch attempt.
-- **Windows:** run the x64 setup executable. The installer is unsigned; Windows may display a publisher warning.
-- **Linux:** use the x64 AppImage (`chmod +x AgentTeam-*.AppImage`) or install the `.deb`. AppImage execution may require your distribution's FUSE package.
+## Platforms
 
-No provider credentials or subscriptions are bundled. AgentTeam does not replace the provider's terms, installation, login or billing.
+- macOS (Apple silicon and Intel)
+- Windows x64
+- Linux x64 (AppImage and deb)
 
-## What is included
+## Usage
 
-**Teams, projects and workflow graphs.** A _team_ is a persistent org of agents: a lead on top, workers, reviewers and adjudicators below, with roles, models and effort, communication links, routing rules, required reviews and caps. A _project_ is one unit of work assigned to a team: a goal, a workspace, tasks and stage gates, run by the team's existing agents. A team can be assigned any number of projects over time; each is created paused. A _workflow graph_ is an executable step graph (tasks, commands, conditions, human input) inside a project.
+A **team** is an org chart of agents. A **project** is a goal plus tasks that a team runs. Four main views, Cmd/Ctrl+1 to 4; everything else is a tab under More or Cmd+K.
 
-- Example teams in the Saved teams library, each shown with its shape, an org-chart preview and Insert: Quickstart local sockets (Claude Opus/Sonnet aliases, C++/Python/TypeScript builders and a Codex reviewer), the plan → implement → review pipeline team, the Wolfram-validated reasoning team and a product feature team (Engineering Manager over frontend, backend and QA engineers and a technical writer; a mandatory code reviewer for source changes; an advisory security reviewer for auth, crypto and secrets paths). Inserting one creates a new active team without a goal, workspace or project; worker counts and model mappings are set and checked at insert. "Assign project" (top bar, Projects tab, team menu) then gives the team a project: the pipeline team gets the staged pipeline built on its agents, the Wolfram team the validated-reasoning tasks, any other team a free-form project (goal, workspace, optional task list). The project's workspace is attached to the team's agents with the access the team defines (reviewers read-only).
-- One team at a time: a switcher in the top bar names the active team, shows its status and running/attention counts, and lists every team with its counts so work in other teams is never out of sight. Canvas, conversations, projects, resources, inbox, inspector, assistant changes and workflow graphs show only the active team (the Team Assistant is global and appears in every team); switching never pauses or cancels anything. Example teams, inserted templates and team packs get a team of their own and switch to it. Teams can be created, renamed and deleted (agents are moved to another team by default, or deleted explicitly when unused). Links between agents of different teams are created only explicitly and shown as cross-team links; permissions, locks, limits, gates and scheduling stay global.
-- Project-first workspace (see [docs/ui-design.md](docs/ui-design.md)): the four main views are Layout, Chat, Files and Diff, switched with Cmd/Ctrl+1–4. The current project stays visible in the top bar and selected across views. Files includes a text editor and works with plain folders; Diff shows pending changes even without Git. Cmd/Ctrl+Shift+P opens the command palette; Cmd/Ctrl+P searches files and chats.
-- Progressive disclosure: selecting an agent opens its setup panel (identity and role, model, folders with "can read" / "can read and edit", skills loaded always or on demand, who it talks to, and a collapsed Advanced section for priority, concurrency, effort, instructions, tools and access rules), in place of the chat or beside it. Other features (projects, Git, preview, library, skills/tools/knowledge, access and resources, inbox, timeline/inspector, limits, recovery, shared state, settings) open from **More** / Ctrl/Cmd+K as closable tabs; open tabs are remembered per team. An attention button appears only when something needs you.
-- Persistent agent profiles: environment, model, effort, role, instructions, skills, parent agent, scheduling priority and concurrent-invocation limit (Unlimited by default).
-- An interactive team canvas with a plain-language connection editor and directed/bidirectional communication links, compact/detailed cards, a top-down org-chart arrangement (leads on top, reports centered below by subtree width, the Team Assistant aside; runs automatically for inserted and new teams and from the Arrange button, and keeps manual positions otherwise), zoom and directional activity pulses.
-- Conversations with Enter-to-send / Shift+Enter-newline, a recipient dropdown, a persistent Team Assistant, queued messages (a run answers every message queued in that conversation together, so a message sent while execution was paused never makes later replies lag one behind), cancellation, CLI resume instructions and native-app opening on macOS.
-- Workflow tasks, dependencies, completion criteria, pause/resume, retries, cancellation, and an automatic scheduler when execution is enabled.
-- Priority-based routing rules, explicit routing previews and communication permissions. Role presets (coordinator, implementer, reviewer, adjudicator) set default access and output contracts. Rules can be advisory or mandatory: specialist rules match task text, tags or changed-file globs, every matching specialty is invoked with its evidence, and ties are shown rather than silently resolved. A mandatory rule is a required review: a backend-created review task must pass and approve the exact result before dependent tasks run (`review-required`); prompt text or an explicit recipient cannot bypass it. Changed-file evidence is what the task declares or reports, not measured from Git.
-- Shared workflow state and artifacts: typed per-workflow fields with per-agent read/write permissions, versioned history attributed to agent/task/run, optimistic conflict detection, state carried in checkpoints, per-task fresh-memory runs, and a size-limited dependency/state context passed to downstream tasks as untrusted data. A task's structured state output is validated and committed atomically with its completion. Artifacts are immutable records with provenance and preview. Each workflow has an editor for field definitions (kind, schema, readers/writers) and checkpoint-based restore with a preview; per-task state/context settings are edited in the task's settings.
-- Run inspector: a correlated, filterable timeline of messages, tool calls, settings, transitions, locks and approvals; "why is this waiting?" explanations; clickable canvas transfers; routing/access previews; a fixture-only playground that runs saved examples against a copy of the team (never a live provider) and compares runs; and a redacted diagnostic bundle that excludes credentials, prompts (roles, instructions, goals; only length and hash), raw tool input, diff content, provider output and task results (length and hash only) and file contents; timeline entries are exported through an allow-list of ids, status/kind, a short title and file paths.
-- Four project-aware main views—Layout, Chat, Files and Diff—switch with `⌘1`–`⌘4` (`Ctrl+1`–`Ctrl+4` on Windows/Linux). The header always shows the current project. Saved workspace layouts in Settings, an attention inbox, canvas groups, keyboard shortcuts (press `?`), and accessible labels and focus handling for core forms and lists.
-- Team Assistant change proposals: the assistant (or you) describes configuration changes as a strict list of operations (agents, agent skills, connections, rules, workflows, stopping limits, folder attachments). The assistant's prompt carries the proposal protocol (JSON Schema and field lists generated from the backend schemas, worked examples) and a bounded view of the active team (agents with roles, current skills and tools) plus the skill catalog. A proposal in a reply appears as a "Proposed changes" card right under it in the chat (raw JSON behind Show JSON) with Approve & apply, Reject and Open in Assistant changes; an invalid one shows the validation error and an "Ask the assistant to fix this" button. Skill assignments go through the same checks as the agent panel (in the catalog, compatible with the agent's environment, required tools already present) and never grant tools or folders. Each proposal shows a before/after diff and flags significant effects; only you can approve, reject or apply it, a significant one needs explicit approval of exactly those operations, a proposal goes stale when anything it touches changes, and applying runs the same validation as the forms with full rollback on failure. Every step is audited. Ownership of each agent (team, embedded chat, CLI, native app) is explicit and one session is never driven twice.
-- Skills, tools and knowledge: Always-load versus On-demand skills (on-demand ones are selected per request by AgentTeam, with the reason, version and approximate context cost recorded per run), change detection that keeps a changed skill out of runs until you accept it, an effective-instructions preview, an MCP tool registry with per-agent grants, environment-variable references instead of stored secrets and a metadata-only connection test, and per-agent/project knowledge sources (local lexical index, cited passages labelled as untrusted data, confined to attached folders and their access rules). Granted MCP servers are not yet passed to providers.
-- Executable workflow graphs, separate from the communication graph: task, command, condition, human-input, fan-out/join and bounded-loop steps with typed inputs, static validation before a run, an immutable executed path and retry from the failed step. Command steps run without a shell (unless flagged), confined to an attached folder and its access rules, with a scrubbed environment, time/output bounds, the same limits, leases and effect ledger as tasks, and must be reviewed and confirmed before a run starts.
-- Shared-resource locks for attached folders and overlapping subfolders. Workflow tasks and requested chat runs share the lock boundary. Priority ages while waiting so lower-priority agents eventually get a turn.
-- Guided parallel workflow configuration: choose resources, a coordinator and a concurrency cap. The coordinator creates a plan that becomes a prerequisite for workers. Workers can be assigned disjoint files/folders (leased individually) or their own worktrees plus an integration task; writes outside an assignment or to a file another worker changed are detected after each worker and routed to the coordinator.
-- Per-attachment access rules: grant or exclude individual files and subfolders, or grant only listed paths. Exclusions always win. They are enforced for browsing, previews, Git status/diff/history/staging, artifacts, knowledge sources, workflow-graph commands and file-change events; whole-tree Git changes (commit, pull, branch switch) are refused while an attachment has exclusions.
-- An explicit Access view showing full folder paths, descendant access, read-only/read-write permissions, active directory, sharing, and provider permission limitations.
-- File browsing with bounded typed previews (text, JSON, CSV/TSV tables, images, PDF and binary detection); Git status/diff/stage/unstage (including deleted directories, renames and new repositories)/commit and branch compare; opening files and project directories in Sublime Text, VS Code or the system application, with configurable editor executable paths. The in-app editor reads supported options from Sublime's global `Preferences.sublime-settings` and the active workspace's `.sublime-project` `settings` (font size, tab size, tabs/spaces, word wrap and rulers); it never imports project folder paths as access grants. Folder listings and Git status refresh after external edits through a debounced file watcher.
-- Git workflow panel: branch switch/create with confirmations for uncommitted changes and active runs, fetch, fast-forward pull, push with an explicit refspec and an explicit set-upstream action (never force), bounded commit history, a pull-request compare link built from the remote URL (no hosting API calls or tokens; PR status is what you record), merge or rebase of the current branch with a chosen local or remote-tracking branch (explicit confirmation, clean tracked tree, hooks off, never forced; rewriting commits already on the upstream needs a separate confirmation), pairing a deleted and a new file as a rename when staging, and merge/rebase conflict listing, resolution, abort and continue. Remote failures are classified and explained in place.
-- Team settings (More → Team settings, or the team switcher): the team's project type, lead, roles and their agents, worker counts (pipeline implementation/fix workers 1-5, Wolfram validators 1-2; new workers copy the role's preset, removal is refused while an agent has unfinished work and an agent that finished history refers to is retired instead of deleted, taking no new work), model expectations and a model re-check. Existing projects never change.
-- Project lifecycle: complete, archive (paused and hidden unless "Show archived") or reopen a project; after it ends AgentTeam offers to detach only the folders the project itself attached, keeping any another active project, running work or unfinished task still needs; reopening re-attaches them. Free-form projects take per-task instructions and dependencies (cycles refused). Pipeline verification is scoped per project, and two pipeline projects on one team give each worker its own worktree per project (the shared checkout stays attached read-only for that worker).
-- Appearance: System, Light or Dark (Settings → Appearance); the light theme is derived from the dark styles at build time with hand-tuned exceptions, and the window background follows the choice from the first frame.
-- Editor preferences: the in-app editor reads supported values from Sublime Text's global `Preferences.sublime-settings`, then overrides them from the active workspace's `.sublime-project` `settings`. It maps font size, tab size, tabs/spaces, word wrap and rulers; it does not load Sublime packages/color schemes or import project folder paths as access grants.
-- Diagnostic bundle "Save as…": the desktop main process fetches the redacted bundle and writes only the file you choose in the native dialog.
-- Isolated worktrees: create one from a base revision with a generated (overridable) branch and folder, attach it to the agent (optionally keeping the original repository attached), run an optional setup command with visible log and retry, see owner/branch/base/active tasks/changed files, and archive or remove it without discarding uncommitted work. An optional setting creates a worktree automatically for coding tasks created through the task API.
-- Development servers: per-folder command/URL settings (package scripts are suggested, never run automatically), starting/ready/stopping/stopped/failed states with URL readiness checks, bounded logs and exit codes, whole-process-tree stop (also on quit), and an isolated preview restricted to the server's local origin, with viewport sizes, console errors and Open in browser.
-- 28 bundled starter skills, plus three metadata-only recommendations. Installed harness skills are inventoried separately and grouped by environment. Sources, pinned revisions and licenses are preserved.
-- Required validation gate: tasks marked `requiresValidation` stay queued until an immutable validation record shows a real `wolframscript` kernel run (version, output, exit 0, all assertions passing) for the exact inputs. At most two validation runs execute at once. Agent agreement or generated code alone never opens the gate. Projects of the Wolfram-validated reasoning team (Opus 5.5 lead over one or two Wolfram validators) use it; they need your model mappings before they can be resumed.
-- Multi-stage pipeline team and its projects (each project paused): Opus 5.5 plan → 1-5 Sonnet 5.5 workers with guided disjoint paths or worktrees and an integration step → parallel Codex (max effort) and Fable reviews → a separate Fable adjudication → 1-5 Sonnet 5.5 fix workers → parallel final reviews → a concise Fable stage report. Model ids, efforts and worker caps are team settings chosen at insert (defaults `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-fable-5-1`, Codex `default` at effort `max`); an unadvertised model or effort blocks verification and is never substituted. A project resumes only after "Prepare and verify" checked providers, models, caps, read-only reviewer/adjudicator/reporter roles, the workspace and real parallel lease access, and any later configuration change invalidates that verification. Later stages start only after the adjudicator's structured decision (completing the adjudication by hand needs an attributed override). Every finished attempt leaves an immutable, untrusted-labelled Markdown handoff note with provenance and the exact inputs consumed, shown in a scrollable workflow history.
-- Per-workflow limits (runtime, agent turns, handoffs, retries, spawned agents, reported tokens, children per task, delegation depth/loops) with a consumption view in the workflow UI. A tripped limit pauses the workflow, aborts running tasks and records the reason; raise the limits to resume. Tasks can also carry completion checks that the backend enforces against the exact result.
-- Task settings editors: per task, the Wolfram validation requirement, completion checks (required JSON output fields, output pattern, artifact exists, validation gate), retry policy and state/context settings, plus in-place editing of routing rules. Everything is locked while the backend would refuse it (a running or finished task; the retry policy stays editable until the task finishes). The backend refuses a pattern that does not compile, stops a pattern match after 500 ms (so crafted output cannot hang it through catastrophic backtracking), refuses switching the validation requirement off while a validation-gate check exists or after a validation attempt that did not pass, and keeps a required-review gate that was already planned closed when its rule is later edited to advisory or disabled.
-- Code review viewer: unstaged, staged and branch/commit compare views (merge-base optional, revisions resolved to SHAs), line comments that become outdated when their hunk changes, per-file reviewed marks and an approve/request-changes decision. Review never runs Git mutations.
-- Team templates: save a team as a portable template, export/import it, and insert it atomically with ID remapping and workspace mapping. Four bundled starters (implementation and review, database work, research, Wolfram computation) use the same preview/insert path. Templates carry no secrets or running processes. Template schema v2 adds canvas groups (one group per agent); v1 files still import.
-- Team packs: versioned manifests (source attribution, pack license, pinned companion skills with their own licenses and retained notices, supported harnesses and tools, model mappings) around a team template. Install previews compatibility, skills, workspace slots and every grant (write access, tools, skills, required reviews), needs the grants acknowledged and inserts atomically; manifests with credentials, absolute paths, undeclared tools or skills, or pre-approved unverified skills are refused. Updates are explicit: a three-way diff (installed version, new version, your configuration) applies only fields you never changed, needs a decision for every conflict, is refused when the configuration changed since the preview or an affected agent has a running session, never deletes agents, and needs explicit acceptance of license or pinned-revision changes. A Swift development pack is bundled as a skeleton (one bundled skill; the others are listed as "not bundled — install separately"). The release audit fails a pack whose skills lack license text or matching pins.
-- Runtime diagnostics and a capability table in Settings: per-runtime scan results, manual-path overrides, reset/rescan, and an explicit statement of what each adapter (Codex CLI, Claude Code CLI, wolframscript, ACP) supports. Direct-CLI work waits (`runtime_resolving`) until a scan settles, then fails with `runtime_unavailable` if no runtime is found.
-- Local persistence, authenticated loopback API, durable activity events, immutable task checkpoints and an effect ledger. After a restart, running tasks become `interrupted` (resume from the last checkpoint without spending a retry) or `blocked` when an external effect's outcome is uncertain and needs your decision; completed provider output is never re-run. Pending permission requests survive a restart. The Recovery tab shows, per project, the checkpoint and what runs next; per-task retry policy with backoff is edited in the task's settings (`PUT /tasks/:id/retry-policy`). See [docs/durable-execution.md](docs/durable-execution.md).
+### Layout
 
-## Run from source
+Set each agent's role, skills, folder access and who it talks to.
 
-Install Node.js 24 or newer, then:
+<picture><img src="docs/screenshots/agentteam-planning.png" alt="Layout"></picture>
+
+### Chat
+
+Group chats with several agents. Follow their exchanges and reply to everyone.
+
+<picture><img src="docs/screenshots/agentteam-chat.png" alt="Group chat"></picture>
+
+Switch to any agent's own view of its conversations.
+
+<picture><img src="docs/screenshots/agentteam-chat-perspective.png" alt="An agent's view"></picture>
+
+### Text editor
+
+Browse the files each agent can read or edit, and edit them yourself.
+
+<picture><img src="docs/screenshots/agentteam-editor.png" alt="Text editor"></picture>
+
+### Diff
+
+Review changes as a syntax-highlighted unified diff.
+
+<picture><img src="docs/screenshots/agentteam-diff.png" alt="Diff"></picture>
+
+## Notes
+
+- Execution is on by default; pause it in Settings if you don't want queued work to start.
+- Not a sandbox: provider CLIs keep your OS permissions.
+- Full feature list, limits and security notes: [docs/DETAILS.md](docs/DETAILS.md).
+
+## Building
 
 ```sh
-npm ci
-node node_modules/electron/install.js
-npm start
+npm ci && node node_modules/electron/install.js
+npm start                          # build and launch
+npm test && npm run test:ui        # backend tests; Playwright against Electron
+npm run package -- --publish never # installers for this platform
 ```
 
-`npm start` builds and launches the desktop app. `npm run build` only builds. `npm run backend` starts the standalone API. `npm run package -- --publish never` creates installers for the current platform. GitHub Actions checks macOS, Windows and Linux and builds installers for release tags (see Releases below).
+Node 24+. A `v*` tag builds the installers on GitHub; the release lane is in [docs/DETAILS.md](docs/DETAILS.md#releases).
 
-Development UI: run `npm run dev:ui`, build the desktop entry once, then launch Electron with `AGENTTEAM_DEV=1`. Windows PowerShell uses `$env:AGENTTEAM_DEV="1"; npm run desktop`.
+## Documentation
 
-## Releases
+- [docs/DETAILS.md](docs/DETAILS.md): everything the app does, provider setup, locking rules, limitations.
+- [docs/ui-design.md](docs/ui-design.md), [docs/durable-execution.md](docs/durable-execution.md), [SIGNING.md](SIGNING.md).
+- [AGENTS.md](AGENTS.md): rules for anyone, human or agent, changing the code. [TODO.md](TODO.md): the backlog.
 
-Pushing a tag `v<major>.<minor>.<patch>` runs `.github/workflows/release.yml` and produces ONE GitHub Release for that version:
+## Contributing
 
-- `prepare` checks that the tag equals the version in `package.json` and `package-lock.json`, refuses a tag that is already a published release, and creates a draft release titled `AgentTeam <version>`. Its notes are the tag's annotation (else the tagged commit's message) plus a short "Installing" block.
-- Each platform job runs its gates (macOS: release audit, typecheck, backend tests, desktop UI tests; Windows and Linux: typecheck, build, backend tests that are informational for now), builds, and uploads its files straight into the draft with `gh release upload`.
-- `publish` checks that every expected file is on the draft, writes and uploads `SHA256SUMS.txt`, then publishes it (Latest; a version containing `-` is a pre-release). A missing file leaves the release a draft.
-
-Expected assets (`<v>` is the version): `AgentTeam-<v>-mac-arm64.dmg`, `AgentTeam-<v>-mac-arm64.zip`, `AgentTeam-<v>-mac-x64.dmg`, `AgentTeam-<v>-mac-x64.zip`, `AgentTeam-<v>-win-x64.exe`, `AgentTeam-<v>-linux-x86_64.AppImage`, `AgentTeam-<v>-linux-amd64.deb`, and `SHA256SUMS.txt`.
-
-**Cut a release** (no script does this for you):
-
-1. Set the version in `package.json` and `package-lock.json`, update `RELEASE_NOTES.md` and the docs, commit on a work branch.
-2. `npm run preflight` (Bash and an authenticated `gh`): it runs the "Desktop checks" and the Release workflow in preflight mode on GitHub for that commit and must pass. The pre-push hook refuses `main` or a `v*` tag without it.
-3. Push the commit to `main`, then create an annotated tag on it, `git tag -a v<version> -m "<release notes>"`, and `git push origin v<version>`. The tag annotation is the release body, so write it for readers.
-4. Watch the Release run (`gh run watch`). If a job fails after the tag, fix the cause and `gh run rerun <id> --failed`; the release stays a draft until everything is there.
-
-**Release an existing tag** (for example a past version that never got a release): `gh workflow run release.yml -f tag=v<version>`. A tag that is already a published release is refused.
-
-**Preflight** is `workflow_dispatch` with `preflight=true` (what `npm run preflight` starts on a temporary `preflight/<branch>`): every job runs with job-level `continue-on-error`, so a red job does not fail the run and GitHub sends no failure mail; nothing is created, uploaded or published; the run summary lists each job's result. The helper waits for every installer job and rejects failed jobs or steps. Desktop checks retain their documented optional Windows/Linux jobs. `tag` is optional there (the expected tag is derived from the version in the files).
-
-**No build artifacts.** The workflows never use `actions/upload-artifact`: the account's Actions artifact storage quota fills up and then every upload fails the job. Installers go straight to the release, and failing tests are read in the job log.
-
-**Unsigned installs.** Installers are unsigned unless the signing secrets are set (`SIGNING.md` for macOS). Windows SmartScreen: More info, then Run anyway. macOS Gatekeeper: right-click the app and choose Open, or Privacy & Security, then Open Anyway. Linux: `chmod +x` the AppImage.
-
-## Hybrid backend
-
-AgentTeam owns routing, scheduling, priorities, resource locks, and persistent team/workflow state in TypeScript and SQLite. Provider execution has direct CLI adapters and an optional ACP v1 adapter using the pinned `@agentclientprotocol/sdk` 1.9.0 (Apache-2.0). ACP is a connection layer, not a replacement for orchestration. Durable checkpoints and the effect ledger are engine-agnostic SQLite entities; the XState/LangGraph evaluation is still open and neither is installed.
-
-Settings → Agent connections selects Direct CLI or ACP for each provider. ACP requires an installed adapter executable (or Node plus an adapter script argument). It negotiates capabilities, streams output, handles permission requests, and reloads sessions where supported. Existing conversations are bound to their adapter identity: create a new agent when changing transports or adapter commands. ACP fixture tests pass; live Codex/Claude account compatibility is not yet verified. Internal Wolfram ACP support is deferred.
-
-ACP client filesystem/terminal capabilities are currently disabled. The adapter's native tools still use its own local permissions; this is not an OS sandbox or enforcement of native-subagent limits. AgentTeam shows pending permissions and maintains its own scheduling/resource gates. Provider-native background jobs and crash recovery need further work.
-
-## Provider setup
-
-Execution is on by default (the desktop app outside test mode, and the standalone backend unless `AGENTTEAM_ENABLE_LIVE=0`), with Pause/Resume controls in Settings; once you pause or resume, the desktop app remembers that choice across restarts. Queued work from earlier sessions can therefore start as soon as a runtime is ready, so pause first if you do not want that. Existing provider installations are discovered automatically; manual executable overrides remain available. Authenticate the chosen provider separately. Eligible queued tasks run automatically while execution is active; chat requests are scheduled when sent or explicitly run.
-
-- **Codex:** install/authenticate the Codex CLI and make `codex` available on PATH. Runs use read-only mode unless the agent has a writable, unrestricted attached workspace and its role grants edit/write; then Codex gets the `workspace-write` sandbox rooted at its task directory. Model and effort values pass through to the installed CLI.
-- **Claude:** install/authenticate Claude Code and expose `claude` on PATH. Restricted file tools are enabled only inside the current attached workspace; Edit/Write additionally require write access and an edit/write role grant. Shell tools stay disabled. Per-file rules and explicit-only attachments disable provider file tools because the CLI cannot enforce those finer rules. On-demand skills are selected by AgentTeam per request (the model cannot load them itself). Its CLI flags require a sufficiently recent installation.
-- **Wolfram:** install `wolframscript` and configure Wolfram LLM access. The adapter uses a fixed `LLMSynthesize` script with a private temporary JSON request file. Model `default` uses the installation default; a named evaluator such as `WolframAIAssistant` can be configured if available. `AGENTTEAM_WOLFRAMSCRIPT` can override the executable path. This bridge has not been live-account validated.
-
-On Windows and Linux, Sublime's `subl` or VS Code's `code` command must be on PATH for editor launching. Native provider-app launch is currently implemented for macOS; CLI resume instructions are cross-platform. The CLI view provides commands, not an embedded interactive terminal.
-
-## Resource access and coordination
-
-AgentTeam's file browser and Git operations enforce the attached folder boundaries and read/write setting, block path traversal and symlink escapes, and exclude direct `.git` access. Folder permissions include descendants. External editor opening is a user action.
-
-The scheduler locks each agent's attached folders for the duration of a run, or only the directories a task declares (`resourcePaths`). These paths are directory scopes, not target filenames; a missing path is created before the task starts when the agent has write access. To parallelize safely, give independent writers disjoint directories. If work shares a directory, omit `resourcePaths` and sequence the tasks. Tasks and chat runs share one queue ordering. After a crash, a lease whose provider process may still be running stays "draining" (no second writer) until that process exits; Resources offers an explicit force release once you have confirmed it stopped. Overlapping paths conflict by default. A named resource can override an agent's scheduling priority: Low, Medium, High, Max, or Preempt. Normal priorities gain one effective point per five seconds waiting; Preempt gets the next available turn ahead of normal work. Running work is never interrupted. Existing numeric priorities retain their values; old 100 remains Max, while Preempt uses 101. Continuous Preempt traffic can delay normal work. This provides eventual priority over newer work, not a fixed wall-clock start guarantee.
-
-In Resources, configure a workflow for parallel access by naming a coordinator, shared resources and a cap. Its coordination task runs first and passes a work-allocation plan to the workers. Assigned paths are disjoint and leased per worker; conflicting writes are detected afterwards (by comparing changed files), not prevented while a provider runs, and nothing is merged automatically. Separate worktrees give the strictest isolation.
-
-These locks do **not** control external CLI/native-app sessions or external editors. Codex may still read outside attached folders; AgentTeam does not expose file tools to an agent without an attached workspace. Provider file tools are disabled for attachments with per-file rules or explicit-only grants because the CLIs cannot enforce those limits. The Access & resources view states these differences explicitly.
-
-## Current limitations
-
-- This is an early release, not a fully isolated agent sandbox. Per-file rules and exclusions govern AgentTeam's own file, Git, knowledge and command paths; provider CLI processes, native apps, external editors and the programs a command step runs keep your own OS permissions. No automatic conflict merging.
-- Team Assistant proposals are read (as data, automatically when the reply is shown) from fenced `agentteam-proposal` blocks in its replies, or created in the Assistant changes view, and applied only by you; the assistant has no tool to apply anything and no provider tool endpoint exposes proposals. Whether a live Codex/Claude assistant follows the proposal protocol reliably has only been checked with a fixture CLI, not with a live provider. The assistant sees only the active team (other teams by name and agent count) and at most 60 catalog skills. Saved-team insertion and deleting agents/rules are not proposal operations yet.
-- Routing rules select recipients through the routing API/preview. Claude and Codex CLI runs can invoke teammates through AgentTeam's run-scoped loopback MCP endpoint; requests become tracked tasks and results are available to the invoker. ACP/native provider subagents remain outside that MCP handoff path.
-- Native-app handoff may open a separate conversation. CLI resume continuity depends on the provider. Wolfram uses recent transcript context instead of a persistent remote session.
-- Provider chat and workflow runs default to a one-hour timeout (8 MB chat output, 16 MB task output). Override with `AGENTTEAM_{CHAT,TASK}_{TIMEOUT_SECONDS,MAX_OUTPUT_MB}`. After a restart, interrupted tasks wait for an explicit Resume; nothing re-runs by itself, and automatic retries of failed tasks are opt-in per task. Recovery is fixture- and crash-simulation-tested only: resuming a recorded provider session has not been verified against live providers, and effects are recorded only where AgentTeam observes them (provider runs, chat runs, ACP tool calls).
-- Token usage is shown only when the provider reports it (fixture-tested parsing; Wolfram and ACP report none); cost is always shown as unavailable.
-- Example-team insertion, project assignment, delegation and task completion are covered by UI/API fixtures; no example team has been exercised against live providers. The Quickstart uses Claude's `opus`/`sonnet` aliases, so the resolved model version depends on the installed CLI/account. The pipeline still uses explicit Opus 5.5, Sonnet 5.5 and Fable 5.1 expectations and Codex's configured effort; those provider mappings require local verification. The product team's rules and access are fixture-tested. The validation gate and Wolfram project have been tested with a fake kernel; the real-kernel smoke test (`AGENTTEAM_WOLFRAM_SMOKE=1`) is opt-in and has not been run.
-- Previews are bounded (text 256 KB, JSON 1 MB, images 4 MB, CSV 200 rows × 30 columns); other binary files open externally. Pull is fast-forward only by default; merges and rebases start only from the explicit Merge or rebase section, and their conflicts are listed and resolved there. Pull-request status is not fetched from hosting services. Open file/project/reveal and the file watcher are verified on macOS only.
-- Worktree and development-server process handling is tested on macOS only; Windows (`taskkill /T`) and Linux paths run in CI but are not otherwise verified. Servers that daemonize themselves escape the process group and are not stopped. Development servers are not restarted after an app restart (state is not persisted, so a dead server is never shown as ready), and a hard crash of the app can leave a server running. The embedded preview and its console capture need the desktop app.
-- Developer ID signing and notarization are supported; see [SIGNING.md](SIGNING.md). Builds without configured credentials are unsigned. No automatic update distribution yet. Windows/Linux validation is performed in CI, not on this macOS development machine; Windows command-shim launching (`.cmd`/`.bat`) is fixture-tested only. No versioned database migrations or backup/restore tooling yet.
-
-## Data and security
-
-Desktop state uses Electron's application-data directory (`~/Library/Application Support/AgentTeam` on macOS, `%APPDATA%/AgentTeam` on Windows, `$XDG_CONFIG_HOME/AgentTeam` or `~/.config/AgentTeam` on Linux). `AGENTTEAM_DATA_DIR` overrides it. The standalone backend defaults to `.agentteam/` in the project and writes its bearer token to `.agentteam/api-token`. Do not publish these directories.
-
-The renderer is sandboxed with context isolation, no Node integration, a restricted content security policy and sender-validated IPC. The local API rejects browser origins and requires a bearer token kept in the main process. Prompts are passed as data, not shell commands. Git commits, pulls and pushes run with repository hooks disabled and without terminal credential prompts.
-
-## Tests
-
-```sh
-npm run typecheck
-npm test
-npm run build
-npm run test:ui
-```
-
-Desktop tests launch Electron with an isolated temporary database and never call live providers. Linux UI tests need a display, e.g. `xvfb-run --auto-servernum npm run test:ui`.
-
-## Licensing
-
-AgentTeam source is MIT. Run `node scripts/audit-release.mjs` for a consistency check of the lockfile, bundled skill notices, team templates, the bundled example team and team packs (pack license and each companion skill's license/notice and pins, checked separately); see [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md). Bundled skills retain their upstream MIT or Apache-2.0 notices under `assets/skills`. `assets/recommended-skills.json` records source and compatibility information. Electron includes its own third-party notices in packaged applications. Claude, Codex-hosted services and Wolfram runtimes/accounts are separate products; an open-source app license does not grant access to them.
+Issues and pull requests are welcome. Read AGENTS.md first; `npm run typecheck`, `npm test` and `npm run test:ui` must pass. MIT, see [LICENSE](LICENSE).
