@@ -2,7 +2,7 @@
 
 A local desktop workspace for building and coordinating teams of AI agents. Built with Electron, React, React Flow, TypeScript and SQLite. Targets **macOS, Windows and Linux**.
 
-**Current release: 0.2.2.** The desktop UI and orchestration are tested with fixtures. Live provider integrations require your own installed runtimes and accounts; support depends on each provider and has not all been validated against live subscriptions. Read the limitations below before running real work.
+**Current release: 0.4.0.** The desktop UI and orchestration are tested with fixtures. Live provider integrations require your own installed runtimes and accounts; support depends on each provider and has not all been validated against live subscriptions. Read the limitations below before running real work.
 
 ![AgentTeam canvas and conversation workspace](docs/team-canvas.png)
 
@@ -71,9 +71,34 @@ node node_modules/electron/install.js
 npm start
 ```
 
-`npm start` builds and launches the desktop app. `npm run build` only builds. `npm run backend` starts the standalone API. `npm run package -- --publish never` creates installers for the current platform. GitHub Actions checks macOS, Windows and Linux and builds installers for release tags.
+`npm start` builds and launches the desktop app. `npm run build` only builds. `npm run backend` starts the standalone API. `npm run package -- --publish never` creates installers for the current platform. GitHub Actions checks macOS, Windows and Linux and builds installers for release tags (see Releases below).
 
 Development UI: run `npm run dev:ui`, build the desktop entry once, then launch Electron with `AGENTTEAM_DEV=1`. Windows PowerShell uses `$env:AGENTTEAM_DEV="1"; npm run desktop`.
+
+## Releases
+
+Pushing a tag `v<major>.<minor>.<patch>` runs `.github/workflows/release.yml` and produces ONE GitHub Release for that version:
+
+- `prepare` checks that the tag equals the version in `package.json` and `package-lock.json`, refuses a tag that is already a published release, and creates a draft release titled `AgentTeam <version>`. Its notes are the tag's annotation (else the tagged commit's message) plus a short "Installing" block.
+- Each platform job runs its gates (macOS: release audit, typecheck, backend tests, desktop UI tests; Windows and Linux: typecheck, build, backend tests that are informational for now), builds, and uploads its files straight into the draft with `gh release upload`.
+- `publish` checks that every expected file is on the draft, writes and uploads `SHA256SUMS.txt`, then publishes it (Latest; a version containing `-` is a pre-release). A missing file leaves the release a draft.
+
+Expected assets (`<v>` is the version): `AgentTeam-<v>-mac-arm64.dmg`, `AgentTeam-<v>-mac-arm64.zip`, `AgentTeam-<v>-mac-x64.dmg`, `AgentTeam-<v>-mac-x64.zip`, `AgentTeam-<v>-win-x64.exe`, `AgentTeam-<v>-linux-x86_64.AppImage`, `AgentTeam-<v>-linux-amd64.deb`, and `SHA256SUMS.txt`.
+
+**Cut a release** (no script does this for you):
+
+1. Set the version in `package.json` and `package-lock.json`, update `RELEASE_NOTES.md` and the docs, commit on a work branch.
+2. `npm run preflight` (Bash and an authenticated `gh`): it runs the "Desktop checks" and the Release workflow in preflight mode on GitHub for that commit and must pass. The pre-push hook refuses `main` or a `v*` tag without it.
+3. Push the commit to `main`, then create an annotated tag on it, `git tag -a v<version> -m "<release notes>"`, and `git push origin v<version>`. The tag annotation is the release body, so write it for readers.
+4. Watch the Release run (`gh run watch`). If a job fails after the tag, fix the cause and `gh run rerun <id> --failed`; the release stays a draft until everything is there.
+
+**Release an existing tag** (for example a past version that never got a release): `gh workflow run release.yml -f tag=v<version>`. A tag that is already a published release is refused.
+
+**Preflight** is `workflow_dispatch` with `preflight=true` (what `npm run preflight` starts on a temporary `preflight/<branch>`): every job runs with job-level `continue-on-error`, so a red job does not fail the run and GitHub sends no failure mail; nothing is created, uploaded or published; the run summary lists each job's result. `tag` is optional there (the expected tag is derived from the version in the files).
+
+**No build artifacts.** The workflows never use `actions/upload-artifact`: the account's Actions artifact storage quota fills up and then every upload fails the job. Installers go straight to the release, and failing tests are read in the job log.
+
+**Unsigned installs.** Installers are unsigned unless the signing secrets are set (`SIGNING.md` for macOS). Windows SmartScreen: More info, then Run anyway. macOS Gatekeeper: right-click the app and choose Open, or Privacy & Security, then Open Anyway. Linux: `chmod +x` the AppImage.
 
 ## Hybrid backend
 

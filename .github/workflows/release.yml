@@ -1,23 +1,188 @@
-name: Release installers
+# One GitHub Release per version tag, with every installer on it. Pushing a tag v<major>.<minor>.<patch> (or running this
+# workflow by hand for an existing tag) runs:
+#
+#   prepare   (ubuntu)   the tag must be the version in package.json and package-lock.json; a tag that is already a PUBLISHED
+#                        release stops the run; the notes are the tag's annotation (else the tagged commit's message); a DRAFT
+#                        release "AgentTeam <version>" is created (or an earlier run's draft is reused).
+#   mac       (macOS)    arm64 and x64: audit, typecheck, tests (macOS decides), desktop UI tests, then the signed (when the
+#                        secrets are set) dmg and zip, uploaded straight into the draft.
+#   windows / linux      typecheck, backend tests (informational), build, the installer(s), uploaded straight into the draft.
+#   publish   (ubuntu)   every expected file must be on the draft; SHA256SUMS.txt is written and uploaded; then the release is
+#                        published (Latest; a version with a "-" is a pre-release). A missing file leaves it a DRAFT.
+#
+# Nothing here uses the artifact upload or download actions: the account's Actions artifact storage quota fills up and then
+# every upload fails. Release assets do not count against it.
+#
+# Preflight (workflow_dispatch with preflight=true, started by scripts/preflight.sh): the same jobs, but every job is
+# continue-on-error (a red job does not make the run red, so GitHub sends no failed-run mail), nothing is created, uploaded or
+# published, and the run summary lists each job's result. The tag input is optional then: the expected tag is derived from the
+# version in the files.
+#
+# A failed job on a real run leaves the release a DRAFT that nobody sees: fix it and re-run the failed jobs
+# (gh run rerun <id> --failed), or release an existing tag by hand: gh workflow run release.yml -f tag=v<version>.
+# README.md ("Releases") says how to cut one.
+name: Release
+
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "An existing tag to release, e.g. v0.5.0 (it must be the version in package.json). Optional in preflight."
+        required: false
+        type: string
+      preflight:
+        description: "Preflight: build everything, publish nothing, and do not fail the run (scripts/preflight.sh)"
+        required: false
+        default: false
+        type: boolean
+
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: release-${{ github.event_name == 'push' && github.ref_name || inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  # The tag asked for: the pushed tag, or the dispatch input (blank in a preflight that names no tag).
+  TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+  GH_REPO: ${{ github.repository }}
+
 jobs:
-  # macOS decides: full tests, then the installers. The release publishes as soon as both
-  # Mac builds pass; Windows/Linux (below) can never delay or block it.
+  prepare:
+    name: Tag, notes and the draft release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: ${{ inputs.preflight == true }}
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG != '' && format('refs/tags/{0}', env.TAG) || github.sha }}
+          fetch-depth: 0
+
+      - name: The tag is the app's version
+        id: version
+        run: |
+          set -euo pipefail
+          read -r pkg lock lockroot < <(node -e '
+            const fs = require("fs");
+            const read = (f) => JSON.parse(fs.readFileSync(f, "utf8"));
+            const lock = read("package-lock.json");
+            console.log(read("package.json").version, lock.version, lock.packages?.[""]?.version);
+          ')
+          if [ "$pkg" != "$lock" ] || [ "$pkg" != "$lockroot" ]; then
+            echo "::error title=Version files differ::package.json says $pkg, package-lock.json says $lock (and $lockroot for the root package). Make them agree, commit, and tag again."
+            exit 1
+          fi
+          version="$pkg"
+          tag="${TAG:-}"
+          if [ -z "$tag" ]; then
+            if [ "${{ inputs.preflight }}" != "true" ]; then
+              echo "::error title=No tag::Name the tag to release (gh workflow run release.yml -f tag=v<version>)."
+              exit 1
+            fi
+            tag="v$version"
+            echo "Preflight without a tag: expecting $tag"
+          fi
+          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error title=Not a version tag::'$tag' is not v<major>.<minor>.<patch>[-pre]."
+            exit 1
+          fi
+          if [ "$tag" != "v$version" ]; then
+            echo "::error title=Tag and version differ::The tag is $tag but package.json and package-lock.json say $version. Set the version in both, commit, and tag v<version> on that commit."
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "AgentTeam $version from $tag"
+
+      - name: Release notes from the tag's annotation (or its commit's message)
+        if: inputs.preflight != true
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # actions/checkout can leave an annotated tag as a lightweight one: fetch the tag object itself.
+          git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          drop='^(Co-Authored-By|Signed-off-by):'
+          # An annotated tag: its annotation. A lightweight tag (or an empty annotation): the tagged commit's message.
+          notes=""
+          if [ "$(git cat-file -t "refs/tags/${TAG}")" = "tag" ]; then
+            notes="$(git for-each-ref "refs/tags/${TAG}" --format='%(contents)' | grep -ivE "$drop" || true)"
+          fi
+          if [ -z "$(printf '%s' "$notes" | tr -d '[:space:]')" ]; then
+            notes="$(git log -1 --format=%B "${TAG}^{commit}" | grep -ivE "$drop" || true)"
+          fi
+          if [ -z "$(printf '%s' "$notes" | tr -d '[:space:]')" ]; then notes="AgentTeam ${VERSION}"; fi
+          {
+            printf '%s\n\n' "$notes"
+            cat <<'EOF'
+          ## Installing
+
+          Pick the file for your system. The builds may be unsigned, so the system can warn on the first start:
+
+          - **Windows** (`AgentTeam-<version>-win-x64.exe`): if SmartScreen says "Windows protected your PC", choose More info, then Run anyway.
+          - **macOS** (`-mac-arm64` for Apple Silicon, `-mac-x64` for Intel; dmg or zip): if the app is not notarized, Gatekeeper stops the first open. Right-click the app and choose Open, or use System Settings > Privacy & Security > Open Anyway.
+          - **Linux**: `chmod +x AgentTeam-<version>-linux-x86_64.AppImage` and run it (it may need your distribution's FUSE package), or install the `.deb`.
+
+          `SHA256SUMS.txt` lists the checksum of every file.
+          EOF
+          } > "$RUNNER_TEMP/release-notes.md"
+          cat "$RUNNER_TEMP/release-notes.md"
+
+      - name: The draft release for the tag
+        if: inputs.preflight != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          title="AgentTeam ${VERSION}"
+          # Every release for this tag, drafts included (a draft is not reachable by releases/tags/<tag>). The tag passed the
+          # version pattern above, so it is safe inside the filter.
+          states="$(gh api "repos/${GH_REPO}/releases?per_page=100" --paginate --jq ".[] | select(.tag_name == \"${TAG}\") | .draft")"
+          if grep -qx false <<< "$states"; then
+            echo "::error title=Already released::${TAG} is a published release; it is never rebuilt. A new version needs a new tag."
+            exit 1
+          fi
+          drafts="$(grep -cx true <<< "$states" || true)"
+          if [ "$drafts" -gt 1 ]; then
+            echo "::error title=Two drafts::${drafts} draft releases are waiting for ${TAG}: delete all but one on the Releases page, then re-run."
+            exit 1
+          fi
+          if [ "$drafts" -eq 1 ]; then
+            echo "Reusing the draft release for ${TAG} (an earlier run's)"
+            gh release edit "$TAG" --title "$title" --notes-file "$RUNNER_TEMP/release-notes.md"
+          else
+            gh release create "$TAG" --draft --verify-tag --title "$title" --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi
+
+  # macOS decides: audit, typecheck, backend and desktop UI tests, then the installers.
   mac:
+    name: mac (${{ matrix.arch }})
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
         arch: [arm64, x64]
     runs-on: macos-latest
     timeout-minutes: 60
+    continue-on-error: ${{ inputs.preflight == true }}
+    env:
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      VERSION: ${{ needs.prepare.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG != '' && format('refs/tags/{0}', env.TAG) || github.sha }}
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
@@ -34,38 +199,51 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: installers-mac-${{ matrix.arch }}
-          if-no-files-found: error
-          path: |
-            release/*.dmg
-            release/*.zip
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: failure-mac-${{ matrix.arch }}
-          path: test-results/
-  # Windows/Linux installers are best effort until their known test failures are fixed
-  # (TODO.md): no desktop UI suite (it ran past the job limits), backend tests informational,
-  # job-level continue-on-error so a failure never fails the run or blocks publishing.
+      - name: Files for the release
+        run: |
+          set -euo pipefail
+          files="release/AgentTeam-${VERSION}-mac-${{ matrix.arch }}.dmg release/AgentTeam-${VERSION}-mac-${{ matrix.arch }}.zip"
+          ls -l release
+          # shellcheck disable=SC2086
+          ls -l $files
+          echo "FILES=$files" >> "$GITHUB_ENV"
+      - name: Upload into the draft release
+        if: inputs.preflight != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # shellcheck disable=SC2086
+          gh release upload "$RELEASE_TAG" $FILES --clobber
+
+  # Windows and Linux: the backend tests are informational until their known failures are fixed (TODO.md), and the desktop UI
+  # suite does not run here (it ran past the job limits). Typecheck, build and packaging must pass.
   other:
+    name: ${{ matrix.platform }} (optional in preflight)
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
-            platform: win
+            platform: windows
+            files: AgentTeam-VERSION-win-x64.exe
           - os: ubuntu-latest
             platform: linux
+            files: AgentTeam-VERSION-linux-x86_64.AppImage AgentTeam-VERSION-linux-amd64.deb
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
-    continue-on-error: true
-    permissions:
-      contents: write
+    continue-on-error: ${{ inputs.preflight == true }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      VERSION: ${{ needs.prepare.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG != '' && format('refs/tags/{0}', env.TAG) || github.sha }}
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
@@ -76,35 +254,90 @@ jobs:
         continue-on-error: true
       - run: npm run build
       - run: node scripts/package.mjs --x64
-      # Attach to the release the mac/publish jobs created (it may still be in progress).
-      - if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
+      - name: Files for the release
+        run: |
+          set -euo pipefail
+          files=""
+          for f in ${{ matrix.files }}; do files="$files release/${f//VERSION/$VERSION}"; done
+          ls -l release
+          # shellcheck disable=SC2086
+          ls -l $files
+          echo "FILES=$files" >> "$GITHUB_ENV"
+      - name: Upload into the draft release
+        if: inputs.preflight != true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          files=$(ls release/*.exe release/*.AppImage release/*.deb 2>/dev/null || true)
-          [ -n "$files" ] || { echo "no installers"; exit 1; }
-          for i in $(seq 1 60); do gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 && break; sleep 30; done
-          (cd release && sha256sum $(basename -a $files) > SHA256SUMS-${{ matrix.platform }}.txt)
-          gh release upload "$GITHUB_REF_NAME" $files "release/SHA256SUMS-${{ matrix.platform }}.txt" --clobber
+          # shellcheck disable=SC2086
+          gh release upload "$RELEASE_TAG" $FILES --clobber
+
   publish:
-    # Mac only: Windows/Linux attach their installers to this release later, if they build.
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: mac
+    name: publish
+    if: inputs.preflight != true
+    needs: [prepare, mac, other]
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    timeout-minutes: 15
+    env:
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: installers-mac-*
-          path: installers
-          merge-multiple: true
+      - name: Every expected file is on the draft
+        run: |
+          set -euo pipefail
+          have="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
+          echo "Assets:"
+          printf '%s\n' "$have" | sed 's/^/  /'
+          missing=""
+          for f in \
+            "AgentTeam-${VERSION}-mac-arm64.dmg" "AgentTeam-${VERSION}-mac-arm64.zip" \
+            "AgentTeam-${VERSION}-mac-x64.dmg" "AgentTeam-${VERSION}-mac-x64.zip" \
+            "AgentTeam-${VERSION}-win-x64.exe" \
+            "AgentTeam-${VERSION}-linux-x86_64.AppImage" "AgentTeam-${VERSION}-linux-amd64.deb"; do
+            printf '%s\n' "$have" | grep -Fxq "$f" || missing="$missing $f"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error title=Release incomplete::Missing:${missing}. The release stays a draft."
+            exit 1
+          fi
+
       - name: Checksums
-        working-directory: installers
-        run: sha256sum * > SHA256SUMS.txt
-      - name: Publish release
+        run: |
+          set -euo pipefail
+          mkdir assets
+          gh release download "$RELEASE_TAG" --dir assets --pattern "AgentTeam-${VERSION}-*"
+          (cd assets && sha256sum AgentTeam-"${VERSION}"-* > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          gh release upload "$RELEASE_TAG" assets/SHA256SUMS.txt --clobber
+
+      - name: Publish the release
+        run: |
+          set -euo pipefail
+          case "$VERSION" in
+            *-*) gh release edit "$RELEASE_TAG" --draft=false --prerelease ;;
+            *) gh release edit "$RELEASE_TAG" --draft=false --latest ;;
+          esac
+          gh release view "$RELEASE_TAG" --json url --jq .url
+
+  # Preflight only: what each job concluded (job-level continue-on-error keeps the run itself green).
+  summary:
+    name: summary (optional in preflight)
+    if: always() && inputs.preflight == true
+    needs: [prepare, mac, other, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Job results
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" installers/* --verify-tag --title "AgentTeam $GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md
+        run: |
+          {
+            echo "## Release preflight: job results"
+            echo
+            echo "| Job | Result |"
+            echo "| --- | --- |"
+            gh run view "$GITHUB_RUN_ID" --json jobs --jq '.jobs[] | select(.name | startswith("summary") | not) | "| \(.name) | \(.conclusion // .status) |"'
+          } >> "$GITHUB_STEP_SUMMARY"
