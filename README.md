@@ -94,7 +94,7 @@ Expected assets (`<v>` is the version): `AgentTeam-<v>-mac-arm64.dmg`, `AgentTea
 
 **Release an existing tag** (for example a past version that never got a release): `gh workflow run release.yml -f tag=v<version>`. A tag that is already a published release is refused.
 
-**Preflight** is `workflow_dispatch` with `preflight=true` (what `npm run preflight` starts on a temporary `preflight/<branch>`): every job runs with job-level `continue-on-error`, so a red job does not fail the run and GitHub sends no failure mail; nothing is created, uploaded or published; the run summary lists each job's result. `tag` is optional there (the expected tag is derived from the version in the files).
+**Preflight** is `workflow_dispatch` with `preflight=true` (what `npm run preflight` starts on a temporary `preflight/<branch>`): every job runs with job-level `continue-on-error`, so a red job does not fail the run and GitHub sends no failure mail; nothing is created, uploaded or published; the run summary lists each job's result. The helper waits for every installer job and rejects failed jobs or steps. Desktop checks retain their documented optional Windows/Linux jobs. `tag` is optional there (the expected tag is derived from the version in the files).
 
 **No build artifacts.** The workflows never use `actions/upload-artifact`: the account's Actions artifact storage quota fills up and then every upload fails the job. Installers go straight to the release, and failing tests are read in the job log.
 

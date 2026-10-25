@@ -1,4 +1,10 @@
-# AgentTeam 0.4.0
+# AgentTeam 0.4.1
+
+Complete installer releases for macOS, Windows, and Linux. Installers are staged in a draft release, checked for completeness, and published together with SHA256 checksums. Preflight waits for every installer build and checks individual steps before allowing a release.
+
+The desktop application retains the features in 0.4.0. Installers are unsigned unless signing credentials are configured. Windows and Linux desktop UI tests remain outside the release workflow.
+
+## Earlier release notes: 0.4.0
 
 A built-in terminal.
 

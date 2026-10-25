@@ -36,7 +36,7 @@ target="preflight/${branch}"
 # an older one and never found). The run is still this branch, this commit and made after `before`.
 before="$(date -u -d '-120 seconds' +%Y-%m-%dT%H:%M:%SZ 2> /dev/null || date -u -v-120S +%Y-%m-%dT%H:%M:%SZ)"
 echo "preflight: pushing ${sha:0:7} to ${target}"
-git push -q --force origin "HEAD:refs/heads/${target}"
+git push -q origin "HEAD:refs/heads/${target}"
 cleanup() { git push -q origin --delete "${target}" > /dev/null 2>&1 || true; }
 trap cleanup EXIT
 
@@ -84,31 +84,30 @@ wait_deciding() {
     sleep 30
   done
 }
-# The checks: one deciding job (macOS). The release: the prepare job and the two macOS builds. Windows and Linux can take far
-# longer; their runs are cancelled once the verdict is in, which never mails.
+# The desktop checks retain their documented optional platforms. Every installer must finish before a release is allowed.
 wait_deciding "$ci_run" 1
-wait_deciding "$release_run" 3
+gh run watch "$release_run" --repo "$REPO" --interval 20 > /dev/null 2>&1 || true
 gh run cancel "$ci_run" --repo "$REPO" > /dev/null 2>&1 || true
-gh run cancel "$release_run" --repo "$REPO" > /dev/null 2>&1 || true
 
 failed_total=""
 report() {
-  local label="$1" run="$2" jobs failed
+  local label="$1" run="$2" ignored="$3" jobs failed failed_steps
   echo "preflight: ${label}"
   jobs="$(gh run view "$run" --repo "$REPO" --json jobs --jq '.jobs[] | [.name, .conclusion] | @tsv')"
   echo "$jobs" | sed 's/^/  /'
-  # Jobs named "optional" (Windows, Linux for now) report but never decide.
-  failed="$(echo "$jobs" | awk -F'\t' -v re="$undeciding" '$1 !~ re && $2 != "success" && $2 != "skipped" { print $1 }')"
-  if [ -n "$failed" ]; then
+  failed="$(echo "$jobs" | awk -F'\t' -v re="$ignored" '$1 !~ re && $2 != "success" { print $1 }')"
+  failed_steps="$(gh run view "$run" --repo "$REPO" --json jobs \
+    --jq ".jobs[] | select(.name | test(\"${ignored}\") | not) | .name as \$j | .steps[] | select(.conclusion == \"failure\") | \"  failed: \(\$j) > \(.name)\"")"
+  if [ -n "$failed" ] || [ -n "$failed_steps" ]; then
     failed_total="yes"
     echo "preflight: ${label} FAIL"
-    gh run view "$run" --repo "$REPO" --json jobs \
-      --jq '.jobs[] | select(.conclusion == "failure") | .name as $j | .steps[] | select(.conclusion == "failure") | "  failed: \($j) > \(.name)"'
+    [ -z "$failed" ] || echo "$failed" | sed 's/^/  failed job: /'
+    [ -z "$failed_steps" ] || echo "$failed_steps"
     echo "  logs: gh run view ${run} --repo ${REPO} --log-failed"
   fi
 }
-report "Desktop checks" "$ci_run"
-report "Release (preflight mode)" "$release_run"
+report "Desktop checks" "$ci_run" 'optional'
+report "Release (preflight mode)" "$release_run" '^publish$'
 if [ -n "$failed_total" ]; then
   echo "preflight: FAIL"
   exit 1
