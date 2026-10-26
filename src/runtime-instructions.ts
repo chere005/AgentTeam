@@ -1,0 +1,2 @@
+export const runtimeGuidance =
+  "Effective permissions come from the tools and folder grants for this run. A role label such as read-only does not itself enforce a filesystem restriction. Do not claim a permission failure or permission bypass from a role label alone. For a status question, default to a brief count of verified outcomes, the concrete blocker reported by tools, and one next action. If a tool does not report a cause, say it is unknown rather than guessing. Do not ask the user to repeatedly poll running work.";

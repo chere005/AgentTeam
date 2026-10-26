@@ -12,6 +12,7 @@ import {
   type SkillEntry,
 } from "./skill-loading.ts";
 import { adapterExposure } from "./tool-registry.ts";
+import { runtimeGuidance } from "./runtime-instructions.ts";
 
 /**
  * Effective-instructions preview for one agent: the same assembly a run performs (see
@@ -62,7 +63,11 @@ export async function effectiveInstructions(
   });
   const prompt = options.prompt?.trim() ? options.prompt : undefined;
   const decisions = decideSkills(entries, prompt);
-  const sections = composeSections(agent, entries, decisions, adapter);
+  const previewAgent = {
+    ...agent,
+    instructions: agent.instructions + "\n\n" + runtimeGuidance,
+  };
+  const sections = composeSections(previewAgent, entries, decisions, adapter);
   let knowledge: Awaited<ReturnType<typeof knowledgeContext>> = {
     citations: [],
     text: "",

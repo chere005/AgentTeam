@@ -363,6 +363,10 @@ test("effective-instructions preview lists role, persistent text, skills, tool r
   );
   assert.match(ok.text, /Role: Reviewer of things/);
   assert.match(ok.text, /Persistent text here\./);
+  assert.match(
+    ok.text,
+    /Effective permissions come from the tools and folder grants for this run/,
+  );
   assert.match(ok.text, /ALPHA/);
   assert.ok(ok.totals.approxTokens >= ok.totals.skillTokens);
   // The preview text equals what a real run assembles.

@@ -1,5 +1,11 @@
 # AgentTeam handoff — October 26, 2026
 
+## macOS continuation (October 26, 2026)
+
+Continued this branch in `/Users/s/GIT/AgentTeam-handoff` from `b15cbc8`. The effective-instructions preview omitted shared runtime guidance that `TeamService.launchPlan` appended to every provider launch, so the preview did not match the actual prompt. Moved that guidance to `src/runtime-instructions.ts` and included it in both paths; updated `test/capabilities.test.ts` to assert the guidance. Verification: `npm run typecheck` passed; `npm test` passed **588**, failed **0**, skipped **1** (opt-in Wolfram smoke); `npm run build` passed with the existing large-chunk advisory; release audit, focused capabilities suite (**13/13**), Prettier and `git diff --check` passed. No desktop UI suite or live provider run was performed.
+
+The Windows-only installed-app check below cannot be completed from this macOS host. No live app profile was opened or modified, and no provider calls were made.
+
 Branch: `fix/team-task-execution-and-diff`
 
 Base: `694cace` on `main`

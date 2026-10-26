@@ -59,6 +59,7 @@ import { ensureWorkspaceBaseline } from "./workspace-changes.ts";
 import { DelegatedWork } from "./delegated-work.ts";
 import type { RuntimeWait } from "./runtime-waits.ts";
 import { simpleTaskSupport } from "./simple-task-capabilities.ts";
+import { runtimeGuidance } from "./runtime-instructions.ts";
 export class TeamService {
   store: Store;
   skills: SkillCatalog;
@@ -1464,7 +1465,8 @@ export class TeamService {
         (explicitFileWork
           ? `\n\nCURRENT USER ASSIGNMENT: The user assigned you this file task directly. Complete your own declared deliverables: ${JSON.stringify(assignedFiles)}. For this assignment these file deliverables take precedence over a general planning-only or review-only role and its usual 'never modify files' guidance. Use the actual file tools and writable task folders already granted to this run; this instruction adds no tools or access. Do not delegate your own file to another agent. Your normal role and saved instructions remain unchanged for other work.`
           : "") +
-        "\n\nEffective permissions come from the tools and folder grants for this run. A role label such as read-only does not itself enforce a filesystem restriction. Do not claim a permission failure or permission bypass from a role label alone. For a status question, default to a brief count of verified outcomes, the concrete blocker reported by tools, and one next action. If a tool does not report a cause, say it is unknown rather than guessing. Do not ask the user to repeatedly poll running work.",
+        "\n\n" +
+        runtimeGuidance,
     };
     const sections = composeSections(runAgent, entries, decisions, adapter);
     const providerRoots = runAgent.workspaces.map((workspace) => ({
