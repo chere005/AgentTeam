@@ -384,8 +384,9 @@ test("a chat manager's early reply waits for its child and publishes one final c
   runs.execute = execute;
   const scheduler = new Scheduler(w.service, runs, execute);
   const session = w.service.session(w.parentAgent.id);
+  // The expected content comes from the user's own words, so the literal check is enforced.
   w.service.message(session.id, {
-    text: "Have the worker create its roll-call file.",
+    text: "Have the worker create its roll-call file containing: Worker reporting for duty.",
   });
   try {
     await runs.start(session.id);

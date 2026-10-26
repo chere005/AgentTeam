@@ -1,10 +1,15 @@
 import { test, expect, _electron as electron } from "@playwright/test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 test("failed sandbox startup names the blocked prerequisite and opens safe recovery", async ({}, testInfo) => {
   const directory = await mkdtemp(join(tmpdir(), "agentteam-e2e-blocked-"));
+  // The writers need a folder to be delegated to (a worker without one is refused up front, which
+  // is a different failure than the sandbox startup failure this spec is about).
+  const workspace = await realpath(
+    await mkdtemp(join(tmpdir(), "agentteam-e2e-blocked-work-")),
+  );
   const app = await electron.launch({
     args: [".", ...(process.platform === "linux" ? ["--no-sandbox"] : [])],
     env: { ...process.env, AGENTTEAM_DATA_DIR: directory, AGENTTEAM_TEST: "1" },
@@ -14,8 +19,9 @@ test("failed sandbox startup names the blocked prerequisite and opens safe recov
     await expect(
       page.getByText("Workspace connected", { exact: true }),
     ).toBeVisible();
-    const work = await page.evaluate(async () => {
+    const work = await page.evaluate(async (folder) => {
       const request = window.agentteam.request;
+      const workspaces = [{ path: folder, access: "write", active: true }];
       const manager = await request("POST", "/agents", {
         name: "Roll-call Planner",
         environment: "codex",
@@ -26,11 +32,13 @@ test("failed sandbox startup names the blocked prerequisite and opens safe recov
         name: "Roll-call Integrator",
         environment: "claude",
         roleType: "implementer",
+        workspaces,
       });
       const reporter = await request("POST", "/agents", {
         name: "Roll-call Reporter",
         environment: "claude",
         roleType: "implementer",
+        workspaces,
       });
       for (const child of [writer, reporter])
         await request("POST", "/edges", {
@@ -86,7 +94,7 @@ test("failed sandbox startup names the blocked prerequisite and opens safe recov
         failedId: first.childTaskId,
         waitingId: second.childTaskId,
       };
-    });
+    }, workspace);
     await page
       .getByLabel("Agent", { exact: true })
       .selectOption(work.managerId);
@@ -132,5 +140,6 @@ test("failed sandbox startup names the blocked prerequisite and opens safe recov
   } finally {
     await app.close();
     await rm(directory, { recursive: true, force: true });
+    await rm(workspace, { recursive: true, force: true });
   }
 });

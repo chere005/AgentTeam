@@ -986,8 +986,17 @@ test("HTTP MCP: a run token exposes policy-checked delegation and records its ha
   const { RunManager } = await import("../src/runtime.ts");
   const { createApi } = await import("../src/http.ts");
   const { service, agent, store } = setup();
+  // The builder has a writable folder: an implementer without one is refused as a recipient
+  // (test/launch-readiness.test.ts), and this test is about the run token and the handoff record.
+  const dir = await realpath(
+    await mkdtemp(join(tmpdir(), "agentteam-mcp-handoff-")),
+  );
+  t.after(() => rm(dir, { recursive: true, force: true }));
   const manager = await agent("Manager", { roleType: "coordinator" });
-  const builder = await agent("Builder", { roleType: "implementer" });
+  const builder = await agent("Builder", {
+    roleType: "implementer",
+    workspaces: [{ path: dir, access: "write", active: true }],
+  });
   service.saveEdge({ from: manager.id, to: builder.id, kind: "delegate" });
   const workflow = service.workflow({
     name: "Chat test",

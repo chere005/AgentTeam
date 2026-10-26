@@ -1,10 +1,14 @@
 import { test, expect, _electron as electron } from "@playwright/test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 test("an agent's Chat pane leads with its result and tucks full instructions behind a disclosure", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentteam-e2e-agent-work-"));
+  // The builder needs a folder to be delegated to: a worker without one is refused up front.
+  const workspace = await realpath(
+    await mkdtemp(join(tmpdir(), "agentteam-e2e-agent-work-folder-")),
+  );
   const app = await electron.launch({
     args: [".", ...(process.platform === "linux" ? ["--no-sandbox"] : [])],
     env: { ...process.env, AGENTTEAM_DATA_DIR: directory, AGENTTEAM_TEST: "1" },
@@ -14,7 +18,7 @@ test("an agent's Chat pane leads with its result and tucks full instructions beh
     await expect(
       page.getByText("Workspace connected", { exact: true }),
     ).toBeVisible();
-    const work = await page.evaluate(async () => {
+    const work = await page.evaluate(async (folder) => {
       const request = window.agentteam.request;
       const manager = await request("POST", "/agents", {
         name: "Manager",
@@ -25,6 +29,7 @@ test("an agent's Chat pane leads with its result and tucks full instructions beh
         name: "Python Builder",
         environment: "claude",
         roleType: "implementer",
+        workspaces: [{ path: folder, access: "write", active: true }],
       });
       const reviewer = await request("POST", "/agents", {
         name: "Code Reviewer",
@@ -73,7 +78,7 @@ test("an agent's Chat pane leads with its result and tucks full instructions beh
         result: "Created python/pi.py and verified the 300 digit output.",
       });
       return { builderId: builder.id, reviewerId: reviewer.id };
-    });
+    }, workspace);
     await page
       .getByLabel("Agent", { exact: true })
       .selectOption(work.builderId);
@@ -233,5 +238,6 @@ test("an agent's Chat pane leads with its result and tucks full instructions beh
   } finally {
     await app.close();
     await rm(directory, { recursive: true, force: true });
+    await rm(workspace, { recursive: true, force: true });
   }
 });

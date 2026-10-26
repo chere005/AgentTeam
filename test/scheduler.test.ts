@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Store } from "../src/store.ts";
 import { SkillCatalog } from "../src/skills.ts";
 import { TeamService } from "../src/service.ts";
@@ -26,10 +29,17 @@ test("explicit provider refusals are failures, not completed work", async () => 
   const store = new Store(":memory:"),
     service = new TeamService(store, new SkillCatalog([])),
     runs = new RunManager(service, true, process.cwd());
+  // The builder has a writable folder: an implementer without one is blocked before the provider
+  // runs (test/launch-readiness.test.ts), so this fixture exercises refusal classification with a
+  // launchable agent.
+  const folder = await realpath(
+    await mkdtemp(join(tmpdir(), "agentteam-scheduler-refusal-")),
+  );
   const agent = await service.saveAgent({
     name: "Builder",
     environment: "codex",
     roleType: "implementer",
+    workspaces: [{ path: folder, access: "write", active: true }],
   });
   const workflow = service.workflow({
     name: "W",
@@ -64,6 +74,7 @@ test("explicit provider refusals are failures, not completed work", async () => 
   } finally {
     scheduler.stop();
     store.close();
+    await rm(folder, { recursive: true, force: true });
   }
 });
 
@@ -73,10 +84,15 @@ test("execution-required tasks fail when the agent says it did not run the comma
   const store = new Store(":memory:"),
     service = new TeamService(store, new SkillCatalog([])),
     runs = new RunManager(service, true, process.cwd());
+  // Launchable agent (writable folder); see the note in the previous test.
+  const folder = await realpath(
+    await mkdtemp(join(tmpdir(), "agentteam-scheduler-run-required-")),
+  );
   const agent = await service.saveAgent({
     name: "Builder",
     environment: "codex",
     roleType: "implementer",
+    workspaces: [{ path: folder, access: "write", active: true }],
   });
   const workflow = service.workflow({
     name: "Run required",
@@ -156,6 +172,7 @@ test("execution-required tasks fail when the agent says it did not run the comma
   } finally {
     scheduler.stop();
     store.close();
+    await rm(folder, { recursive: true, force: true });
   }
 });
 
