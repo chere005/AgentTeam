@@ -1,5 +1,13 @@
 # AgentTeam continuation handoff
 
+## Collapsed reply layout (October 26, 2026)
+
+Fixed the screenshot's vertically broken **Long reply** label in `4503ccd`. The label and chevron keep their width, the preview truncates on the same row, the border follows the current theme, and expanded replies hide the duplicate preview. Enter and Space retain native disclosure behavior despite the canvas's global Space handler. The dedicated hidden desktop regression passes at side-panel widths of 300, 440 and 640 pixels; typecheck and build pass. The existing agent-work-panel workflow intermittently failed its separate wheel-scroll assertion locally, then passed again unchanged.
+
+Required macOS Desktop checks passed every applicable step in [preflight 40350923672](https://github.com/chere005/AgentTeam/actions/runs/40350923672): release audit, typecheck, backend tests, build and desktop workflows. Windows/Linux remain informational under the existing preflight policy. The separate scrolling-test investigation was proposed to the ticket Inbox.
+
+Installed the locally packaged arm64 app at `/Applications/AgentTeam.app` and visually checked the exact reply from the screenshot. This is a local UI update of 0.5.0, with no new public release or tag. Agent/workflow configuration and all task/message/effect records match the closed-profile backup, excluding automatically refreshed model-readiness metadata. Backup and deployment record: `/Users/s/AgentTeam Backups/2026-10-26-before-reply-layout`; installed archive SHA256 `ccfbf5aa16c0f3a5f88da382c4bf177a5c85909130f68220ffd682fb7042c510`.
+
 ## Version 0.5.0 released and deployed (October 26, 2026)
 
 Merged the accumulated `fix/team-task-execution-and-diff` work to `main` at `0f7c234`, tagged `v0.5.0`, and published [AgentTeam 0.5.0](https://github.com/chere005/AgentTeam/releases/tag/v0.5.0) with every expected installer and SHA256 manifest. Installer preflight [40298835956](https://github.com/chere005/AgentTeam/actions/runs/40298835956) and the actual release [40300633343](https://github.com/chere005/AgentTeam/actions/runs/40300633343) passed every required job and step. Preflight backend results: macOS/Linux 588 passed with one opt-in skip; Windows 581 passed with eight skips. Both Mac jobs passed all 81 desktop workflows. Installer preflight was dispatched separately because `scripts/preflight.sh` currently runs Desktop checks only.
