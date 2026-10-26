@@ -628,7 +628,6 @@ async function checkProjectReadiness(service: TeamService, workflowId: string) {
       decision = service.launchReadiness.evaluatePlan(agent, plan, {
         task,
         contract: service.contracts.effective(task) ?? contract,
-        host: { platform: process.platform },
       });
     } catch (error) {
       const issue = service.launchReadiness.issueFromError(

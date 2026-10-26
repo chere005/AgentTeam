@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { world } from "./fixtures/execution-world.ts";
-import type { Task } from "../src/model.ts";
+import type { Task, Workflow } from "../src/model.ts";
 import type { ProjectSetupRecord } from "../src/project-setup.ts";
 import type { RuntimeWait } from "../src/runtime-waits.ts";
 
@@ -962,4 +962,58 @@ test("authentication is reported where the answer is informational; the launch k
   const wait = w.waits().find((x) => x.id === `task:${task.id}`) as RuntimeWait;
   assert.equal(wait.reason, undefined, "the legacy runtime-unavailable wait");
   assert.equal(w.service.taskState(task.id).runtimeBlocker, undefined);
+});
+
+test("Start judges the sandbox on the host the runs use, the same host the scheduler judges it on", async (t) => {
+  const { resumeProject } = await import("../src/readiness.ts");
+  const discovery = { settled: true, runtimes: [] };
+  const savedProject = async (platform: NodeJS.Platform) => {
+    const w = await world(t, { platform });
+    const folder = await w.folder("start");
+    const agent = await writer(w, {
+      tools: ["read", "write", "shell"],
+      workspaces: [{ path: folder, access: "write", active: true }],
+    });
+    const workflow = w.service.workflow({
+      name: "Start",
+      goal: "Write and run a program",
+      ownerId: agent.id,
+      completionCriteria: "Done",
+    });
+    w.service.task({
+      workflowId: workflow.id,
+      agentId: agent.id,
+      title: "Write and run a Python program",
+      instructions: "Create the program, then run it.",
+      completionCriteria: "It ran",
+    });
+    w.service.pauseWorkflow(workflow.id, true);
+    return { w, workflow };
+  };
+  // A supported host: the project starts.
+  const supported = await savedProject("linux");
+  await resumeProject(supported.w.service, discovery, supported.workflow.id);
+  assert.equal(
+    supported.w.store.get<Workflow>("workflow", supported.workflow.id).paused,
+    false,
+  );
+  // A host with no sandbox for Claude's shell: Start refuses with that cause, the project stays
+  // saved and paused, and nothing was created.
+  const unsupported = await savedProject("win32");
+  await assert.rejects(
+    resumeProject(unsupported.w.service, discovery, unsupported.workflow.id),
+    (error: { code?: string; message?: string }) =>
+      error.code === "capability_missing" && /sandbox/i.test(error.message!),
+  );
+  assert.equal(
+    unsupported.w.store.get<Workflow>("workflow", unsupported.workflow.id)
+      .paused,
+    true,
+  );
+  assert.deepEqual(
+    unsupported.w.service.setups
+      .view(unsupported.workflow.id)
+      .blockers.flatMap((b) => b.issues.map((i) => i.code)),
+    ["sandbox-unavailable"],
+  );
 });

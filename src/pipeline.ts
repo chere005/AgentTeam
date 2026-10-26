@@ -1477,7 +1477,7 @@ export class PipelineService {
       const task = this.task(taskId);
       const decision = this.service.launchReadiness.evaluateProspective(
         this.agent(task.agentId),
-        { task, contract, host: { platform: process.platform } },
+        { task, contract },
       );
       if (decision.ready) continue;
       this.service.setups.noteBlocked(rec.workflowId, decision);

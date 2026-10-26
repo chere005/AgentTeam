@@ -965,7 +965,11 @@ export class RecoveryService {
     const approvals = this.service.approvals.pendingFor(task.id);
     const runtimeBlocker = this.runtimeBlocker(task);
     const delegation = this.service.delegations.view(task.id);
-    const delegating = !!delegation && delegation.state !== "continuing";
+    // Only a blocked parent continues its delegation; a failed or interrupted one is requeued.
+    const delegating =
+      task.status === "blocked" &&
+      !!delegation &&
+      delegation.state !== "continuing";
     const resumable = !!s.providerSessionId && !task.resourcePaths?.length;
     const max = s.policy.maxAttempts;
     // The cascade existing cancellation applies (src/limits.ts): live delegated descendants.
