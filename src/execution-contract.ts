@@ -73,8 +73,13 @@ const EXECUTION_CUES =
   /\b(compile|run it|runs it|execute it|exit code|stdout|passes the tests|make test|runs? (?:the|your) (?:program|code|script))\b/g;
 const FILE_VERBS =
   /\b(write|create|save|edit|update|modify|append|rename|delete|generate|add|put|make)\b/g;
-const FILE_NOUNS =
-  /\b(files?|documents?|readme|markdown|json|csv|yaml|toml|configs?|folders?|directory|directories)\b|\.[a-z0-9]{1,6}\b/g;
+// A file name needs a real extension: "3.5", "v2.0", "e.g." and "p.m." are not file names.
+const FILE_EXTENSIONS =
+  "txt|md|markdown|rst|py|pyi|ipynb|js|jsx|mjs|cjs|ts|tsx|json|jsonc|ndjson|csv|tsv|ya?ml|toml|ini|cfg|conf|html?|css|scss|less|xml|svg|c|h|cc|cpp|cxx|hpp|cs|java|kt|kts|swift|rs|go|rb|php|pl|lua|sh|bash|zsh|ps1|bat|sql|graphql|proto|lock|log|pdf|docx?|xlsx?|pptx?|png|jpe?g|gif|webp|zip";
+const FILE_NOUNS = new RegExp(
+  String.raw`\b(?:files?|documents?|readme|markdown|json|csv|yaml|toml|configs?|folders?|directory|directories)\b|\b[\w-]+\.(?:${FILE_EXTENSIONS})\b|\.(?:gitignore|env)\b`,
+  "g",
+);
 const DISCUSSION =
   /^\s*(?:what|why|how (?:do|does|can|would|should|is|are)|can you explain|could you explain|explain|describe|summari[sz]e|compare|tell me|is it|are there|should i|what's|whats)\b/i;
 const THEN_ACTION =
@@ -801,9 +806,9 @@ export class ContractService {
       },
     );
     assert(
-      slots.length <= 30,
+      slots.length <= 30 && fixed.length + slots.length <= 60,
       "too_many_requirements",
-      "This recipient already has 30 required checks; confirm or remove some before adding more.",
+      "This recipient already has the most required checks a task can carry; confirm or remove some before adding more.",
       400,
     );
     // Only plain relative paths are retained; the delegation itself validates and normalizes the
@@ -960,13 +965,17 @@ export class ContractService {
       ...(parent?.projectFolder ? { projectFolder: parent.projectFolder } : {}),
       scopes: input.task.resourcePaths ?? [],
       roles: [],
+      // Only plain relative paths are kept (an absolute artifact path the task API accepts is
+      // checked by the task itself, not recorded as a project-relative expectation).
       expectedFiles: [
-        ...new Set([
-          ...(input.proposal?.expectedFiles ?? []),
-          ...(input.task.completionChecks ?? []).flatMap((c) =>
-            c.type === "artifact-exists" ? [normalizeRel(c.path)] : [],
-          ),
-        ]),
+        ...new Set(
+          [
+            ...(input.proposal?.expectedFiles ?? []),
+            ...(input.task.completionChecks ?? []).flatMap((c) =>
+              c.type === "artifact-exists" ? [normalizeRel(c.path)] : [],
+            ),
+          ].filter(isRelativeFile),
+        ),
       ].slice(0, 50),
       requiredChecks: [],
       designatedReviewers: parent?.designatedReviewers ?? [],

@@ -889,6 +889,11 @@ export function createApi(
         // `contract` is a proposal read by the application, not a task field.
         const { contract: rawContract, ...rest } = fields ?? {};
         const input: unknown = fields ? rest : posted;
+        // A malformed proposal is refused before anything is created.
+        const proposal =
+          rawContract === undefined
+            ? undefined
+            : contractProposalSchema.parse(rawContract);
         // Optional per-project setting: isolate coding work in a fresh worktree first.
         const auto =
           typeof rest.agentId === "string"
@@ -902,10 +907,7 @@ export function createApi(
           task,
           text: `${task.title}\n${task.instructions}`,
           source: "request",
-          proposal:
-            rawContract === undefined
-              ? undefined
-              : contractProposalSchema.parse(rawContract),
+          proposal,
         });
         const readiness = service.launchReadiness.evaluateProspective(
           store.get<Agent>("agent", task.agentId),

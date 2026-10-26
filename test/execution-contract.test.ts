@@ -35,6 +35,17 @@ test("the application reads a request itself: coding, file work or discussion, w
     "file-edit",
   );
   assert.equal(kind("Update the README and save it"), "file-edit");
+  assert.equal(kind("Save the results to out.csv"), "file-edit");
+  assert.equal(kind("Create src/main.rs"), "file-edit");
+  // Numbers, versions and abbreviations are not file names.
+  for (const text of [
+    "Add 3.5 and 4.5",
+    "Write a haiku about v2.0",
+    "Write an email to my boss, e.g. about the delay",
+    "Make a list of ideas, i.e. brainstorm",
+    "Write a reminder for 3 p.m. and the 3.30pm call",
+  ])
+    assert.equal(kind(text), "response-only", text);
   // Discussion stays discussion, even when it mentions code.
   assert.equal(
     kind("Explain how a Python program could compute pi"),
@@ -581,4 +592,41 @@ test("requirements the user wrote are inherited by every deliverable child; omit
       }),
     { code: "contract_not_found" },
   );
+});
+
+test("a recipient cannot accumulate more required checks than a task can carry; the refused call creates nothing", async (t) => {
+  const w = await world(t);
+  const team = w.insertPipeline();
+  const folder = await w.folder("many");
+  const checks = (from: number) =>
+    Array.from({ length: 16 }, (_, i) => ({
+      type: "artifact-exists" as const,
+      path: `part${from + i}.txt`,
+    }));
+  const outcome: { error?: { code?: string }; tasksBefore?: number } = {};
+  w.setProvider(async (command, _e, emit) => {
+    if (!command.teammateTools) return;
+    const ctx = w.runs.toolSessions.authenticate(command.teammateTools.token);
+    const workflowId = w.store.get<Task>("task", ctx.taskId!).workflowId;
+    await w.service.setups.apply(workflowId, { folder });
+    const call = (from: number) =>
+      w.service.orchestration.invokeTeammate(ctx, {
+        recipient: team.integrator.id,
+        title: "Develop the parts",
+        instructions: "Write and run them",
+        resourcePaths: [folder],
+        completionChecks: checks(from),
+      });
+    call(0);
+    outcome.tasksBefore = w.tasks().length;
+    try {
+      call(16);
+    } catch (error) {
+      outcome.error = error as { code?: string };
+    }
+    emit({ type: "text", data: "delegated" });
+  });
+  await w.chat(team.planner.id, REQUEST);
+  assert.equal(outcome.error?.code, "too_many_requirements");
+  assert.equal(w.tasks().length, outcome.tasksBefore);
 });

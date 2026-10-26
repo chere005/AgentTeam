@@ -1017,3 +1017,51 @@ test("Start judges the sandbox on the host the runs use, the same host the sched
     ["sandbox-unavailable"],
   );
 });
+
+test("the task API refuses a malformed contract before creating anything, and keeps an absolute artifact path out of the contract", async (t) => {
+  const { join } = await import("node:path");
+  const w = await world(t);
+  const api = await serve(w);
+  t.after(() => api.close());
+  const folder = await w.folder("api");
+  const agent = await writer(w, {
+    tools: ["read", "write", "shell"],
+    workspaces: [{ path: folder, access: "write", active: true }],
+  });
+  const workflow = w.service.workflow({
+    name: "API",
+    goal: "Write a program",
+    ownerId: agent.id,
+    completionCriteria: "Done",
+  });
+  const task = {
+    workflowId: workflow.id,
+    agentId: agent.id,
+    title: "Write and run a Python program",
+    instructions: "Create the program, then run it.",
+    completionCriteria: "It ran",
+  };
+  const before = w.tasks().length;
+  const bad = await api.call("POST", "/tasks", {
+    ...task,
+    contract: {
+      workKind: "executable-implementation",
+      expectedFiles: ["../outside.txt"],
+    },
+  });
+  assert.equal(bad.status, 400);
+  assert.equal(w.tasks().length, before, "no half-created task");
+  const absolute = await api.call("POST", "/tasks", {
+    ...task,
+    completionChecks: [
+      { type: "artifact-exists", path: join(folder, "program.py") },
+    ],
+  });
+  assert.equal(absolute.status, 201, JSON.stringify(absolute.body));
+  assert.equal(absolute.body.contract.workKind, "executable-implementation");
+  assert.deepEqual(
+    absolute.body.contract.expectedFiles,
+    [],
+    "only project-relative paths are recorded as expectations",
+  );
+});
