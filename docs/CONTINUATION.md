@@ -1,5 +1,9 @@
 # AgentTeam continuation handoff
 
+## Fresh-install execution repair plan (October 26, 2026)
+
+Saved [the repair plan](reliable-prompt-execution-plan.md) after read-only investigation of the new installed-profile failure. Every agent had no attached workspace, chat delegation bypassed prepared-project startup, dropping artifact checks allowed folderless workers to launch, and Recovery offered to finalize a saved refusal. The plan specifies one executable-assignment contract/readiness gate, scoped project setup, trusted execution evidence, correct review routing, bounded correction rounds and typed recovery actions. This task produced the plan only; implementation and installed-provider acceptance remain outstanding. The current profile and failed-run evidence were left untouched.
+
 ## Collapsed reply layout (October 26, 2026)
 
 Fixed the screenshot's vertically broken **Long reply** label in `4503ccd`. The label and chevron keep their width, the preview truncates on the same row, the border follows the current theme, and expanded replies hide the duplicate preview. Enter and Space retain native disclosure behavior despite the canvas's global Space handler. The dedicated hidden desktop regression passes at side-panel widths of 300, 440 and 640 pixels; typecheck and build pass. The existing agent-work-panel workflow intermittently failed its separate wheel-scroll assertion locally, then passed again unchanged.
