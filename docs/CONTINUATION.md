@@ -4,7 +4,7 @@
 
 Saved [the repair plan](reliable-prompt-execution-plan.md) after read-only investigation of the new installed-profile failure. Every agent had no attached workspace, chat delegation bypassed prepared-project startup, dropping artifact checks allowed folderless workers to launch, and Recovery offered to finalize a saved refusal. The plan specifies one executable-assignment contract/readiness gate, scoped project setup, trusted execution evidence, correct review routing, bounded correction rounds and typed recovery actions. This task produced the plan only; implementation and installed-provider acceptance remain outstanding. The current profile and failed-run evidence were left untouched.
 
-Compared Claude's `/Users/s/CLAUDIO/AGENTTEAM-PI500-RECOVERY-PLAN.md` with that plan in [claudeVScodex-codex.md](../claudeVScodex-codex.md). The review corrects Claude's cancellation claim, qualifies the empty-tool and recovery proposals, identifies gaps in Codex's root-contract and verifier design, and recommends three delivery milestones. Both plans remain unchanged; this comparison implemented no repairs or live retries.
+Reviewed `/Users/s/CLAUDIO/claudeVScodex-claude.md`, the Claude comparison Sean identified, alongside both original plans in [claudeVScodex-codex.md](../claudeVScodex-codex.md). The review records the original/revised source hashes, accepts the migration/scope and in-app interpretation feedback, corrects the cancellation and call-count claims, and identifies gaps in Codex's root-contract/verifier design and revised Claude F10's handling of unconfirmed required checks. It recommends three delivery milestones. Source plans were not edited; this comparison implemented no repairs or live retries.
 
 ## Collapsed reply layout (October 26, 2026)
 
