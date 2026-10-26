@@ -2,9 +2,10 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { TeamService } from "./service.ts";
 import { errorKindOf } from "./provider-errors.ts";
-import { assert, type Message, type Task } from "./model.ts";
+import { assert, type Agent, type Message, type Task } from "./model.ts";
 import type { ApprovalRecord } from "./approvals.ts";
-import type { RuntimeWait } from "./runtime-waits.ts";
+import { isCapabilityWait, type RuntimeWait } from "./runtime-waits.ts";
+import type { RecoveryDecision } from "./recovery-decision.ts";
 
 /**
  * Engine-agnostic durable execution: immutable checkpoints, an effect ledger and recovery.
@@ -473,7 +474,7 @@ export class RecoveryService {
         (wait) =>
           wait.kind === "task" &&
           wait.targetId === task.id &&
-          wait.reason === "sandbox-unavailable" &&
+          isCapabilityWait(wait) &&
           wait.attempt === this.state(task.id).attempt,
       );
   }
@@ -573,16 +574,23 @@ export class RecoveryService {
     }
   }
   // ---- provider run boundaries (used by the scheduler) ------------------------------------
-  private runKey(task: Task) {
+  /** The ledger key of a provider run; `at` names the state an action will execute (default: now). */
+  private runKey(task: Task, at?: { attempt: number; continuation?: number }) {
     const s = this.state(task.id);
+    const attempt = at?.attempt ?? s.attempt;
+    const continuation = at ? at.continuation : s.continuation;
     return (
-      `provider-run:${task.id}:${s.attempt}` +
-      (s.continuation ? `:continuation:${s.continuation}` : "")
+      `provider-run:${task.id}:${attempt}` +
+      (continuation ? `:continuation:${continuation}` : "")
     );
   }
-  /** True when startRun would replay this attempt's recorded provider output instead of running it. */
-  willReplayRun(task: Task) {
-    return this.ledger.find(this.runKey(task))?.state === "completed";
+  /**
+   * True when startRun would replay the recorded provider output instead of running it. Judge the
+   * state the action will execute (`at`): a retry of a failed task is the next attempt, a
+   * delegation continuation the next continuation of the same attempt.
+   */
+  willReplayRun(task: Task, at?: { attempt: number; continuation?: number }) {
+    return this.ledger.find(this.runKey(task, at))?.state === "completed";
   }
   startRun(task: Task, mutating: boolean) {
     const s = this.state(task.id);
@@ -807,30 +815,57 @@ export class RecoveryService {
   }
   /** Resume an interrupted task, or retry a failed/blocked one, from its last checkpoint. */
   requeue(taskId: string): Task {
+    return this.requeueWithDecision(taskId).task;
+  }
+  /**
+   * The Recovery action. It carries out the typed decision the preview showed (`decide`): the
+   * decision picks the path (a delegation continuation, or a requeue of the task itself), and the
+   * transition gates enforce what the decision's blocker names.
+   */
+  requeueWithDecision(taskId: string): {
+    task: Task;
+    decision: RecoveryDecision;
+  } {
     const task = this.store.get<Task>("task", taskId);
-    const delegation = this.service.delegations.view(taskId);
-    if (
-      task.status === "blocked" &&
-      delegation &&
-      delegation.state !== "continuing"
-    )
-      return this.continueDelegation(taskId);
     assert(
       ["interrupted", "blocked", "failed"].includes(task.status),
       "not_resumable",
       `A ${task.status} task has nothing to resume`,
     );
+    const decision = this.decide(task)!;
+    if (decision.kind === "delegation-continuation")
+      return { task: this.continueDelegation(taskId), decision };
+    // A provider call needs the role to be able to do the work NOW: a folder detached or a grant
+    // revoked since the task stopped is refused here with its real cause, before any attempt is
+    // used (the scheduler repeats the check against the actual launch plan). Finalizing saved
+    // output makes no provider call and needs no capability.
+    if (decision.allowed && decision.providerCall) {
+      const agent = this.store.get<Agent>("agent", task.agentId);
+      const readiness = this.service.launchReadiness.evaluateProspective(
+        agent,
+        { task },
+      );
+      if (!readiness.ready)
+        throw this.service.launchReadiness.refusal(
+          readiness,
+          task.workflowId,
+          "resume",
+        );
+    }
     const s = this.state(taskId);
     const last = this.latest(taskId);
     this.store.transaction(() => {
       s.resume = {
         fromCheckpointId: last?.id ?? null,
-        sessionId: s.providerSessionId,
+        sessionId: decision.session === "resume" ? s.providerSessionId : null,
       };
       this.saveState(s);
     });
     try {
-      return this.service.transitionTask(taskId, { status: "queued" });
+      return {
+        task: this.service.transitionTask(taskId, { status: "queued" }),
+        decision,
+      };
     } catch (e) {
       const cleared = this.state(taskId);
       cleared.resume = undefined;
@@ -913,66 +948,291 @@ export class RecoveryService {
     }
   }
   // ---- views ------------------------------------------------------------------------------
-  describe(task: Task) {
+  /**
+   * The typed decision for a recoverable task, computed once. `describe()`, the retry gate and the
+   * action all read it. It judges the state the action WILL execute: a failed task's retry is the
+   * next attempt (new ledger key, so a provider call even when the failed attempt's output was
+   * saved), an interrupted task continues its attempt (replaying saved output without a call only
+   * when the ledger holds it), a delegating parent's continuation is a new run key in the same
+   * attempt.
+   */
+  decide(task: Task): RecoveryDecision | null {
+    if (!["failed", "interrupted", "blocked"].includes(task.status))
+      return null;
     const s = this.state(task.id);
-    const effects = this.ledger.list(task.id);
-    const uncertainEffects = effects.filter((e) => e.state === "uncertain");
-    const pendingApprovals = this.service.approvals.pendingFor(task.id);
-    const completed = effects
-      .filter((e) => e.state === "completed")
-      .map((e) => e.description);
-    const next: string[] = [];
-    for (const a of pendingApprovals)
-      next.push(
-        `Answer pending approval: ${(a.request.toolCall as { title?: string } | undefined)?.title ?? "tool action"}`,
-      );
-    for (const e of uncertainEffects)
-      next.push(
-        `Decide on uncertain effect "${e.description}": retry, mark applied, or abandon`,
-      );
-    if (!pendingApprovals.length && !uncertainEffects.length) {
-      const run = this.ledger.find(this.runKey(task));
-      const delegation = this.service.delegations.view(task.id);
-      const runtimeBlocker = this.runtimeBlocker(task);
-      if (
-        task.status === "failed" ||
-        task.status === "interrupted" ||
-        task.status === "blocked"
-      ) {
-        if (runtimeBlocker)
-          next.push(
-            runtimeBlocker.message ??
-              "Fix the required sandbox. The task resumes automatically once its setup is ready.",
-          );
-        else if (delegation && delegation.state !== "continuing")
-          next.push(delegation.message);
-        else if (run?.state === "completed")
-          next.push(
-            "Finalize from the saved provider output (no provider call)",
-          );
-        else if (task.status === "failed")
-          next.push(
-            s.providerSessionId
-              ? `Start attempt ${s.attempt + 1}, resuming provider session ${s.providerSessionId}`
-              : `Start attempt ${s.attempt + 1} from the beginning`,
-          );
-        else if (s.providerSessionId)
-          next.push(
-            `Resume provider session ${s.providerSessionId} (attempt ${s.attempt})`,
-          );
-        else next.push(`Re-run attempt ${s.attempt} from the beginning`);
-        if (task.requiresValidation && !this.service.validation.gate(task).open)
-          next.push("Wait for required validation to pass before executing");
-        const blockers = task.dependsOn.filter(
-          (d) => !this.service.taskDependencySatisfied(d),
-        );
-        if (blockers.length) next.push("Wait for unfinished dependencies");
-      }
+    const gate = this.retryGate(task);
+    const uncertain = this.ledger.uncertainFor(task.id);
+    const approvals = this.service.approvals.pendingFor(task.id);
+    const runtimeBlocker = this.runtimeBlocker(task);
+    const delegation = this.service.delegations.view(task.id);
+    const delegating = !!delegation && delegation.state !== "continuing";
+    const resumable = !!s.providerSessionId && !task.resourcePaths?.length;
+    const max = s.policy.maxAttempts;
+    // The cascade existing cancellation applies (src/limits.ts): live delegated descendants.
+    const cascades: RecoveryDecision["cancel"]["cascades"] = [];
+    const seen = new Set<string>([task.id]);
+    const stack = [task.id];
+    while (stack.length) {
+      const parent = stack.pop()!;
+      for (const child of this.store.list<Task>("task"))
+        if (child.parentTaskId === parent && !seen.has(child.id)) {
+          seen.add(child.id);
+          if (
+            ["queued", "interrupted", "blocked", "running"].includes(
+              child.status,
+            )
+          ) {
+            cascades.push({
+              taskId: child.id,
+              title: child.title,
+              status: child.status,
+            });
+            stack.push(child.id);
+          }
+        }
     }
+    const approvalSteps = approvals.map(
+      (a) =>
+        `Answer pending approval: ${(a.request.toolCall as { title?: string } | undefined)?.title ?? "tool action"}`,
+    );
+    const attempt = (after: number) => ({ current: s.attempt, after, max });
+    const base = {
+      taskId: task.id,
+      cancel: { allowed: true, cascades },
+      outcomes: null,
+      setup: null,
+    };
+    const waits: string[] = [];
+    if (task.requiresValidation && !this.service.validation.gate(task).open)
+      waits.push("Wait for required validation to pass before executing");
+    if (task.dependsOn.some((d) => !this.service.taskDependencySatisfied(d)))
+      waits.push("Wait for unfinished dependencies");
+    const approvalBlocker = approvals.length
+      ? {
+          code: "approval_pending",
+          message: "Answer the pending approval before resuming this task",
+        }
+      : null;
+    const open = gate.allowed && !approvals.length;
+
+    if (uncertain.length)
+      return {
+        ...base,
+        kind: "uncertain-effect-resolution",
+        allowed: false,
+        blocker: { code: "effect_uncertain", message: gate.reason },
+        action: "decide-effect",
+        attempt: attempt(s.attempt),
+        consumesAttempt: false,
+        continuation: null,
+        providerCall: false,
+        run: null,
+        session: "none",
+        resumesSessionId: null,
+        summary: `It is unknown whether "${uncertain[0].description}" was applied; decide before anything runs. Nothing is replayed automatically.`,
+        steps: [
+          ...approvalSteps,
+          ...uncertain.map(
+            (e) =>
+              `Decide on uncertain effect "${e.description}": retry, mark applied, or abandon`,
+          ),
+        ],
+        outcomes: [
+          {
+            decision: "retry",
+            label: "Not applied: allow retry",
+            providerCall: true,
+          },
+          {
+            decision: "completed",
+            label: "Mark as applied",
+            providerCall: false,
+          },
+          { decision: "abandon", label: "Abandon task", providerCall: false },
+        ],
+      };
+    if (runtimeBlocker) {
+      const then = this.afterRepair(task);
+      const message =
+        runtimeBlocker.message ??
+        "Fix the required sandbox. The task resumes automatically once its setup is ready.";
+      return {
+        ...base,
+        kind: "setup-repair",
+        allowed: false,
+        blocker: { code: "runtime_capability_blocked", message },
+        action: "repair-setup",
+        attempt: attempt(s.attempt),
+        consumesAttempt: false,
+        continuation: null,
+        providerCall: false,
+        run: null,
+        session: "none",
+        resumesSessionId: null,
+        summary: `${message} Nothing runs and no attempt is used until the setup is repaired; the task then continues by itself.`,
+        steps: [...approvalSteps, message],
+        setup: {
+          reason: runtimeBlocker.reason ?? "sandbox-unavailable",
+          message,
+          issues: runtimeBlocker.issues ?? [],
+          action: runtimeBlocker.issues?.[0]?.fix ?? null,
+          then: {
+            kind: then.kind,
+            providerCall: then.providerCall,
+            summary: then.summary,
+          },
+        },
+      };
+    }
+    if (delegating) {
+      const continuation = s.continuation ?? 0;
+      const at = { attempt: s.attempt, continuation: continuation + 1 };
+      const replay = this.willReplayRun(task, at);
+      const waiting = this.service.delegations.pending(task).length > 0;
+      return {
+        ...base,
+        kind: "delegation-continuation",
+        allowed: open,
+        blocker:
+          approvalBlocker ??
+          (gate.allowed
+            ? null
+            : {
+                code: waiting
+                  ? "delegated_work_pending"
+                  : "delegation_continuation_limit",
+                message: gate.reason,
+              }),
+        action: gate.allowed ? "continue-delegation" : "wait",
+        attempt: attempt(s.attempt),
+        consumesAttempt: false,
+        continuation: {
+          current: continuation,
+          after: continuation + 1,
+          max: 3,
+        },
+        providerCall: !replay,
+        run: { key: this.runKey(task, at), replay },
+        session: "fresh",
+        resumesSessionId: null,
+        summary: gate.allowed
+          ? `The delegated work is done: the parent gets a continuation turn in attempt ${s.attempt} (a new provider call, continuation ${continuation + 1} of 3).`
+          : delegation!.message,
+        steps: [...approvalSteps, delegation!.message],
+      };
+    }
+    if (task.status === "failed") {
+      const at = { attempt: s.attempt + 1 };
+      const replay = this.willReplayRun(task, at);
+      const saved = this.willReplayRun(task);
+      return {
+        ...base,
+        kind: "new-attempt",
+        allowed: open,
+        blocker:
+          approvalBlocker ??
+          (gate.allowed
+            ? null
+            : { code: "retry_exhausted", message: gate.reason }),
+        action: "requeue",
+        attempt: attempt(s.attempt + 1),
+        consumesAttempt: true,
+        continuation: null,
+        providerCall: !replay,
+        run: { key: this.runKey(task, at), replay },
+        session: resumable ? "resume" : "fresh",
+        resumesSessionId: resumable ? s.providerSessionId : null,
+        summary: `Start attempt ${s.attempt + 1} of ${max}: a new provider call${saved ? `; attempt ${s.attempt}'s saved output stays as evidence and is not finalized` : ""}.`,
+        steps: approvalSteps.length
+          ? approvalSteps
+          : [
+              resumable
+                ? `Start attempt ${s.attempt + 1}, resuming provider session ${s.providerSessionId}`
+                : `Start attempt ${s.attempt + 1} from the beginning`,
+              ...waits,
+            ],
+      };
+    }
+    // interrupted, or blocked without a delegation, an uncertain effect or a setup blocker
+    const key = this.runKey(task);
+    if (this.willReplayRun(task))
+      return {
+        ...base,
+        kind: "completion-only-replay",
+        allowed: open,
+        blocker: approvalBlocker,
+        action: "requeue",
+        attempt: attempt(s.attempt),
+        consumesAttempt: false,
+        continuation: null,
+        providerCall: false,
+        run: { key, replay: true },
+        session: "none",
+        resumesSessionId: null,
+        summary: `Finalize attempt ${s.attempt} from the saved provider output (no provider call); completion checks run again.`,
+        steps: approvalSteps.length
+          ? approvalSteps
+          : [
+              "Finalize from the saved provider output (no provider call)",
+              ...waits,
+            ],
+      };
+    return {
+      ...base,
+      kind: "resume-run",
+      allowed: open,
+      blocker: approvalBlocker,
+      action: "requeue",
+      attempt: attempt(s.attempt),
+      consumesAttempt: false,
+      continuation: null,
+      providerCall: true,
+      run: { key, replay: false },
+      session: resumable ? "resume" : "fresh",
+      resumesSessionId: resumable ? s.providerSessionId : null,
+      summary: resumable
+        ? `Resume attempt ${s.attempt} in provider session ${s.providerSessionId}: a provider call, no attempt used.`
+        : `Run attempt ${s.attempt} again from the beginning: a provider call, no attempt used.`,
+      steps: approvalSteps.length
+        ? approvalSteps
+        : [
+            resumable
+              ? `Resume provider session ${s.providerSessionId} (attempt ${s.attempt})`
+              : `Re-run attempt ${s.attempt} from the beginning`,
+            ...waits,
+          ],
+    };
+  }
+  /** What a setup-blocked task does once its blocker is gone (the same attempt, nothing consumed). */
+  private afterRepair(task: Task) {
+    const s = this.state(task.id);
+    const replay = this.willReplayRun(task);
+    return {
+      kind: replay
+        ? ("completion-only-replay" as const)
+        : ("resume-run" as const),
+      providerCall: !replay,
+      summary: replay
+        ? `Finalize attempt ${s.attempt} from the saved provider output (no provider call).`
+        : `Run attempt ${s.attempt}: a provider call, no attempt used.`,
+    };
+  }
+  describe(task: Task) {
+    const effects = this.ledger.list(task.id);
+    const decision = this.decide(task);
+    const next = [...(decision?.steps ?? [])];
     for (const t of this.store.list<Task>("task"))
       if (t.dependsOn.includes(task.id) && t.status === "queued")
         next.push(`Then unblocks: ${t.title}`);
-    return { next, completed, uncertainEffects, pendingApprovals };
+    return {
+      next,
+      completed: effects
+        .filter((e) => e.state === "completed")
+        .map((e) => e.description),
+      uncertainEffects: effects.filter((e) => e.state === "uncertain"),
+      pendingApprovals: this.service.approvals.pendingFor(task.id),
+      decision,
+    };
   }
   view(taskId: string) {
     const task = this.store.get<Task>("task", taskId);
@@ -1007,6 +1267,27 @@ export class RecoveryService {
       uncertainEffects: d.uncertainEffects,
       pendingApprovals: d.pendingApprovals,
       retry: this.retryGate(task),
+      /** The one typed decision the preview and the action share (null once nothing is left to recover). */
+      decision: d.decision,
+      /** For a parent stopped on delegated work: the failing leaf, so Recovery leads with it. */
+      rootCause: this.rootCause(task),
+    };
+  }
+  /** The failing leaf behind a delegating parent, as a setup problem or a failure. */
+  private rootCause(task: Task) {
+    const delegation = this.service.delegations.view(task.id);
+    const leafId = delegation?.blockers?.[0]?.taskId;
+    if (!leafId) return null;
+    const leaf = this.store.get<Task>("task", leafId);
+    const wait = this.runtimeBlocker(leaf);
+    const agent = this.store.get<{ name: string }>("agent", leaf.agentId);
+    return {
+      taskId: leaf.id,
+      title: leaf.title,
+      agentName: agent.name,
+      kind: wait ? ("setup" as const) : ("failure" as const),
+      message: wait?.message ?? delegation!.blockers![0].reason,
+      action: wait?.issues?.[0]?.fix ?? null,
     };
   }
   overview() {

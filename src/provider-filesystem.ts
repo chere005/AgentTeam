@@ -5,6 +5,47 @@ import { hasRestrictions } from "./access.ts";
 import { contains } from "./resources.ts";
 import type { Store } from "./store.ts";
 
+/**
+ * The synchronous part of a task's filesystem scope: the folders a task that declares paths runs
+ * in, taken from the agent's attachments. It refuses a declared path no attachment contains
+ * (`resource_path_detached`) and attachments a directory-wide provider grant cannot represent.
+ * `taskFilesystem` adds the checks that need the disk; readiness evaluation uses this one alone.
+ */
+export function taskScope(
+  agent: Agent,
+  declared: string[] | undefined,
+): { cwd: string; workspaces: Agent["workspaces"] } | null {
+  if (!declared?.length) return null;
+  const workspaces: Agent["workspaces"] = [];
+  for (const path of declared) {
+    const attachment = agent.workspaces
+      .filter((w) => contains(w.path, path))
+      .sort((a, b) => b.path.length - a.path.length)[0];
+    assert(
+      attachment,
+      "resource_path_detached",
+      `${agent.name} no longer has a folder containing ${path}, which this task declares; attach it again or change the task`,
+      409,
+    );
+    // A directory-wide CLI grant cannot represent per-file or nested attachment overrides.
+    assert(
+      !hasRestrictions(attachment) &&
+        !agent.workspaces.some(
+          (w) => w !== attachment && contains(path, w.path),
+        ),
+      "provider_access_unsupported",
+      "Task folder has access rules or nested attachments that the provider cannot enforce; assign unrestricted, disjoint directories instead",
+      409,
+    );
+    workspaces.push({
+      path,
+      access: attachment.access,
+      active: workspaces.length === 0,
+    });
+  }
+  return { cwd: workspaces[0].path, workspaces };
+}
+
 /** Revalidate at launch: attachments, rules and symlink targets may have changed since assignment. */
 export async function taskFilesystem(
   store: Store,
@@ -21,7 +62,6 @@ export async function taskFilesystem(
   );
   const declared = task.resourcePaths;
   if (!declared?.length) return null;
-  const workspaces: Agent["workspaces"] = [];
   for (const path of declared) {
     const attachment = agent.workspaces
       .filter((w) => contains(w.path, path))
@@ -45,23 +85,8 @@ export async function taskFilesystem(
       `Task resource paths must be directories to isolate provider access; "${path}" is a file`,
       400,
     );
-    // A directory-wide CLI grant cannot represent per-file or nested attachment overrides.
-    assert(
-      !hasRestrictions(attachment) &&
-        !agent.workspaces.some(
-          (w) => w !== attachment && contains(path, w.path),
-        ),
-      "provider_access_unsupported",
-      "Task folder has access rules or nested attachments that the provider cannot enforce; assign unrestricted, disjoint directories instead",
-      409,
-    );
-    workspaces.push({
-      path,
-      access: attachment.access,
-      active: workspaces.length === 0,
-    });
   }
-  return { cwd: workspaces[0].path, workspaces };
+  return taskScope(agent, declared);
 }
 
 /** Exact read AND write roots. No :root, :workspace or implicit writable temp grants. */

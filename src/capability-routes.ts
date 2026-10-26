@@ -18,7 +18,7 @@ import type { TeamService } from "./service.ts";
  *   POST /capabilities/skills/validation       same, and records a `skills.validated` audit event
  *   GET  /capabilities/skills/changes          assigned/pinned skills vs. their accepted revision
  *   POST /capabilities/skills/accept           {ids} user accepts the current text of changed skills
- *   GET  /agents/:id/effective-instructions?prompt=
+ *   GET  /agents/:id/effective-instructions?prompt=&taskId=   (taskId: the preview of that task's run)
  *   GET  /agents/:id/context-cost?limit=      approximate instruction-context cost of recent runs (run.context events)
  *   GET/POST /tools/servers, PUT/DELETE /tools/servers/:id, POST /tools/servers/:id/test
  *   GET /agents/:id/tool-grants, PUT /agents/:id/tool-grants, DELETE /agents/:id/tool-grants/:serverId
@@ -97,6 +97,7 @@ export async function capabilityRoute(
     return {
       data: await effectiveInstructions(service, agentOf(m[1]).id, {
         prompt: url.searchParams.get("prompt") ?? undefined,
+        taskId: url.searchParams.get("taskId") ?? undefined,
       }),
     };
 

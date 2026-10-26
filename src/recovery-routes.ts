@@ -7,8 +7,9 @@ import type { TeamService } from "./service.ts";
  *   GET  /tasks/:id/recovery           one task: checkpoint, what runs next, retry gate
  *   GET  /tasks/:id/checkpoints        immutable checkpoint history
  *   PUT  /tasks/:id/retry-policy       max attempts, backoff, automatic retry
- *   POST /tasks/:id/resume             interrupted/blocked/failed -> queued from its checkpoint
+ *   POST /tasks/:id/resume             interrupted/blocked/failed -> queued from its checkpoint (response: view + `executed` decision)
  *   POST /tasks/:id/retry-from-checkpoint   same action, named for failed tasks
+ *   (every view carries `decision`: the typed recovery decision the preview and the action share)
  *   GET  /effects[?taskId=]            effect ledger
  *   POST /effects/:id/decision         user decision on an uncertain effect
  *   GET  /approvals/history            persisted approval requests and answers
@@ -57,8 +58,13 @@ export async function recoveryRoute(
     z.object({})
       .strict()
       .parse(await readBody());
-    recovery.requeue(taskId);
-    return { data: recovery.view(taskId), status: 202 };
+    // The response carries the decision that was executed (the one the preview showed), then
+    // the task's view as it is now.
+    const { decision } = recovery.requeueWithDecision(taskId);
+    return {
+      data: { ...recovery.view(taskId), executed: decision },
+      status: 202,
+    };
   }
   return undefined;
 }

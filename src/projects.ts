@@ -289,6 +289,16 @@ export async function createFreeFormProject(
     };
     store.put("workflow", { ...workflow, paused: true, setup });
     store.emit("workflow.paused", workflow.id);
+    // The execution contract: what this assignment needs, read from the user's own words (goal and
+    // task instructions). Response-only goals persist nothing (src/execution-contract.ts).
+    service.contracts.seedProject({
+      workflowId: workflow.id,
+      text: [o.goal, ...o.tasks.map((t) => t.instructions)].join("\n"),
+      source: "assignment",
+      projectFolder: workspace,
+      owner,
+      teamId,
+    });
     const tasks = o.tasks.length
       ? o.tasks
       : [

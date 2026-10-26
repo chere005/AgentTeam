@@ -36,6 +36,8 @@ const scheduler = new Scheduler(service, runs);
 scheduler.start();
 const discovery = new RuntimeDiscovery(store);
 runs.readiness = (environment) => discovery.readiness(environment);
+runs.runtimeVersion = (environment) =>
+  discovery.runtimes.find((runtime) => runtime.id === environment)?.version;
 // Periodic rescans while a used runtime is blocked, model checks and re-queues (src/readiness.ts).
 const readiness = new ReadinessService({
   service,

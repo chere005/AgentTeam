@@ -78,6 +78,8 @@ async function start() {
   scheduler.start();
   const discovery = new RuntimeDiscovery(store);
   runs.readiness = (environment) => discovery.readiness(environment);
+  runs.runtimeVersion = (environment) =>
+    discovery.runtimes.find((runtime) => runtime.id === environment)?.version;
   // Automatic rescans (focus, periodic while blocked, sign-in poll), model checks and re-queues
   // (src/readiness.ts). Test mode never scans on its own unless a spec sets AGENTTEAM_AUTO_RESCAN=1.
   const testMode = process.env.AGENTTEAM_TEST === "1";

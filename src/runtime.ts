@@ -4,7 +4,7 @@ import type { Readiness } from "./runtime-scan.ts";
 import { spawn } from "node:child_process";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { join } from "node:path";
 import { projectRoot, providerLimits } from "./config.ts";
 import { toProviderError, errorKindOf } from "./provider-errors.ts";
 import { randomUUID } from "node:crypto";
@@ -27,63 +27,12 @@ import { GroupChats } from "./group-chat.ts";
 import { ensureWorkspaceBaseline } from "./workspace-changes.ts";
 import { codexTaskPermissions } from "./provider-filesystem.ts";
 import { assertProviderCapabilities } from "./provider-capabilities.ts";
-
-/** Provider file access is available only inside the current unrestricted attachment. */
-function workspaceCapabilities(plan: LaunchPlan) {
-  if (!plan.cwd) return { read: false, write: false };
-  const roots =
-    plan.providerRoots ??
-    (plan.workspaces ?? []).map((w) => ({
-      path: w.path,
-      access: w.access,
-      active: w.active,
-      restricted: !!w.rules?.length || !!w.explicitOnly,
-    }));
-  const workspace = roots
-    .filter((candidate) => {
-      const path = relative(candidate.path, plan.cwd!);
-      return (
-        path === "" ||
-        (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path))
-      );
-    })
-    .sort((a, b) => b.path.length - a.path.length)[0];
-  if (!workspace || roots.some((root) => root.restricted))
-    return { read: false, write: false };
-  const read = plan.tools.includes("read");
-  return {
-    read,
-    write:
-      read &&
-      roots.every((root) => root.access === "write") &&
-      (plan.tools.includes("edit") || plan.tools.includes("write")),
-  };
-}
-
-function providerRoots(plan: LaunchPlan) {
-  return (
-    plan.providerRoots ??
-    (plan.workspaces ?? []).map((w) => ({
-      path: w.path,
-      access: w.access,
-      active: w.active,
-      restricted: !!w.rules?.length || !!w.explicitOnly,
-    }))
-  );
-}
-
-function claudeFileTools(plan: LaunchPlan) {
-  const access = workspaceCapabilities(plan);
-  if (!access.read) return [];
-  return [
-    ...(plan.tools.includes("read") ? ["Read"] : []),
-    ...(plan.tools.includes("glob") ? ["Glob"] : []),
-    ...(plan.tools.includes("grep") ? ["Grep"] : []),
-    ...(access.write && plan.tools.includes("edit") ? ["Edit"] : []),
-    ...(access.write && plan.tools.includes("write") ? ["Write"] : []),
-    ...(access.write && plan.tools.includes("shell") ? ["Bash"] : []),
-  ];
-}
+import { launchManifest } from "./capability-context.ts";
+import {
+  claudeFileTools,
+  providerRootsOf as providerRoots,
+  workspaceCapabilities,
+} from "./launch-capability.ts";
 
 export function commandFor(
   plan: LaunchPlan,
@@ -663,6 +612,8 @@ export class RunManager {
    * stays queued while resolving and fails with a clear message when the runtime is unavailable.
    */
   readiness?: (environment: string) => Readiness;
+  /** Installed version of a runtime for the launch manifest (wired like `readiness`). */
+  runtimeVersion?: (environment: string) => string | null | undefined;
   /** Provider executor for chat runs; replaceable so sandboxes (playground) never reach real CLIs. */
   execute: typeof executeCommand = executeCommand;
   /** Actual provider host; fixture executors can explicitly select their simulated platform. */
@@ -675,6 +626,9 @@ export class RunManager {
     this.enabled = enabled;
     this.cwd = cwd;
     this.service.graphs.enabled = () => this.enabled;
+    this.service.runtimeReadiness = (environment) =>
+      this.readiness?.(environment);
+    this.service.hostPlatform = () => this.runtimePlatform;
   }
   recover() {
     const store = this.service.store;
@@ -857,7 +811,32 @@ export class RunManager {
           dependsOn: [],
           completionCriteria: "Return a direct response to the user.",
         });
-        this.service.startConversationTask(conversationTask.id, sessionId);
+        // Chat preparation (src/execution-contract.ts): an actionable request gets its contract
+        // here, before any child can start, and the readiness of the workers it can reach is
+        // recorded as one setup state. A model that omits or misclassifies the contract later
+        // cannot lower what was established from the user's own words.
+        this.service.contracts.prepareConversation({
+          workflowId: workflow.id,
+          agent,
+          text: request,
+          origin: { sessionId, messageId: message.id },
+        });
+        this.service.setups.prepareConversation(workflow.id);
+        const host = { platform: this.runtimePlatform };
+        this.service.startConversationTask(conversationTask.id, sessionId, {
+          launchManifest: launchManifest(this.service, {
+            agent,
+            task: conversationTask,
+            plan,
+            decision: this.service.launchReadiness.evaluatePlan(agent, plan, {
+              task: conversationTask,
+              host,
+            }),
+            host,
+            adapterVersion: this.runtimeVersion?.(plan.environment),
+            teammateTools: true,
+          }),
+        });
         const toolToken = this.toolSessions.issue({
           agentId: agent.id,
           taskId: conversationTask.id,

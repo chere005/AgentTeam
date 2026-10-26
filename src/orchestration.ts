@@ -30,6 +30,11 @@ import { mayShareExcerpt } from "./resource-sharing.ts";
 import { Redactor } from "./redact.ts";
 import { decideBoth } from "./access.ts";
 import { canonicalDeclaredPaths } from "./declared-paths.ts";
+import {
+  contractProposalSchema,
+  type ChildPlan,
+  type ContractLike,
+} from "./execution-contract.ts";
 import { canonicalPolicyPath, filesystemPolicy } from "./filesystem-policy.ts";
 import { relativeWithin } from "./path-utils.ts";
 import { contains } from "./resources.ts";
@@ -364,6 +369,11 @@ export const invokeArgsSchema = z
       })
       .strict()
       .optional(),
+    contract: contractProposalSchema
+      .optional()
+      .describe(
+        "Optional proposal for this work's contract: workKind (response-only, file-edit or executable-implementation) and expectedFiles. AgentTeam keeps the requirements of the user's original request and the files and checks already required, and never lets a proposal lower them: leaving paths or checks out of a retry does not drop them. A literal expected value you invent (an output-matches or artifact-matches pattern) is recorded as unverified and not enforced until the user confirms it.",
+      ),
     tags: z.array(z.string().max(100)).max(50).default([]),
     changedFiles: z.array(z.string().max(500)).max(1000).default([]),
     resourcePaths: z
@@ -418,7 +428,7 @@ export class Orchestration {
     return [
       {
         name: "invoke_teammate",
-        description: `Delegate work to a teammate through AgentTeam. ${ctx ? (reachable.length ? `Reachable teammates (use exact names): ${reachable.map((agent) => agent.name).join(", ")}.` : "No teammates are currently reachable from this agent.") : "The caller's reachable teammates are listed in the tool input schema."} Communication permissions, child/depth/loop limits, resource locks, validation gates and explicit file-excerpt sharing permissions are enforced by the backend. For file deliverables, supply completionChecks with artifact-exists and artifact-matches so the backend verifies actual files and required content. Do not attach or copy whole files. Share summaries in context; pass a short excerpt only through context.resources, where the recipient must have read access or the resource must allow sharing. Returns parent/child task ids; read the outcome with teammate_result.`,
+        description: `Delegate work to a teammate through AgentTeam. ${ctx ? (reachable.length ? `Reachable teammates (use exact names): ${reachable.map((agent) => agent.name).join(", ")}.` : "No teammates are currently reachable from this agent.") : "The caller's reachable teammates are listed in the tool input schema."} Communication permissions, child/depth/loop limits, resource locks, validation gates and explicit file-excerpt sharing permissions are enforced by the backend. A recipient that cannot do the work (for example a worker with no folder to write in) is refused: nothing is created, and the error names the setup step to ask the user for. For file deliverables, supply completionChecks with artifact-exists and artifact-matches so the backend verifies actual files and required content. Do not attach or copy whole files. Share summaries in context; pass a short excerpt only through context.resources, where the recipient must have read access or the resource must allow sharing. Returns parent/child task ids; read the outcome with teammate_result.`,
         inputSchema: invokeSchema,
         handler: (ctx, args) => this.invokeTeammate(ctx, args),
       },
@@ -754,6 +764,43 @@ export class Orchestration {
       return { ...check, path: inside };
     });
   }
+  /** The traits `TeamService.task` gives a delegated task, computed before it exists (for readiness). */
+  private inheritedTraits(
+    parent: Task,
+    args: z.infer<typeof invokeArgsSchema>,
+  ): { executionMode?: "standard" | "file-only"; resourcePaths?: string[] } {
+    const workflow = this.store.get<
+      Workflow & { setup?: { executionMode?: "file-only"; workspace?: string } }
+    >("workflow", parent.workflowId);
+    const fileOnly =
+      args.executionMode === "file-only" ||
+      parent.executionMode === "file-only" ||
+      workflow.setup?.executionMode === "file-only";
+    const paths = args.resourcePaths.length
+      ? args.resourcePaths
+      : fileOnly && workflow.setup?.workspace
+        ? [workflow.setup.workspace]
+        : undefined;
+    return {
+      ...(fileOnly ? { executionMode: "file-only" as const } : {}),
+      ...(paths ? { resourcePaths: paths } : {}),
+    };
+  }
+  /** What the readiness evaluator should hold the recipient to: the child's contract, or none. */
+  private contractLike(plan: ChildPlan): ContractLike | null {
+    if (!plan.governed) return null;
+    return (
+      plan.draft ?? {
+        scope: "task",
+        workKind: "response-only",
+        workKindSource: "request",
+        roles: [],
+        ...(plan.parent?.projectFolder
+          ? { projectFolder: plan.parent.projectFolder }
+          : {}),
+      }
+    );
+  }
   invokeTeammate(ctx: ToolContext, input: unknown) {
     const args = invokeArgsSchema.parse(input);
     if (args.context?.data)
@@ -767,7 +814,67 @@ export class Orchestration {
     const parent = this.parentFor(ctx);
     const route = this.resolveRecipient(caller.id, args, parent.workflowId);
     const recipient = this.store.get<Agent>("agent", route.agentId);
-    const completionChecks = this.artifactChecks(recipient, parent, args);
+    // The contract first: what the delegation inherits, what the model proposed (kept even if the
+    // call is refused below) and the checks the child must satisfy whether or not this call
+    // repeated them. Then the readiness gate: a recipient that cannot do the work is refused
+    // before any task, invocation record or counter exists.
+    const plan = this.service.contracts.planChild({
+      parent,
+      caller,
+      recipient,
+      title: args.title,
+      instructions: args.instructions,
+      proposal: args.contract,
+      completionChecks: args.completionChecks,
+      resourcePaths: args.resourcePaths,
+    });
+    const traits = this.inheritedTraits(parent, args);
+    // The task folder as the delegation will store it (symlinks resolved); a path outside every
+    // folder of the recipient is reported by the delegation itself, not by readiness.
+    if (traits.resourcePaths) {
+      try {
+        traits.resourcePaths =
+          canonicalDeclaredPaths(recipient, traits.resourcePaths, (path) =>
+            filesystemPolicy(this.store).assertPath(path),
+          ) ?? undefined;
+      } catch {
+        delete traits.resourcePaths;
+      }
+    }
+    const decision = this.service.launchReadiness.evaluateProspective(
+      recipient,
+      {
+        task: {
+          parentTaskId: parent.id,
+          workflowId: parent.workflowId,
+          ...traits,
+        },
+        contract: this.contractLike(plan),
+      },
+    );
+    // A recipient that cannot do the work is refused whether or not this call repeated the files
+    // and checks the contract keeps. File checks the CALLER wrote keep their specific error
+    // (a denied path, a missing task folder); the setup state behind it is recorded either way.
+    if (
+      !decision.ready &&
+      !args.completionChecks.some(
+        (c) => c.type === "artifact-exists" || c.type === "artifact-matches",
+      )
+    )
+      throw this.service.launchReadiness.refusal(decision, parent.workflowId);
+    let completionChecks: CompletionCheck[];
+    try {
+      completionChecks = this.artifactChecks(recipient, parent, {
+        ...args,
+        completionChecks: plan.completionChecks,
+      });
+    } catch (error) {
+      if (!decision.ready)
+        this.service.setups.noteBlocked(parent.workflowId, decision);
+      throw error;
+    }
+    if (!decision.ready)
+      throw this.service.launchReadiness.refusal(decision, parent.workflowId);
     for (const resource of args.context?.resources ?? [])
       assert(
         mayShareExcerpt(
@@ -789,7 +896,8 @@ export class Orchestration {
       tags: args.tags,
       changedFiles: args.changedFiles,
     };
-    // The only delegation path: edges, depth/loop/children limits and gates live in TeamService.task.
+    // The only delegation path: edges, depth/loop/children limits and gates live in
+    // TeamService.task. It runs in its own transaction (a limit trip records itself first).
     const child = this.service.task({
       workflowId: parent.workflowId,
       agentId: recipient.id,
@@ -839,13 +947,16 @@ export class Orchestration {
       },
       createdAt: new Date().toISOString(),
     };
-    this.store.put("invocation", invocation);
-    this.store.emit("invocation.requested", child.id, {
-      parentTaskId: invocation.parentTaskId,
-      childTaskId: child.id,
-      fromAgentId: caller.id,
-      toAgentId: recipient.id,
-      method: route.method,
+    this.store.transaction(() => {
+      this.service.contracts.commitChild(plan, child);
+      this.store.put("invocation", invocation);
+      this.store.emit("invocation.requested", child.id, {
+        parentTaskId: invocation.parentTaskId,
+        childTaskId: child.id,
+        fromAgentId: caller.id,
+        toAgentId: recipient.id,
+        method: route.method,
+      });
     });
     const state = this.service.taskState(child.id);
     return {
@@ -856,6 +967,14 @@ export class Orchestration {
       status: child.status,
       waitReason: state.waitReason,
       route: invocation.route,
+      ...(plan.advisory.length
+        ? {
+            unverifiedChecks: plan.advisory.map((c) => ({
+              slot: c.slot,
+              note: "Not enforced as pass/fail; the user must confirm it before the task can complete.",
+            })),
+          }
+        : {}),
     };
   }
   teammateResult(ctx: ToolContext, input: unknown) {

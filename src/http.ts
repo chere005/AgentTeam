@@ -43,6 +43,8 @@ import { GroupChats } from "./group-chat.ts";
 import { teamSpaceRoute, teamIdSchema } from "./team-spaces.ts";
 import { projectRoute } from "./projects.ts";
 import { projectLifecycleRoute } from "./project-lifecycle.ts";
+import { projectSetupRoute } from "./project-setup.ts";
+import { contractProposalSchema } from "./execution-contract.ts";
 import { teamSettingsRoute } from "./team-settings.ts";
 import { ExampleTeams } from "./example-teams.ts";
 import { handleToolRpc } from "./tool-endpoint.ts";
@@ -430,6 +432,10 @@ export function createApi(
       // Projects assigned to a team (src/projects.ts), their lifecycle (src/project-lifecycle.ts)
       // and team settings (src/team-settings.ts); before the team container routes.
       const projected =
+        (await projectSetupRoute(service, method, url, () => body(req), {
+          enabled: () => runs.enabled,
+          start: (sessionId) => runs.start(sessionId),
+        })) ??
         (await projectRoute(service, method, url, () => body(req))) ??
         (await projectLifecycleRoute(service, method, url, () => body(req))) ??
         (await teamSettingsRoute(
@@ -875,14 +881,47 @@ export function createApi(
         return send(service.limits.setChecks(id(match[1]), data.checks));
       }
       if (method === "POST" && path === "/tasks") {
-        const input = await body(req);
+        const posted = await body(req);
+        const fields =
+          posted && typeof posted === "object" && !Array.isArray(posted)
+            ? (posted as Record<string, unknown>)
+            : null;
+        // `contract` is a proposal read by the application, not a task field.
+        const { contract: rawContract, ...rest } = fields ?? {};
+        const input: unknown = fields ? rest : posted;
         // Optional per-project setting: isolate coding work in a fresh worktree first.
         const auto =
-          typeof (input as any)?.agentId === "string"
-            ? await development.worktrees.autoForTask((input as any).agentId)
+          typeof rest.agentId === "string"
+            ? await development.worktrees.autoForTask(rest.agentId)
             : null;
         const task = service.task(input);
-        return send(auto ? { ...task, autoWorktree: auto } : task, 201);
+        // The same contract and readiness decision as chat and delegation: the application reads
+        // the request, a proposal can only raise it, and a task its agent cannot do is saved
+        // and reported with the setup step it needs (the scheduler blocks it before it starts).
+        const contract = service.contracts.seedTask({
+          task,
+          text: `${task.title}\n${task.instructions}`,
+          source: "request",
+          proposal:
+            rawContract === undefined
+              ? undefined
+              : contractProposalSchema.parse(rawContract),
+        });
+        const readiness = service.launchReadiness.evaluateProspective(
+          store.get<Agent>("agent", task.agentId),
+          { task, contract },
+        );
+        if (!readiness.ready)
+          service.setups.noteBlocked(task.workflowId, readiness);
+        return send(
+          {
+            ...task,
+            ...(auto ? { autoWorktree: auto } : {}),
+            ...(contract ? { contract } : {}),
+            readiness,
+          },
+          201,
+        );
       }
       if (
         method === "POST" &&

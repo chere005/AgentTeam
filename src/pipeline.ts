@@ -707,6 +707,19 @@ function buildPipelineProjectInTx(
   };
   store.put("workflow", { ...workflow, paused: true, setup });
   store.emit("workflow.paused", workflow.id);
+  // A pipeline project exists to implement and review: its contract needs write and shell from
+  // the workers and read from the reviewers whatever the goal's wording (src/execution-contract.ts).
+  service.contracts.seedProject({
+    workflowId: workflow.id,
+    text: o.goal,
+    source: "assignment",
+    workKind: "executable-implementation",
+    projectFolder: workspace,
+    owner: planner,
+    teamId: profile.id,
+    // The staged pipeline has exactly one fix stage today; the bounded review loop reads this.
+    maxCorrectionRounds: 1,
+  });
   // The shared workspace is a guided-parallel resource; the plan task is the coordination plan.
   // An existing resource for this folder is reused as configured (its name and per-agent
   // priorities belong to the user); only a missing one is created.
@@ -1452,6 +1465,26 @@ export class PipelineService {
   }
 
   // ---- preflight ---------------------------------------------------------------------------
+  /**
+   * The shared readiness evaluator over the stages (src/launch-readiness.ts). The fix workers are
+   * assigned only after the first integration, so their stage is judged when it is assigned.
+   */
+  private readinessIssues(rec: PipelineRecord) {
+    const contract = this.service.contracts.project(rec.workflowId);
+    const issues: string[] = [];
+    for (const [taskId, info] of Object.entries(rec.stages)) {
+      if (info.stage === "fix") continue;
+      const task = this.task(taskId);
+      const decision = this.service.launchReadiness.evaluateProspective(
+        this.agent(task.agentId),
+        { task, contract, host: { platform: process.platform } },
+      );
+      if (decision.ready) continue;
+      this.service.setups.noteBlocked(rec.workflowId, decision);
+      issues.push(decision.message ?? `${decision.agentName} is not ready`);
+    }
+    return [...new Set(issues)];
+  }
   private leaseIssues(rec: PipelineRecord, taskIds: string[]) {
     const issues: string[] = [];
     const wf = this.store.get<Workflow & { coordination?: Coordination }>(
@@ -1733,6 +1766,12 @@ export class PipelineService {
       "Parallel resource access (disjoint paths/worktrees, leases)",
       par,
       "stage-2 workers hold disjoint declared paths and can lease concurrently",
+    );
+    // Every stage must be able to do its work with the tools and folders it really gets.
+    add(
+      "Execution readiness (the tools and folders each stage needs)",
+      checks.every((c) => c.ok) ? this.readinessIssues(rec) : [],
+      "every stage can do its work",
     );
     const issues = checks
       .filter((c) => !c.ok)

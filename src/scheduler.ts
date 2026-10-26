@@ -6,6 +6,7 @@ import type { Agent, Task } from "./model.ts";
 import { ensureWorkspaceBaseline } from "./workspace-changes.ts";
 import { prepareTaskResourceFolders } from "./project-worktrees.ts";
 import { noteRuntimeWait } from "./runtime-waits.ts";
+import { launchManifest } from "./capability-context.ts";
 import {
   explicitlyReportsIncompleteExecution,
   explicitlyReportsNoWork,
@@ -141,18 +142,66 @@ export class Scheduler {
         if (this.service.taskState(task.id).waitReason) continue;
         let plan;
         try {
-          await prepareTaskResourceFolders(
-            this.service.store,
-            this.service.store.get<Agent>("agent", task.agentId),
-            task.id,
-          );
-          plan = await this.service.launchPlan(task.agentId, task.id);
+          const agent = this.service.store.get<Agent>("agent", task.agentId);
+          try {
+            await prepareTaskResourceFolders(
+              this.service.store,
+              agent,
+              task.id,
+            );
+            plan = await this.service.launchPlan(task.agentId, task.id);
+          } catch (error) {
+            // A setup cause (detached folder, unenforceable access rules, unsupported adapter)
+            // stops the task with the real reason instead of leaving it queued without a word.
+            if (
+              this.service.launchReadiness.blockForLaunchError(
+                task,
+                agent,
+                error,
+              )
+            )
+              continue;
+            throw error;
+          }
           if (this.stopped || !this.runs.enabled) break;
           // Leave the task queued until its runtime is resolved; an unavailable runtime fails the task in execute().
           if (this.runs.readiness && plan.connection?.transport !== "acp")
             if (this.runs.readiness(plan.environment).state === "resolving")
               continue;
-          this.service.transitionTask(task.id, { status: "running" });
+          // The one readiness gate, against the actual launch plan, BEFORE the task starts: a task
+          // that cannot do its work is blocked here with no provider process, effect, lease, turn
+          // or attempt consumed (src/launch-readiness.ts).
+          const host = { platform: this.runs.runtimePlatform };
+          const decision = this.service.launchReadiness.evaluatePlan(
+            agent,
+            plan,
+            { task, host },
+          );
+          // Finalizing saved provider output makes no provider call and needs no capability.
+          if (!decision.ready && !this.service.recovery.willReplayRun(task)) {
+            this.service.launchReadiness.blockTask(task, decision);
+            continue;
+          }
+          const teammateTools = !!(
+            this.runs.teammateToolsUrl?.() &&
+            plan.connection?.transport !== "acp" &&
+            (plan.environment === "claude" || plan.environment === "codex")
+          );
+          this.service.transitionTask(
+            task.id,
+            { status: "running" },
+            {
+              launchManifest: launchManifest(this.service, {
+                agent,
+                task,
+                plan,
+                decision,
+                host,
+                adapterVersion: this.runs.runtimeVersion?.(plan.environment),
+                teammateTools,
+              }),
+            },
+          );
         } catch {
           continue;
         }
@@ -316,6 +365,46 @@ export class Scheduler {
       );
       if (evidence && !evidence.passed)
         throw new Error(this.service.limits.failedChecksText(evidence));
+      // A required check a model invented is not enforced as pass/fail, but it keeps its slot: the
+      // task waits (its saved output is replayed, no provider call) until the user confirms it.
+      const unverified = this.service.contracts.unresolved(task);
+      if (unverified.length) {
+        const message = `Confirm the required check before this task can complete: ${unverified
+          .map(
+            (c) =>
+              `${c.check.type}${"path" in c.check ? " " + c.check.path : ""} (proposed by a model, not enforced)`,
+          )
+          .join("; ")}.`;
+        noteRuntimeWait(this.service.store, {
+          kind: "task",
+          targetId: task.id,
+          environment: plan.environment,
+          reason: "check-unconfirmed",
+          capability: "required-check",
+          message,
+          issues: [
+            {
+              code: "check-unconfirmed",
+              capability: null,
+              agentId: agent.id,
+              agentName: agent.name,
+              taskId: task.id,
+              message,
+              fix: {
+                kind: "confirm-check",
+                label: "Confirm the required check",
+                agentId: agent.id,
+              },
+            },
+          ],
+          attempt: this.service.recovery.state(task.id).attempt,
+        });
+        this.service.transitionTask(task.id, {
+          status: "blocked",
+          result: result.slice(0, 100000),
+        });
+        return;
+      }
       // Structured output (agentteam-state block): schema/permission failures fail the task with an actionable
       // message; writes and the completion commit together so a version conflict leaves nothing behind.
       const output = await this.service.shared.prepare(

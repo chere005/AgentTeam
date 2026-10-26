@@ -7,6 +7,7 @@
  * user messages) and removes the record either way.
  */
 import type { Store } from "./store.ts";
+import type { ReadinessIssue } from "./launch-readiness.ts";
 
 export type RuntimeWait = {
   /** `task:<taskId>` or `chat:<sessionId>`. */
@@ -14,17 +15,44 @@ export type RuntimeWait = {
   kind: "task" | "chat";
   targetId: string;
   environment: string;
-  /** Missing on legacy records, which describe a missing/signed-out runtime. */
-  reason?: "runtime-unavailable" | "sandbox-unavailable";
+  /**
+   * Missing on legacy records, which describe a missing/signed-out runtime. `capability-missing`:
+   * the role cannot do the work its contract needs (no writable folder, tool not granted, adapter
+   * unsupported); `check-unconfirmed`: a required check is still unverified (src/execution-contract.ts).
+   */
+  reason?:
+    | "runtime-unavailable"
+    | "sandbox-unavailable"
+    | "capability-missing"
+    | "check-unconfirmed";
   /** Capability waits are recorded only for a known pre-process refusal, never provider output. */
-  capability?: "sandboxed-shell";
+  capability?: "sandboxed-shell" | "tools-and-folders" | "required-check";
   /** Actionable blocker displayed while a capability wait persists. */
   message?: string;
+  /** Typed causes with one repair each (capability-missing), bounded and free of secrets. */
+  issues?: ReadinessIssue[];
   /** Recovery attempt that failed (tasks): a later attempt means someone already retried it. */
   attempt?: number;
   at: string;
 };
 export const RUNTIME_WAIT = "runtime-wait";
+/** Waits that stop a task before any provider effect and persist until the cause is repaired. */
+export const CAPABILITY_WAIT_REASONS = [
+  "sandbox-unavailable",
+  "capability-missing",
+  "check-unconfirmed",
+] as const;
+export const isCapabilityWait = (wait: Pick<RuntimeWait, "reason">) =>
+  CAPABILITY_WAIT_REASONS.includes(
+    wait.reason as (typeof CAPABILITY_WAIT_REASONS)[number],
+  );
+/** The `taskState().runtimeBlocker.code` for a wait. */
+export const blockerCode = (wait: Pick<RuntimeWait, "reason">) =>
+  wait.reason === "capability-missing"
+    ? ("capability_missing" as const)
+    : wait.reason === "check-unconfirmed"
+      ? ("check_unconfirmed" as const)
+      : ("sandbox_unavailable" as const);
 /** A wait older than this is dropped instead of re-queued (the user has likely moved on). */
 export const RUNTIME_WAIT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 

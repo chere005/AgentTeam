@@ -424,6 +424,13 @@ export class ReadinessService {
     const now = this.clock.now();
     const requeued: string[] = [];
     for (const wait of this.store.list<RuntimeWait>(RUNTIME_WAIT)) {
+      // Missing tools or folders and unverified required checks are repaired by their own setup
+      // steps; the evaluator below re-checks them against the current configuration.
+      if (
+        wait.reason === "capability-missing" ||
+        wait.reason === "check-unconfirmed"
+      )
+        continue;
       const age = now - Date.parse(wait.at);
       const capabilityWait = wait.reason === "sandbox-unavailable";
       // Capability blockers remain visible across restarts and long waits. Unlike an old
@@ -518,6 +525,7 @@ export class ReadinessService {
         this.log(`Could not re-queue ${wait.id}`, error);
       }
     }
+    requeued.push(...this.o.service.launchReadiness.requeueWaiting());
     return requeued;
   }
 }
@@ -596,6 +604,68 @@ async function checkSimpleTaskPlans(service: TeamService, workflowId: string) {
   );
 }
 /**
+ * The shared readiness gate for Start: every task still to run is held against the actual launch
+ * plan of its agent (folder grants, command capability, adapter support, sandbox) and the
+ * project's contract. A project that cannot do its work stays paused and saved, the setup state
+ * names each affected worker with one repair, and nothing starts; repeating Start after the
+ * repair resumes the same saved assignment (src/launch-readiness.ts).
+ */
+async function checkProjectReadiness(service: TeamService, workflowId: string) {
+  const tasks = service.store
+    .list<Task>("task")
+    .filter(
+      (task) =>
+        task.workflowId === workflowId &&
+        !["completed", "cancelled", "running"].includes(task.status),
+    );
+  const contract = service.contracts.project(workflowId);
+  const decisions = [];
+  for (const task of tasks) {
+    const agent = service.store.get<Agent>("agent", task.agentId);
+    let decision;
+    try {
+      const plan = await service.launchPlan(agent.id, task.id);
+      decision = service.launchReadiness.evaluatePlan(agent, plan, {
+        task,
+        contract: service.contracts.effective(task) ?? contract,
+        host: { platform: process.platform },
+      });
+    } catch (error) {
+      const issue = service.launchReadiness.issueFromError(
+        agent,
+        error,
+        task.id,
+      );
+      if (!issue) throw error;
+      decision = service.launchReadiness.evaluateProspective(agent, { task });
+      if (decision.ready)
+        decision = {
+          ...decision,
+          ready: false,
+          issues: [issue],
+          message: issue.message,
+        };
+    }
+    if (!decision.ready) decisions.push(decision);
+  }
+  if (!decisions.length) {
+    service.setups.refresh(workflowId);
+    return;
+  }
+  for (const decision of decisions)
+    service.setups.noteBlocked(workflowId, decision);
+  throw new AppError(
+    409,
+    "capability_missing",
+    `${decisions
+      .slice(0, 3)
+      .map((d) => d.message)
+      .join(
+        " ",
+      )}${decisions.length > 3 ? ` ${decisions.length - 3} more workers need setup.` : ""} The project is saved and paused; no agent has started. Repeat Start after the setup is done.`,
+  );
+}
+/**
  * Resume a paused project (POST /workflows/:id/pause {paused:false}). Before the gates in
  * `TeamService.pauseWorkflow` run, the checks they need run here: a pipeline project whose
  * preflight is missing, failed or stale is prepared exactly like "Prepare and verify" (which
@@ -669,6 +739,13 @@ export async function resumeProject(
     wf.lifecycle?.state !== "archived"
   )
     await checkSimpleTaskPlans(service, workflowId);
+  // A pipeline project's readiness is part of "Prepare and verify" and its resume gate.
+  if (
+    wf.paused &&
+    wf.lifecycle?.state !== "archived" &&
+    !wf.setup?.requiresPreflight
+  )
+    await checkProjectReadiness(service, workflowId);
   return service.pauseWorkflow(workflowId, false);
 }
 

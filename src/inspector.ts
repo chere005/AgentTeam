@@ -685,6 +685,31 @@ function explainTask(
     ["failed", "blocked"].includes(task.status) &&
     (state.runtimeBlocker || sandboxUnavailable(task.result))
   ) {
+    const blockerKind = state.runtimeBlocker?.code;
+    if (
+      blockerKind === "capability_missing" ||
+      blockerKind === "check_unconfirmed"
+    ) {
+      push({
+        code:
+          blockerKind === "capability_missing"
+            ? "capability-missing"
+            : "check-unconfirmed",
+        blocking: true,
+        title:
+          blockerKind === "capability_missing"
+            ? "Setup required: the role cannot do this work yet"
+            : "A required check needs your confirmation",
+        detail: state.runtimeBlocker?.message ?? "",
+        refs: { recoveryTaskId: task.id },
+      });
+      return finish(
+        true,
+        blockerKind === "capability_missing"
+          ? "Blocked: setup is required before this task can start"
+          : "Blocked: a required check is waiting for confirmation",
+      );
+    }
     push({
       code: "sandbox-unavailable",
       blocking: true,

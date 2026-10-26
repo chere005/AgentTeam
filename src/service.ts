@@ -57,7 +57,17 @@ import {
 import { decideRouting } from "./routing-decision.ts";
 import { ensureWorkspaceBaseline } from "./workspace-changes.ts";
 import { DelegatedWork } from "./delegated-work.ts";
-import type { RuntimeWait } from "./runtime-waits.ts";
+import {
+  blockerCode,
+  isCapabilityWait,
+  type RuntimeWait,
+} from "./runtime-waits.ts";
+import { ContractService } from "./execution-contract.ts";
+import { LaunchReadiness } from "./launch-readiness.ts";
+import { ProjectSetupService } from "./project-setup.ts";
+import { capabilityContext } from "./capability-context.ts";
+import type { PlanFacts } from "./launch-capability.ts";
+import type { Readiness } from "./runtime-scan.ts";
 import { simpleTaskSupport } from "./simple-task-capabilities.ts";
 import { runtimeGuidance } from "./runtime-instructions.ts";
 export class TeamService {
@@ -86,6 +96,19 @@ export class TeamService {
   /** Team containers and the active team (src/team-spaces.ts); presentation/ownership only. */
   teamSpaces: TeamSpaces;
   delegations: DelegatedWork;
+  /** Persisted execution contracts of projects and tasks (src/execution-contract.ts). */
+  contracts: ContractService;
+  /** The one readiness evaluator against the actual launch plan (src/launch-readiness.ts). */
+  launchReadiness: LaunchReadiness;
+  /** Project-folder setup state and the action that applies approved grants (src/project-setup.ts). */
+  setups: ProjectSetupService;
+  /**
+   * Whether a provider runtime is installed and signed in, as the app currently knows it. Wired by
+   * the RunManager; the setup and notice views report it, the launch has its own path for it.
+   */
+  runtimeReadiness?: (environment: string) => Readiness | undefined;
+  /** The platform provider processes run on (the RunManager's; fixtures may simulate another). */
+  hostPlatform?: () => NodeJS.Platform;
   constructor(store: Store, skills: SkillCatalog) {
     this.store = store;
     this.approvals = new Approvals(store);
@@ -106,6 +129,9 @@ export class TeamService {
     this.pipelines = new PipelineService(this);
     this.teamSpaces = new TeamSpaces(this);
     this.delegations = new DelegatedWork(this);
+    this.contracts = new ContractService(this);
+    this.launchReadiness = new LaunchReadiness(this);
+    this.setups = new ProjectSetupService(this);
   }
   /**
    * Create (no `id`) or replace an agent. `teamId` is accepted next to the agent fields: a new
@@ -803,7 +829,7 @@ export class TeamService {
               (wait) =>
                 wait.kind === "task" &&
                 wait.targetId === id &&
-                wait.reason === "sandbox-unavailable" &&
+                isCapabilityWait(wait) &&
                 wait.attempt === this.recovery.state(id).attempt,
             )
         : undefined;
@@ -816,10 +842,16 @@ export class TeamService {
       ...(runtimeWait
         ? {
             runtimeBlocker: {
-              code: "sandbox_unavailable" as const,
+              code: blockerCode(runtimeWait),
               message:
                 runtimeWait.message ??
                 "The required provider sandbox is unavailable.",
+              ...(runtimeWait.issues?.length
+                ? {
+                    issues: runtimeWait.issues,
+                    action: runtimeWait.issues[0].fix,
+                  }
+                : {}),
             },
           }
         : {}),
@@ -859,7 +891,15 @@ export class TeamService {
                           : null,
     };
   }
-  transitionTask(id: string, input: unknown) {
+  /**
+   * `context.launchManifest`: the redacted record of what the run was given, emitted beside the
+   * `task.settings` event in the same transaction (src/capability-context.ts).
+   */
+  transitionTask(
+    id: string,
+    input: unknown,
+    context: { launchManifest?: unknown } = {},
+  ) {
     const data = z
       .object({
         status: z.enum([
@@ -922,7 +962,8 @@ export class TeamService {
     return this.store.transaction(() => {
       const task = this.store.get<Task>("task", id);
       const allowed: Record<Task["status"], Task["status"][]> = {
-        queued: ["running", "cancelled"],
+        // queued -> blocked: stopped by the readiness gate before it ever started (src/launch-readiness.ts)
+        queued: ["running", "cancelled", "blocked"],
         running: ["completed", "failed", "cancelled", "interrupted", "blocked"],
         failed: ["queued", "cancelled"],
         interrupted: ["queued", "cancelled", "blocked"],
@@ -998,6 +1039,12 @@ export class TeamService {
             active: w.active,
           })),
         });
+        if (context.launchManifest)
+          this.store.emit(
+            "task.launch_manifest",
+            task.id,
+            context.launchManifest,
+          );
       }
       if (data.status === "completed") {
         assert(
@@ -1007,6 +1054,9 @@ export class TeamService {
           400,
         );
         this.limits.assertCompletion(task, data.result);
+        // A required check a model invented stays a slot until the user confirms it: the
+        // task cannot complete around it (src/execution-contract.ts).
+        this.contracts.assertCompletable(task);
       }
       const from = task.status;
       task.status = data.status;
@@ -1047,7 +1097,11 @@ export class TeamService {
    * It has no workspace lease: the session lock is the manager's lock, while delegated workers
    * acquire their own declared resources through the normal scheduler path.
    */
-  startConversationTask(id: string, sessionId: string) {
+  startConversationTask(
+    id: string,
+    sessionId: string,
+    context: { launchManifest?: unknown } = {},
+  ) {
     const task = this.store.get<Task>("task", id),
       session = this.store.get<Session>("session", sessionId);
     assert(
@@ -1120,6 +1174,8 @@ export class TeamService {
           active: w.active,
         })),
       });
+      if (context.launchManifest)
+        this.store.emit("task.launch_manifest", id, context.launchManifest);
       this.limits.onTransition(current);
       this.recovery.onTransition(current, "queued");
       this.handoffs.onTransition(current);
@@ -1365,6 +1421,46 @@ export class TeamService {
       409,
     );
   }
+  /**
+   * The text a run's instructions get after the agent's own: the simple-assignment notes, the
+   * direct file-assignment note, the runtime guidance and the generated capability line. One
+   * function for launch and for the instructions preview, so they cannot drift apart.
+   */
+  instructionTail(agent: Agent, task: Task | undefined, facts: PlanFacts) {
+    const directAssignment = task
+      ? this.store.get<Workflow & { setup?: { executionMode?: string } }>(
+          "workflow",
+          task.workflowId,
+        ).setup?.executionMode === "file-only"
+      : false;
+    const assignedFiles = [
+      ...new Set(
+        (task?.completionChecks ?? []).flatMap((check) =>
+          check.type === "artifact-exists" || check.type === "artifact-matches"
+            ? [check.path]
+            : [],
+        ),
+      ),
+    ];
+    const explicitFileWork =
+      directAssignment &&
+      assignedFiles.length > 0 &&
+      facts.tools.includes("read") &&
+      (facts.tools.includes("write") || facts.tools.includes("edit")) &&
+      (facts.workspaces ?? []).some((folder) => folder.access === "write");
+    return (
+      (facts.executionMode === "file-only"
+        ? "\n\nThis is a simple file-and-reply task. Terminal tools are unavailable for this assignment. Use only your existing file tools and permissions; do not create a pipeline or extra work unless explicitly requested."
+        : "") +
+      (explicitFileWork
+        ? `\n\nCURRENT USER ASSIGNMENT: The user assigned you this file task directly. Complete your own declared deliverables: ${JSON.stringify(assignedFiles)}. For this assignment these file deliverables take precedence over a general planning-only or review-only role and its usual 'never modify files' guidance. Use the actual file tools and writable task folders already granted to this run; this instruction adds no tools or access. Do not delegate your own file to another agent. Your normal role and saved instructions remain unchanged for other work.`
+        : "") +
+      "\n\n" +
+      runtimeGuidance +
+      "\n\n" +
+      capabilityContext(this, agent, facts).line
+    );
+  }
   /** `taskId`: the task about to run; its declared paths select the working folder. */
   async launchPlan(agentId: string, taskId?: string) {
     filesystemPolicy(this.store).assertConfinedExecution();
@@ -1433,40 +1529,32 @@ export class TeamService {
     });
     const decisions = decideSkills(entries, undefined);
     const filesystem = await taskFilesystem(this.store, agent, taskId);
-    const directAssignment = task
-      ? this.store.get<Workflow & { setup?: { executionMode?: string } }>(
-          "workflow",
-          task.workflowId,
-        ).setup?.executionMode === "file-only"
-      : false;
-    const fileOutputs = (task?.completionChecks ?? []).flatMap((check) =>
-      check.type === "artifact-exists" || check.type === "artifact-matches"
-        ? [check.path]
-        : [],
-    );
-    const assignedFiles = [...new Set(fileOutputs)];
-    const explicitFileWork =
-      directAssignment &&
-      assignedFiles.length > 0 &&
-      tools.includes("read") &&
-      (tools.includes("write") || tools.includes("edit")) &&
-      (filesystem?.workspaces ?? agent.workspaces).some(
-        (folder) => folder.access === "write",
-      );
+    const fsWorkspaces = filesystem?.workspaces ?? agent.workspaces;
+    const fsCwd =
+      filesystem?.cwd ?? agent.workspaces.find((w) => w.active)?.path ?? null;
+    // What this run can really do, stated to the model from the same facts the command is built
+    // from (src/capability-context.ts); leaf workers learn that they have no teammates.
+    const facts: PlanFacts = {
+      environment: agent.environment,
+      connection,
+      cwd: fsCwd,
+      taskScoped: filesystem !== null,
+      executionMode,
+      tools,
+      providerRoots: fsWorkspaces.map((workspace) => ({
+        path: workspace.path,
+        access: workspace.access,
+        active: workspace.active,
+        restricted: !!workspace.explicitOnly || !!workspace.rules?.length,
+      })),
+      workspaces: fsWorkspaces,
+    };
     const runAgent = {
       ...agent,
       tools,
-      workspaces: filesystem?.workspaces ?? agent.workspaces,
+      workspaces: fsWorkspaces,
       instructions:
-        agent.instructions +
-        (executionMode === "file-only"
-          ? "\n\nThis is a simple file-and-reply task. Terminal tools are unavailable for this assignment. Use only your existing file tools and permissions; do not create a pipeline or extra work unless explicitly requested."
-          : "") +
-        (explicitFileWork
-          ? `\n\nCURRENT USER ASSIGNMENT: The user assigned you this file task directly. Complete your own declared deliverables: ${JSON.stringify(assignedFiles)}. For this assignment these file deliverables take precedence over a general planning-only or review-only role and its usual 'never modify files' guidance. Use the actual file tools and writable task folders already granted to this run; this instruction adds no tools or access. Do not delegate your own file to another agent. Your normal role and saved instructions remain unchanged for other work.`
-          : "") +
-        "\n\n" +
-        runtimeGuidance,
+        agent.instructions + this.instructionTail(agent, task, facts),
     };
     const sections = composeSections(runAgent, entries, decisions, adapter);
     const providerRoots = runAgent.workspaces.map((workspace) => ({
@@ -1475,8 +1563,7 @@ export class TeamService {
       active: workspace.active,
       restricted: !!workspace.explicitOnly || !!workspace.rules?.length,
     }));
-    const cwd =
-      filesystem?.cwd ?? agent.workspaces.find((w) => w.active)?.path ?? null;
+    const cwd = fsCwd;
     if (cwd) {
       const canonical = await realpath(cwd);
       assert(
