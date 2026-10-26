@@ -1,4 +1,17 @@
-# AgentTeam 0.4.1
+# AgentTeam 0.5.0
+
+Assign simple file tasks directly to the team, see concrete setup blockers, and review changes reliably in large folders.
+
+- **Simple tasks:** choose existing agents and a folder, then start independent assignments. The Report for duty preset declares and verifies one text file per agent. Assign to team carries a chat draft into the same task form; Team Assistant proposals can start those assignments too.
+- **Runtime setup:** detected installations, sign-in state, model choices, task folders and supported file tools are checked before execution. Setup failures keep the saved assignment available for repair and retry.
+- **Delegation:** parent agents wait for required children, reviews and current file evidence before completing. Nested failures name the actual worker and cause, and ordinary waits are distinct from interrupted work.
+- **Diff:** shallow files stay visible beside large child projects, external edits refresh automatically, and files missing from an incomplete historical baseline are labelled Not compared with a neutral preview.
+- **Activity:** one elapsed activity indicator replaces invented percentages and finish-time estimates. Empty projects say No tasks assigned.
+- **Polish:** current-project context follows task selection, effective-instruction previews match runtime guidance, and Sublime settings paths follow the selected platform.
+
+Verification before release: macOS backend tests **588 passed, 1 opt-in skip**; desktop workflows **81/81 passed**. Live provider compatibility and the Windows installed-app Diff workflow were not revalidated. Installers are unsigned unless signing credentials are configured; native Windows filesystem isolation remains unavailable on unsupported hosts.
+
+## Earlier release notes: 0.4.1
 
 Complete installer releases for macOS, Windows, and Linux. Installers are staged in a draft release, checked for completeness, and published together with SHA256 checksums. Preflight waits for every installer build and checks individual steps before allowing a release.
 

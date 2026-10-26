@@ -1,5 +1,9 @@
 # AgentTeam continuation handoff
 
+## Version 0.5.0 release preparation (October 26, 2026)
+
+Sean authorized finishing, merging and deploying the accumulated `fix/team-task-execution-and-diff` branch. Version 0.5.0 includes simple assignments, readiness and delegation repairs, incomplete-baseline Diff handling and watcher fixes. macOS desktop preflight [40295050145](https://github.com/chere005/AgentTeam/actions/runs/40295050145) passed all 81 workflows; the complete backend suite passed 588 with one opt-in Wolfram skip. Release packaging is being checked separately on every installer target before publication because `scripts/preflight.sh` currently runs Desktop checks only. The Mac app is closed and its profile contains no running or queued tasks or pending effects; it has 21 completed tasks and one failed task. The Windows installed-app check in the historical handoff remains unverified from this Mac.
+
 ## Branch handoff and Diff visibility (October 26, 2026)
 
 User requested a handoff file and a branch push. See **[HANDOFF.md](../HANDOFF.md)** for the complete restart point, installation state, known failures and next steps. Work branch: `fix/team-task-execution-and-diff`, based on `694cace`. This checkpoint preserves the accumulated source/UI/test/docs changes; it is not a release or a merge to main.
