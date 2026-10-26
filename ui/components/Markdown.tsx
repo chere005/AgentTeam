@@ -1,4 +1,10 @@
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
+import { ChevronRight } from "lucide-react";
+
+function keepDisclosureSpace(event: KeyboardEvent<HTMLElement>) {
+  // The canvas listens for Space on window; preserve native summary activation.
+  if (event.key === " ") event.stopPropagation();
+}
 // Small, safe Markdown renderer: builds React elements only (no HTML injection, no links
 // that navigate, no images). Supports headings, lists, fenced/inline code, bold, italics.
 function inline(text: string, key: string): ReactNode[] {
@@ -112,8 +118,13 @@ export function MessageMarkdown({
     preview.length > 180 ? preview.slice(0, 177) + "…" : preview;
   return (
     <details className="message-disclosure">
-      <summary>
-        <span>Long reply</span>
+      <summary onKeyDown={keepDisclosureSpace}>
+        <ChevronRight
+          className="message-disclosure-chevron"
+          size={14}
+          aria-hidden="true"
+        />
+        <span className="message-disclosure-label">Long reply</span>
         <span className="message-disclosure-preview">{description}</span>
       </summary>
       <Markdown text={text} />
