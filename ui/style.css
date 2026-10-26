@@ -126,6 +126,16 @@ label.inline {
 select {
   cursor: pointer;
 }
+/* Unavailable choices (e.g. models the installation does not offer) stay listed but grayed out. */
+select option:disabled {
+  color: color-mix(in srgb, var(--text) 45%, var(--surface-1));
+}
+.model-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
 h1,
 h2,
 h3,
@@ -429,6 +439,12 @@ summary:focus-visible {
 }
 .chat-mode .quiet {
   font-size: 10px;
+}
+/* The chat's single scroll region (team assignments + messages) between header and composer. */
+.chat-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
 }
 .messages {
   flex: 1;

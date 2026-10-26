@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
 import type { Agent, Snapshot } from "../api";
 import { api } from "../api";
-import { invocationSummary, waitReasonText } from "../../src/invocation-view";
+import {
+  invocationSummary,
+  invocationTaskState,
+  sandboxUnavailable,
+  waitReasonText,
+} from "../../src/invocation-view";
 import { usePersistedDetails } from "./persisted-details";
 import { MessageMarkdown } from "./Markdown";
 import { AgentAvatar } from "./AgentAvatar";
@@ -213,10 +218,12 @@ export function InvocationPanel({
   agent,
   limit,
   data,
+  openRecovery,
 }: {
   agent: Agent;
   limit: number | null;
   data: Snapshot;
+  openRecovery?: () => void;
 }) {
   const names = Object.fromEntries(
     data.agents.map((a) => [a.id, agentDisplayName(a)]),
@@ -311,28 +318,44 @@ export function InvocationPanel({
           <ul aria-label="Waiting invocations">
             {summary.waiting.map((t) => (
               <li key={t.id}>
-                Waiting · {t.agentName}: {t.title} (
-                {waitReasonText[t.reason] ?? t.reason})
+                {t.reason === "dependency-failed" ? "Blocked" : "Waiting"} ·{" "}
+                {t.agentName}: {t.title} (
+                {t.detail ?? waitReasonText[t.reason] ?? t.reason})
               </li>
             ))}
           </ul>
         )}
         {related.map((record) => {
           const task = byTask.get(record.id);
-          const noWork = explicitlyReportsNoWork(task?.result);
+          const state = task ? invocationTaskState(task, tasks, names) : null;
+          const noWork =
+            state?.status !== "blocked" &&
+            explicitlyReportsNoWork(task?.result);
           const displayedStatus = noWork
             ? "failed"
-            : (task?.status ?? "queued");
+            : (state?.status ?? "queued");
           return (
-            <article className="invocation-exchange" key={record.id}>
+            <article
+              className="invocation-exchange"
+              key={record.id}
+              data-task-id={record.id}
+            >
               <b>
                 {names[record.fromAgentId] ?? "Agent"} →{" "}
                 {names[record.toAgentId] ?? "Teammate"}: {record.request.title}
               </b>
               <small className={`invocation-status ${displayedStatus}`}>
-                {noWork ? "didn’t complete" : displayedStatus}
+                {noWork ? "didn’t complete" : (state?.label ?? displayedStatus)}
               </small>
-              {task?.result && (
+              {state?.detail && (
+                <p className="notice invocation-waiting">{state.detail}</p>
+              )}
+              {state?.recovery && openRecovery && (
+                <button className="secondary" onClick={openRecovery}>
+                  Open Recovery
+                </button>
+              )}
+              {task?.result && !sandboxUnavailable(task.result) && (
                 <div className="invocation-result">
                   <b>
                     {noWork
@@ -390,10 +413,17 @@ export function InvocationPanel({
         {assigned
           .filter((task) => !represented.has(task.id))
           .map((task) => {
-            const noWork = explicitlyReportsNoWork(task.result);
-            const displayedStatus = noWork ? "failed" : task.status;
+            const state = invocationTaskState(task, tasks, names);
+            const noWork =
+              state.status !== "blocked" &&
+              explicitlyReportsNoWork(task.result);
+            const displayedStatus = noWork ? "failed" : state.status;
             return (
-              <article className="invocation-exchange" key={task.id}>
+              <article
+                className="invocation-exchange"
+                key={task.id}
+                data-task-id={task.id}
+              >
                 <b>
                   {task.invokedBy
                     ? `${names[task.invokedBy] ?? "Teammate"} → ${agentDisplayName(agent)}`
@@ -401,9 +431,17 @@ export function InvocationPanel({
                   : {task.title}
                 </b>
                 <small className={`invocation-status ${displayedStatus}`}>
-                  {noWork ? "didn’t complete" : displayedStatus}
+                  {noWork ? "didn’t complete" : state.label}
                 </small>
-                {task.result && (
+                {state.detail && (
+                  <p className="notice invocation-waiting">{state.detail}</p>
+                )}
+                {state.recovery && openRecovery && (
+                  <button className="secondary" onClick={openRecovery}>
+                    Open Recovery
+                  </button>
+                )}
+                {task.result && !sandboxUnavailable(task.result) && (
                   <div className="invocation-result">
                     <b>
                       {noWork

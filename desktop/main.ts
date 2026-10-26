@@ -14,6 +14,7 @@ import { randomBytes } from "node:crypto";
 import { filesystemPolicy } from "../src/filesystem-policy.ts";
 import { execFile } from "node:child_process";
 import { RuntimeDiscovery } from "../src/discovery.ts";
+import { ReadinessService } from "../src/readiness.ts";
 import { Store } from "../src/store.ts";
 import { SkillCatalog } from "../src/skills.ts";
 import { TeamService } from "../src/service.ts";
@@ -77,17 +78,21 @@ async function start() {
   scheduler.start();
   const discovery = new RuntimeDiscovery(store);
   runs.readiness = (environment) => discovery.readiness(environment);
-  if (process.env.AGENTTEAM_TEST !== "1")
-    void discovery
-      .refresh()
-      .then(() => store.emit("runtimes.discovered", "runtimes"))
-      .catch((error) =>
-        store.emit("runtimes.discovery_blocked", "runtimes", {
-          message: String(error?.message ?? error),
-        }),
-      );
+  // Automatic rescans (focus, periodic while blocked, sign-in poll), model checks and re-queues
+  // (src/readiness.ts). Test mode never scans on its own unless a spec sets AGENTTEAM_AUTO_RESCAN=1.
+  const testMode = process.env.AGENTTEAM_TEST === "1";
+  const readiness = new ReadinessService({
+    service,
+    discovery,
+    runs,
+    auto: !testMode || process.env.AGENTTEAM_AUTO_RESCAN === "1",
+  }).start();
+  if (!testMode)
+    void readiness.rescan({ always: true }).catch(() => {
+      /* reported as runtimes.discovery_blocked */
+    });
   const token = randomBytes(32).toString("hex"),
-    server = createApi(service, token, runs, discovery);
+    server = createApi(service, token, runs, discovery, readiness);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (!address || typeof address === "string")
@@ -128,7 +133,8 @@ async function start() {
   });
   // Terminal tab (src/terminal.ts): the user's own login shell in a PTY, outside AgentTeam's
   // agent locks. The renderer names only a starting folder (home or an attached folder), never
-  // an executable; every PTY ends when the window closes or the app quits.
+  // an executable (Sign in types the backend's command line, src/readiness.ts, as keystrokes);
+  // every PTY ends when the window closes or the app quits.
   let spawnPty: SpawnPty | null = null;
   const loadPty = (): SpawnPty => {
     if (spawnPty) return spawnPty;
@@ -389,6 +395,8 @@ async function start() {
       return { action: "deny" };
     });
     win.webContents.on("will-navigate", (event) => event.preventDefault());
+    // Coming back to the app (e.g. after installing or signing in elsewhere) rescans when needed.
+    win.on("focus", () => readiness.windowFocused());
     // No orphaned shells: closing the window (or a renderer reload) ends its terminals.
     win.on("closed", () => terminals.killAll());
     win.webContents.on("did-start-navigation", (details) => {
@@ -482,6 +490,7 @@ async function start() {
     closing = true;
     event.preventDefault();
     terminals.killAll();
+    readiness.stop();
     scheduler.stop();
     runs.close();
     void shutdownDevServers();

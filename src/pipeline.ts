@@ -197,6 +197,8 @@ export type Preflight = {
   checks: PreflightCheck[];
   issues: string[];
   warnings: string[];
+  /** "auto" when Resume ran it (src/readiness.ts resumeProject); absent on older records. */
+  trigger?: "auto" | "manual";
 };
 
 const DATA_NOTE =
@@ -1382,9 +1384,13 @@ export class PipelineService {
     const bad = (msg: string) => {
       throw new AppError(409, "pipeline_unverified", msg);
     };
-    if (!p?.verified)
+    if (!p)
       bad(
         "Prepare and verify the pipeline (provider availability, models and parallel resource access) before resuming it",
+      );
+    if (!p!.verified)
+      bad(
+        `The pipeline checks did not pass: ${p!.issues.join("; ") || "not verified"}`,
       );
     if (p!.fingerprint !== this.fingerprint(wf.id))
       bad(
@@ -1581,7 +1587,11 @@ export class PipelineService {
    * real parallel resource access (guided assignment of disjoint paths/worktrees, lease check) and
    * persist the result on the workflow. The workflow can only resume while this verification holds.
    */
-  async prepare(workflowId: string, runtimes: DetectedRuntime[] | undefined) {
+  async prepare(
+    workflowId: string,
+    runtimes: DetectedRuntime[] | undefined,
+    trigger: "auto" | "manual" = "manual",
+  ) {
     const rec = this.record(workflowId);
     const checks: PreflightCheck[] = [];
     const warnings: string[] = [];
@@ -1591,7 +1601,12 @@ export class PipelineService {
         ok: !issues.length,
         detail: issues.length ? issues.join("; ") : ok,
       });
-    const models = verifySampleModels(this.service, workflowId, runtimes);
+    const models = verifySampleModels(
+      this.service,
+      workflowId,
+      runtimes,
+      trigger,
+    );
     add(
       "Provider availability and model mapping",
       models.issues,
@@ -1698,7 +1713,12 @@ export class PipelineService {
         "Not attempted until the checks above pass (no worktree is created before then)",
       );
     // The integration step adds the integrator as a participating agent: verify it too.
-    const modelsAfter = verifySampleModels(this.service, workflowId, runtimes);
+    const modelsAfter = verifySampleModels(
+      this.service,
+      workflowId,
+      runtimes,
+      trigger,
+    );
     if (modelsAfter.issues.join("|") !== models.issues.join("|")) {
       checks[0] = {
         name: checks[0].name,
@@ -1725,6 +1745,7 @@ export class PipelineService {
       checks,
       issues,
       warnings,
+      trigger,
     };
     this.store.transaction(() => {
       const wf = this.store.get<Workflow & { setup: WorkflowSetup }>(

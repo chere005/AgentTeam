@@ -43,11 +43,13 @@ export function ProposalCards({
   events,
   send,
   openChanges,
+  openTasks,
 }: {
   messageId: string;
   events: TeamEvent[];
   send: (text: string) => Promise<void>;
   openChanges?: () => void;
+  openTasks?: (workflowId: string) => void;
 }) {
   const [result, setResult] = useState<Extracted | null>(null);
   const [error, setError] = useState("");
@@ -79,6 +81,7 @@ export function ProposalCards({
           id={p.id}
           version={version}
           openChanges={openChanges}
+          openTasks={openTasks}
         />
       ))}
       {result.rejected.map((r) => (
@@ -114,10 +117,12 @@ function ProposalCard({
   id,
   version,
   openChanges,
+  openTasks,
 }: {
   id: string;
   version: number;
   openChanges?: () => void;
+  openTasks?: (workflowId: string) => void;
 }) {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState("");
@@ -151,6 +156,10 @@ function ProposalCard({
       </div>
     ) : null;
   const p = detail.proposal;
+  const taskRun = p.ops?.length === 1 && p.ops[0].op === "project.start";
+  const retryStart =
+    taskRun && p.status === "applied" && p.execution?.state === "blocked";
+  const workflowId = taskRun ? p.result?.[0]?.id : undefined;
   const open = p.status === "pending" || p.status === "approved";
   const approveAndApply = () =>
     run(async () => {
@@ -165,24 +174,49 @@ function ProposalCard({
       aria-label={"Proposed changes: " + p.title}
     >
       <div className="proposal-card-head">
-        <span className="eyebrow">PROPOSED CHANGES</span>
-        <span className="badge" data-testid="proposal-status">
-          {p.status}
+        <span className="eyebrow">
+          {taskRun
+            ? open
+              ? "Task ready to run"
+              : "Task run"
+            : "PROPOSED CHANGES"}
         </span>
-        {p.significant && open && (
+        <span className="badge" data-testid="proposal-status">
+          {taskRun && p.execution
+            ? p.execution.state === "blocked"
+              ? "Setup needed"
+              : "Tasks submitted"
+            : p.status}
+        </span>
+        {p.significant && open && !taskRun && (
           <span className="badge limit-stopped">needs your approval</span>
         )}
       </div>
       <h4>{p.title}</h4>
       {p.rationale && <p className="hint">{p.rationale}</p>}
-      {p.reasons.length > 0 && open && (
+      {p.reasons.length > 0 && open && !taskRun && (
         <ul className="reasons" data-testid="proposal-reasons">
           {p.reasons.map((r) => (
             <li key={r}>{r}</li>
           ))}
         </ul>
       )}
-      {p.status !== "applied" && <ProposalDiff diff={detail.diff} />}
+      {taskRun && (
+        <p className="hint">
+          {p.ops![0].tasks?.length} independent tasks. Files go in{" "}
+          <strong>{p.ops![0].workspace}</strong>.
+          {open && " Start once; the agents do the work automatically."}
+        </p>
+      )}
+      {p.status !== "applied" &&
+        (taskRun ? (
+          <details>
+            <summary>Task details</summary>
+            <ProposalDiff diff={detail.diff} />
+          </details>
+        ) : (
+          <ProposalDiff diff={detail.diff} />
+        ))}
       {p.status === "applied" && (
         <ul className="proposal-applied" data-testid="proposal-applied">
           {(p.summary?.length
@@ -198,24 +232,41 @@ function ProposalCard({
           {p.statusReason}
         </div>
       )}
+      {p.execution?.state === "blocked" && (
+        <p role="status" className="limit-error">
+          {p.execution.reason}
+        </p>
+      )}
       {error && (
         <div role="alert" className="limit-error">
           {error}
         </div>
       )}
       <div className="row">
-        {open && (
+        {(open || retryStart) && (
           <button
             className="primary"
-            disabled={busy || (!detail.canApply && !detail.needsApproval)}
+            disabled={
+              busy || (!retryStart && !detail.canApply && !detail.needsApproval)
+            }
             title={
-              detail.needsApproval
-                ? "Approves the significant changes listed above, then applies them through the same validation as the forms"
-                : "Applies through the same validation as the forms"
+              taskRun
+                ? "Creates the listed tasks and starts the agents after setup checks pass"
+                : detail.needsApproval
+                  ? "Approves the significant changes listed above, then applies them through the same validation as the forms"
+                  : "Applies through the same validation as the forms"
             }
             onClick={() => void approveAndApply()}
           >
-            Approve &amp; apply
+            {busy
+              ? taskRun
+                ? "Starting…"
+                : "Applying…"
+              : taskRun
+                ? retryStart
+                  ? "Try starting saved tasks"
+                  : "Start tasks"
+                : "Approve & apply"}
           </button>
         )}
         {open && (
@@ -230,7 +281,12 @@ function ProposalCard({
             Reject
           </button>
         )}
-        {openChanges && (
+        {workflowId && openTasks && (
+          <button className="primary" onClick={() => openTasks(workflowId)}>
+            View tasks
+          </button>
+        )}
+        {openChanges && !taskRun && (
           <button
             className="link"
             onClick={() => {

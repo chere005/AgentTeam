@@ -37,6 +37,11 @@ export type ModelCheck = {
     model: string;
     modelName: string | null;
   }[];
+  /**
+   * What ran the check: "auto" after a runtime scan, an agent change or a resume
+   * (src/readiness.ts), "manual" for Check again / Prepare and verify. Absent on older records.
+   */
+  trigger?: "auto" | "manual";
 };
 /** Stored (loosely) on the workflow document, like `coordination`. */
 /** What a non-lead agent's model must identify as (e.g. family "sonnet", version "5.5"). */
@@ -61,6 +66,8 @@ export type WorkflowSetup = {
   handoffNotes?: boolean;
   /** Project workspace attached to the team's agents when the project was assigned. */
   workspace?: string;
+  /** Simple tasks use existing file tools and replies, with no terminal access. */
+  executionMode?: "file-only";
   /** Folder attachments this project added (src/project-lifecycle.ts detaches only these). */
   attachments?: ProjectAttachment[];
   /** The user declined the offer to detach this project's folders (never asked again). */
@@ -472,6 +479,7 @@ export function verifySampleModels(
   service: TeamService,
   workflowId: string,
   runtimes: DetectedRuntime[] | undefined,
+  trigger: "auto" | "manual" = "manual",
 ): ModelCheck {
   const store = service.store;
   const wf = store.get<Workflow & { setup?: WorkflowSetup }>(
@@ -484,7 +492,9 @@ export function verifySampleModels(
     "Workflow has no sample setup to verify",
     400,
   );
-  const ids = new Set<string>([wf.ownerId]);
+  const ids = new Set<string>(
+    wf.setup.executionMode === "file-only" ? [] : [wf.ownerId],
+  );
   for (const t of store.list<Task>("task"))
     if (t.workflowId === workflowId) ids.add(t.agentId);
   const { issues, warnings, resolved } = assessModels(
@@ -502,11 +512,13 @@ export function verifySampleModels(
     issues,
     warnings,
     resolved,
+    trigger,
   };
   store.transaction(() => {
     store.put("workflow", { ...wf, setup: { ...wf.setup!, modelCheck } });
     store.emit("workflow.models_verified", wf.id, {
       verified: modelCheck.verified,
+      trigger,
     });
   });
   return modelCheck;

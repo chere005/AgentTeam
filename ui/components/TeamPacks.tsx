@@ -5,6 +5,7 @@ import { teamKey, MAIN_TEAM_ID } from "../team-view";
 import { createGroup, sanitizeGroups } from "../groups";
 import { Modal, applyLayout, nextOffset, type Point } from "./Teams";
 import { requestArrange } from "../arrange-request";
+import { ModelPicker, useRuntimeList } from "./ModelPicker";
 import "./team-packs.css";
 
 type PackSummary =
@@ -370,6 +371,7 @@ function PackDialog({
     [preview, setPreview] = useState<PackPreview | null>(null),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  const runtimes = useRuntimeList();
   const body = () => ({
     ...request,
     workspaces: Object.fromEntries(
@@ -545,8 +547,9 @@ function PackDialog({
           </div>
           <h3>Models</h3>
           <p className="hint">
-            The pack pins no model. Leave a replacement empty to keep the
-            harness default.
+            The pack pins no model. Keep the template model to use the harness
+            default, or pick a replacement; grayed-out models are not available
+            in the detected installation.
           </p>
           <div className="team-slots">
             {pairs.map((pair) => (
@@ -562,13 +565,13 @@ function PackDialog({
                       : ""}
                   </small>
                 </div>
-                <input
-                  aria-label={`Replacement model for ${pair}`}
-                  placeholder="Keep as is"
+                <ModelPicker
+                  label={`Replacement model for ${pair}`}
+                  environment={pair.split(":")[0]}
+                  runtimes={runtimes}
+                  keepLabel={`Keep template model (${pair.slice(pair.indexOf(":") + 1)})`}
                   value={models[pair] ?? ""}
-                  onChange={(e) =>
-                    setModels({ ...models, [pair]: e.target.value })
-                  }
+                  onChange={(m) => setModels({ ...models, [pair]: m })}
                 />
               </div>
             ))}

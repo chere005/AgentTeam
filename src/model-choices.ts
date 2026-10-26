@@ -57,3 +57,85 @@ export function resolveModelState(
     effort && !efforts.includes(effort) && status !== "pending" ? effort : null;
   return { status, options, efforts, warning, unsupportedEffort };
 }
+
+/** How a dropdown entry relates to the selected installation. */
+export type ModelAvailability =
+  | "available" // advertised (or the provider default)
+  | "unavailable" // the installation lists models authoritatively and this is not one
+  | "unverified" // only aliases are listed, so this explicit ID cannot be checked
+  | "unknown-installation"; // the runtime is not installed or detected
+export type ModelDropdownOption = ModelOption & {
+  availability: ModelAvailability;
+  /** Short label suffix for anything not plainly available. */
+  note?: string;
+};
+const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+/**
+ * Well-known model IDs offered per environment besides what the installation advertises, so the
+ * IDs the bundled teams and pipelines use are always pickable. Codex advertises its models
+ * authoritatively and Wolfram lists its evaluators, so neither gets extra entries.
+ */
+export const WELL_KNOWN_MODELS: Record<string, ModelOption[]> = {
+  claude: [
+    { id: "default", name: "Claude recommended", efforts: [] },
+    { id: "sonnet", name: "Sonnet", efforts: CLAUDE_EFFORTS },
+    { id: "opus", name: "Opus", efforts: CLAUDE_EFFORTS },
+    { id: "haiku", name: "Haiku", efforts: CLAUDE_EFFORTS },
+    { id: "claude-opus-5-5", name: "Claude Opus 5.5", efforts: [] },
+    { id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5", efforts: [] },
+    { id: "claude-fable-5-1", name: "Claude Fable 5.1", efforts: [] },
+  ],
+};
+const NOTES: Record<ModelAvailability, string | undefined> = {
+  available: undefined,
+  unavailable: "unavailable in this installation",
+  unverified: "not verified",
+  "unknown-installation": "installation not detected",
+};
+/** Whether a dropdown entry may be picked (unavailable ones are shown grayed out). */
+export const isSelectableModel = (o: { availability: ModelAvailability }) =>
+  o.availability === "available" || o.availability === "unverified";
+/** Dropdown label: the name plus the availability note, if any. */
+export const modelOptionLabel = (o: ModelDropdownOption) =>
+  o.note ? `${o.name} (${o.note})` : o.name;
+/**
+ * The full model dropdown for an environment: the installation's advertised models, then the
+ * well-known IDs it does not advertise, then the saved model if neither lists it. Nothing is
+ * dropped or substituted; entries that cannot be used are marked so the UI can gray them out.
+ * While the installation list is loading (`runtime` undefined) nothing is marked.
+ */
+export function modelOptions(
+  runtime: RuntimeModels | undefined,
+  savedModel?: string | null,
+  environment = runtime?.id,
+): ModelDropdownOption[] {
+  const advertised = runtime?.models ?? [];
+  const seen = new Set(advertised.map((m) => m.id));
+  const extra = (WELL_KNOWN_MODELS[environment ?? ""] ?? []).filter(
+    (m) => !seen.has(m.id),
+  );
+  if (!runtime && !extra.length)
+    extra.push({ id: "default", name: "Provider default", efforts: [] });
+  for (const m of extra) seen.add(m.id);
+  // Kept verbatim (not trimmed) so it matches the controlled select value.
+  const saved = savedModel?.trim() ? savedModel : "";
+  if (saved && !seen.has(saved))
+    extra.push({ id: saved, name: saved, efforts: [] });
+  const availability = (id: string, listed: boolean): ModelAvailability => {
+    if (!runtime)
+      return listed || id === "default" ? "available" : "unverified";
+    if (!runtime.installed)
+      return id === "default" ? "available" : "unknown-installation";
+    if (listed) return "available";
+    return aliasOnly(runtime.modelSource) ? "unverified" : "unavailable";
+  };
+  const entry = (m: ModelOption, listed: boolean): ModelDropdownOption => {
+    const a = availability(m.id, listed);
+    const note = runtime ? NOTES[a] : undefined;
+    return { ...m, availability: a, ...(note ? { note } : {}) };
+  };
+  return [
+    ...advertised.map((m) => entry(m, true)),
+    ...extra.map((m) => entry(m, false)),
+  ];
+}

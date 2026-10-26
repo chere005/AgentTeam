@@ -252,6 +252,7 @@ test("example teams: listed with shape and org preview, inserted as teams (no pr
 
         await page.locator(".topbar-assign").click();
         const form = page.getByRole("form", { name: "Assign project" });
+        await form.getByLabel("Work type").selectOption("project");
         await expect(form.getByTestId("assign-project-type")).toContainText(
           "existing 5 agents",
         );
@@ -345,6 +346,7 @@ test("example teams: listed with shape and org preview, inserted as teams (no pr
       .getByRole("button", { name: "Assign a project to Product feature team" })
       .click();
     const form = page.getByRole("form", { name: "Assign project" });
+    await form.getByLabel("Work type").selectOption("project");
     await expect(form.getByTestId("assign-project-type")).toContainText(
       "existing 7 agents",
     );
@@ -368,9 +370,10 @@ test("example teams: listed with shape and org preview, inserted as teams (no pr
     await page.screenshot({ path: join(shots, "projects-product.png") });
     // A second project for the same team: the team persists, projects accumulate.
     await page
-      .getByRole("button", { name: "Assign project", exact: true })
+      .getByRole("button", { name: "Run a task", exact: true })
       .first()
       .click();
+    await form.getByLabel("Work type").selectOption("project");
     await form
       .getByLabel("Project goal")
       .fill("Add CSV export to the reports page");

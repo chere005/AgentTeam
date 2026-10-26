@@ -56,6 +56,9 @@ import {
 } from "./model.ts";
 import { decideRouting } from "./routing-decision.ts";
 import { ensureWorkspaceBaseline } from "./workspace-changes.ts";
+import { DelegatedWork } from "./delegated-work.ts";
+import type { RuntimeWait } from "./runtime-waits.ts";
+import { simpleTaskSupport } from "./simple-task-capabilities.ts";
 export class TeamService {
   store: Store;
   skills: SkillCatalog;
@@ -81,6 +84,7 @@ export class TeamService {
   pipelines: PipelineService;
   /** Team containers and the active team (src/team-spaces.ts); presentation/ownership only. */
   teamSpaces: TeamSpaces;
+  delegations: DelegatedWork;
   constructor(store: Store, skills: SkillCatalog) {
     this.store = store;
     this.approvals = new Approvals(store);
@@ -100,6 +104,7 @@ export class TeamService {
     this.handoffs = new HandoffNotes(this);
     this.pipelines = new PipelineService(this);
     this.teamSpaces = new TeamSpaces(this);
+    this.delegations = new DelegatedWork(this);
   }
   /**
    * Create (no `id`) or replace an agent. `teamId` is accepted next to the agent fields: a new
@@ -521,7 +526,7 @@ export class TeamService {
     const effectiveStatus = (task: Task) => this.taskOutcome(task);
     return {
       ...workflow,
-      tasks,
+      tasks: tasks.map((task) => this.taskState(task.id)),
       status: workflow.paused
         ? "paused"
         : tasks.length &&
@@ -541,7 +546,14 @@ export class TeamService {
     };
   }
   private isSuccessfulTask(task: Task) {
-    return task.status === "completed" && !taskCompletionProblem(task);
+    if (task.status !== "completed" || taskCompletionProblem(task))
+      return false;
+    try {
+      this.limits.assertCompletion(task, task.result);
+      return true;
+    } catch {
+      return false;
+    }
   }
   private isSupersededTask(task: Task) {
     if (!task.supersededBy) return false;
@@ -559,7 +571,7 @@ export class TeamService {
   }
   taskOutcome(task: Task): Task["status"] | "superseded" {
     if (this.isSupersededTask(task)) return "superseded";
-    if (task.status === "completed" && taskCompletionProblem(task))
+    if (task.status === "completed" && !this.isSuccessfulTask(task))
       return "failed";
     return task.status;
   }
@@ -581,7 +593,7 @@ export class TeamService {
       const replaceable =
         task.status === "failed" ||
         task.status === "interrupted" ||
-        (task.status === "completed" && !!taskCompletionProblem(task));
+        (task.status === "completed" && !this.isSuccessfulTask(task));
       assert(
         replaceable,
         "task_not_supersedable",
@@ -611,9 +623,12 @@ export class TeamService {
       const wf = this.store.get<
         Workflow & {
           setup?: {
+            executionMode?: "file-only";
             requiresModelVerification?: boolean;
             modelCheck?: {
               verified: boolean;
+              checkedAt?: string | null;
+              issues?: string[];
               resolved: {
                 agentId: string;
                 environment: string;
@@ -635,9 +650,12 @@ export class TeamService {
       // participating agent (owner and task agents) with an unchanged environment and model.
       if (!paused && wf.setup?.requiresModelVerification) {
         const check = wf.setup.modelCheck;
-        const ids = new Set([wf.ownerId]);
+        const ids = new Set<string>(
+          wf.setup.executionMode === "file-only" ? [] : [wf.ownerId],
+        );
         for (const t of this.store.list<Task>("task"))
           if (t.workflowId === id) ids.add(t.agentId);
+        // The refusal names what failed so the UI can show it next to Resume.
         assert(
           check?.verified &&
             [...ids].every((agentId) => {
@@ -648,7 +666,11 @@ export class TeamService {
               );
             }),
           "models_unverified",
-          "Verify the model mapping before resuming this sample workflow",
+          check?.issues?.length
+            ? `The model check did not pass: ${check.issues.join("; ")}`
+            : check?.checkedAt
+              ? "The model check is out of date: an agent's model or runtime changed after it ran. It runs again automatically; press Resume again in a moment"
+              : "The models have not been checked yet: they are checked automatically once installed providers were detected (Settings shows the scan)",
         );
       }
       // Pipeline sample: parallel resource access, caps and read-only roles were verified for the
@@ -664,6 +686,7 @@ export class TeamService {
     const data = taskSchema.parse(input);
     const workflow = this.store.get<
       Workflow & {
+        setup?: { executionMode?: "file-only"; workspace?: string };
         coordination?: {
           enabled: boolean;
           coordinatorId: string;
@@ -671,6 +694,11 @@ export class TeamService {
         };
       }
     >("workflow", data.workflowId);
+    if (workflow.setup?.executionMode === "file-only") {
+      data.executionMode = "file-only";
+      if (!data.resourcePaths?.length && workflow.setup.workspace)
+        data.resourcePaths = [workflow.setup.workspace];
+    }
     if (
       workflow.coordination?.enabled &&
       workflow.coordination.planTaskId &&
@@ -680,13 +708,6 @@ export class TeamService {
       data.dependsOn.push(workflow.coordination.planTaskId);
     const assignee = this.store.get<Agent>("agent", data.agentId);
     this.assertNotRetired(assignee);
-    const declared = canonicalDeclaredPaths(
-      assignee,
-      data.resourcePaths,
-      (path) => filesystemPolicy(this.store).assertPath(path),
-    );
-    if (declared) data.resourcePaths = declared;
-    else delete data.resourcePaths;
     if (data.invokedBy) {
       this.store.get<Agent>("agent", data.invokedBy);
       assert(
@@ -699,6 +720,28 @@ export class TeamService {
     // Delegation bounds: parent resolution, depth, loops, handoff/spawn totals, children cap.
     const delegation = this.limits.beforeCreate(data);
     if (delegation.parentTaskId) data.parentTaskId = delegation.parentTaskId;
+    if (
+      data.parentTaskId &&
+      this.store.get<Task>("task", data.parentTaskId).executionMode ===
+        "file-only"
+    )
+      data.executionMode = "file-only";
+    if (data.executionMode === "file-only") {
+      const support = simpleTaskSupport(this, assignee);
+      assert(
+        support.available,
+        "simple_task_unsupported",
+        `${assignee.name}: ${support.reason}`,
+        409,
+      );
+    }
+    const declared = canonicalDeclaredPaths(
+      assignee,
+      data.resourcePaths,
+      (path) => filesystemPolicy(this.store).assertPath(path),
+    );
+    if (declared) data.resourcePaths = declared;
+    else delete data.resourcePaths;
     for (const id of data.dependsOn) {
       const dep = this.store.get<Task>("task", id);
       assert(
@@ -738,9 +781,47 @@ export class TeamService {
     const blockers = task.dependsOn.filter(
       (d) => !this.taskDependencySatisfied(d),
     );
+    const dependencyBlockers = blockers.map((taskId) => {
+      const dependency = this.store.get<Task>("task", taskId);
+      const owner = this.store.get<Agent>("agent", dependency.agentId);
+      return {
+        taskId,
+        title: dependency.title,
+        agentId: owner.id,
+        agentName: owner.nickname || owner.name,
+        status: this.taskOutcome(dependency),
+        reason:
+          dependency.result?.slice(0, 1000) || `Task is ${dependency.status}`,
+      };
+    });
+    const runtimeWait =
+      task.status === "blocked"
+        ? this.store
+            .list<RuntimeWait>("runtime-wait")
+            .find(
+              (wait) =>
+                wait.kind === "task" &&
+                wait.targetId === id &&
+                wait.reason === "sandbox-unavailable" &&
+                wait.attempt === this.recovery.state(id).attempt,
+            )
+        : undefined;
+    const delegation = this.delegations.view(id);
     return {
       ...task,
       blockers,
+      dependencyBlockers,
+      ...(delegation ? { delegation } : {}),
+      ...(runtimeWait
+        ? {
+            runtimeBlocker: {
+              code: "sandbox_unavailable" as const,
+              message:
+                runtimeWait.message ??
+                "The required provider sandbox is unavailable.",
+            },
+          }
+        : {}),
       waitReason:
         task.status !== "queued"
           ? null
@@ -751,7 +832,16 @@ export class TeamService {
               : agent.control === "human"
                 ? "human-control"
                 : blockers.length
-                  ? "dependencies"
+                  ? dependencyBlockers.some((blocker) =>
+                      [
+                        "failed",
+                        "cancelled",
+                        "blocked",
+                        "interrupted",
+                      ].includes(blocker.status),
+                    )
+                    ? "dependency-failed"
+                    : "dependencies"
                   : this.orchestration.blockingReviews(task).length
                     ? "review-required"
                     : !this.validation.gate(task).open
@@ -786,10 +876,7 @@ export class TeamService {
       .parse(input);
     const existing = this.store.get<Task>("task", id);
     const completedButInvalid =
-      existing.status === "completed" &&
-      (explicitlyReportsNoWork(existing.result) ||
-        explicitlyReportsIncompleteExecution(existing, existing.result) ||
-        explicitlyReportsUnapprovedReview(existing, existing.result));
+      existing.status === "completed" && !this.isSuccessfulTask(existing);
     // A retired worker (Team settings) takes no new work: no start, no retry.
     if (data.status === "running" || data.status === "queued")
       this.assertNotRetired(
@@ -800,10 +887,11 @@ export class TeamService {
       );
     if (
       data.status === "completed" &&
-      (explicitlyReportsIncompleteExecution(
-        this.store.get<Task>("task", id),
-        data.result,
-      ) ||
+      (explicitlyReportsNoWork(data.result) ||
+        explicitlyReportsIncompleteExecution(
+          this.store.get<Task>("task", id),
+          data.result,
+        ) ||
         explicitlyReportsUnapprovedReview(
           this.store.get<Task>("task", id),
           data.result,
@@ -819,6 +907,13 @@ export class TeamService {
       this.limits.enforceStart(this.store.get<Task>("task", id));
     if (data.status === "queued")
       this.limits.beforeRetry(id, completedButInvalid);
+    if (data.status === "queued") this.delegations.assertCanQueue(existing);
+    if (data.status === "completed")
+      assert(
+        !this.delegations.pending(existing).length,
+        "delegated_work_pending",
+        "Required delegated tasks and their reviews must succeed before the parent can complete.",
+      );
     this.recovery.beforeTransition(
       this.store.get<Task>("task", id),
       data.status,
@@ -943,6 +1038,7 @@ export class TeamService {
       this.recovery.onTransition(task, from);
       this.handoffs.onTransition(task); // immutable attempt note (workflows that opted in)
       if (task.status === "completed") this.orchestration.onTaskCompleted(task);
+      this.delegations.onTransition(task);
       return task;
     });
   }
@@ -1064,9 +1160,26 @@ export class TeamService {
       .map((t) => this.taskState(t.id));
     const processing =
       sessions.some((s) => s.state === "running") || running.length > 0;
-    // Interrupted/blocked tasks keep their provider session for resume; the agent is not idle.
     const interrupted = tasks
-      .filter((t) => t.status === "interrupted" || t.status === "blocked")
+      .filter((t) => t.status === "interrupted")
+      .map((t) => t.id);
+    const waitingDelegations = tasks
+      .filter(
+        (t) =>
+          t.status === "blocked" &&
+          this.delegations.view(t.id)?.state === "waiting",
+      )
+      .map((t) => t.id);
+    const blocked = tasks
+      .filter(
+        (t) =>
+          (t.status === "blocked" && !waitingDelegations.includes(t.id)) ||
+          queued.some(
+            (queuedTask) =>
+              queuedTask.id === t.id &&
+              queuedTask.waitReason === "dependency-failed",
+          ),
+      )
       .map((t) => t.id);
     const queuedMessages = this.store
       .list<Message>("message")
@@ -1080,17 +1193,21 @@ export class TeamService {
         ? "processing"
         : agent.control === "human"
           ? "human-control"
-          : interrupted.length
-            ? "interrupted"
-            : queued.length || queuedMessages
-              ? "waiting"
-              : "idle",
+          : blocked.length
+            ? "blocked"
+            : interrupted.length
+              ? "interrupted"
+              : queued.length || queuedMessages || waitingDelegations.length
+                ? "waiting"
+                : "idle",
       runningTaskIds: running,
       interruptedTaskIds: interrupted,
+      blockedTaskIds: blocked,
+      waitingTaskIds: waitingDelegations,
       queuedTasks: queued.map((t) => ({ id: t.id, waitReason: t.waitReason })),
       queuedMessages,
       failedTaskIds: tasks
-        .filter((t) => t.status === "failed")
+        .filter((t) => this.taskOutcome(t) === "failed")
         .map((t) => t.id),
       capacity: this.capacity(id),
     };
@@ -1255,9 +1372,34 @@ export class TeamService {
     const taskSnapshot = taskId
       ? JSON.stringify(this.store.get<Task>("task", taskId))
       : null;
+    const task = taskId ? this.store.get<Task>("task", taskId) : undefined;
+    const executionMode = task?.executionMode;
+    if (executionMode === "file-only") {
+      const support = simpleTaskSupport(this, agent);
+      assert(
+        support.available,
+        "simple_task_unsupported",
+        `${agent.name}: ${support.reason}`,
+        409,
+      );
+    }
+    const tools =
+      executionMode === "file-only"
+        ? agent.tools.filter((tool) => tool !== "shell")
+        : agent.tools;
+    const skippedSkills: string[] = [];
     await this.skills.scan();
-    const loaded = agent.skills.map((assignment) => {
+    const loaded = agent.skills.flatMap((assignment) => {
       const skill = this.skills.get(assignment.id);
+      if (
+        executionMode === "file-only" &&
+        skill.requiresTools.includes("shell")
+      ) {
+        skippedSkills.push(
+          `${skill.name}: terminal-dependent skill not loaded for this file-only task`,
+        );
+        return [];
+      }
       assert(
         skill.environments.includes(agent.environment) ||
           assignment.allowUnverified,
@@ -1267,14 +1409,22 @@ export class TeamService {
       );
       for (const tool of skill.requiresTools)
         assert(
-          agent.tools.includes(tool),
+          tools.includes(tool),
           "missing_tool",
           `Skill ${skill.name} requires ${tool}`,
           400,
         );
-      return { ...assignment, skill };
+      return [{ ...assignment, skill }];
     });
     const connection = this.connection(agent.environment);
+    assert(
+      executionMode !== "file-only" ||
+        (connection.transport === "direct" &&
+          ["claude", "codex"].includes(agent.environment)),
+      "simple_task_unsupported",
+      `${agent.name}: simple file tasks require a direct Claude or Codex runtime; this adapter cannot disable terminal tools.`,
+      409,
+    );
     const adapter = adapterFor(agent.environment, connection.transport);
     // Change detection: first use pins a skill; a changed one is skipped until the user accepts it.
     const entries = await classifySkills(this.store, loaded, {
@@ -1282,9 +1432,40 @@ export class TeamService {
     });
     const decisions = decideSkills(entries, undefined);
     const filesystem = await taskFilesystem(this.store, agent, taskId);
-    const runAgent = filesystem
-      ? { ...agent, workspaces: filesystem.workspaces }
-      : agent;
+    const directAssignment = task
+      ? this.store.get<Workflow & { setup?: { executionMode?: string } }>(
+          "workflow",
+          task.workflowId,
+        ).setup?.executionMode === "file-only"
+      : false;
+    const fileOutputs = (task?.completionChecks ?? []).flatMap((check) =>
+      check.type === "artifact-exists" || check.type === "artifact-matches"
+        ? [check.path]
+        : [],
+    );
+    const assignedFiles = [...new Set(fileOutputs)];
+    const explicitFileWork =
+      directAssignment &&
+      assignedFiles.length > 0 &&
+      tools.includes("read") &&
+      (tools.includes("write") || tools.includes("edit")) &&
+      (filesystem?.workspaces ?? agent.workspaces).some(
+        (folder) => folder.access === "write",
+      );
+    const runAgent = {
+      ...agent,
+      tools,
+      workspaces: filesystem?.workspaces ?? agent.workspaces,
+      instructions:
+        agent.instructions +
+        (executionMode === "file-only"
+          ? "\n\nThis is a simple file-and-reply task. Terminal tools are unavailable for this assignment. Use only your existing file tools and permissions; do not create a pipeline or extra work unless explicitly requested."
+          : "") +
+        (explicitFileWork
+          ? `\n\nCURRENT USER ASSIGNMENT: The user assigned you this file task directly. Complete your own declared deliverables: ${JSON.stringify(assignedFiles)}. For this assignment these file deliverables take precedence over a general planning-only or review-only role and its usual 'never modify files' guidance. Use the actual file tools and writable task folders already granted to this run; this instruction adds no tools or access. Do not delegate your own file to another agent. Your normal role and saved instructions remain unchanged for other work.`
+          : "") +
+        "\n\nEffective permissions come from the tools and folder grants for this run. A role label such as read-only does not itself enforce a filesystem restriction. Do not claim a permission failure or permission bypass from a role label alone. For a status question, default to a brief count of verified outcomes, the concrete blocker reported by tools, and one next action. If a tool does not report a cause, say it is unknown rather than guessing. Do not ask the user to repeatedly poll running work.",
+    };
     const sections = composeSections(runAgent, entries, decisions, adapter);
     const providerRoots = runAgent.workspaces.map((workspace) => ({
       path: workspace.path,
@@ -1310,6 +1491,7 @@ export class TeamService {
       effort: agent.effort,
       cwd,
       taskScoped: filesystem !== null,
+      executionMode,
       instructions: sectionsText(sections),
       skills: loaded.map(({ mode, skill }, i) => ({
         id: skill.id,
@@ -1324,8 +1506,9 @@ export class TeamService {
       })),
       workspaces: filesystem?.workspaces ?? agent.workspaces,
       providerRoots,
-      tools: agent.tools,
+      tools,
       warnings: [
+        ...skippedSkills,
         ...loaded
           .filter((l) => l.skill.compatibility !== "declared")
           .map((l) => `${l.skill.name}: compatibility inferred or unverified`),

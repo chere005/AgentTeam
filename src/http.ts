@@ -3,6 +3,11 @@ import { DevServerService } from "./devserver-service.ts";
 import { createHash } from "node:crypto";
 import { isAbsolute, join } from "node:path";
 import { RuntimeDiscovery } from "./discovery.ts";
+import {
+  resumeProject,
+  signInCommand,
+  type ReadinessService,
+} from "./readiness.ts";
 import { runtimeCapabilities } from "./capabilities.ts";
 import { TeamTemplates } from "./teams.ts";
 import { TeamPacks } from "./team-packs.ts";
@@ -84,6 +89,8 @@ export function createApi(
   token: string,
   runs: RunManager,
   discovery = new RuntimeDiscovery(),
+  /** Automatic rescans and model checks (src/readiness.ts); desktop/main.ts and server.ts pass one. */
+  readiness?: ReadinessService,
 ) {
   const store = service.store;
   const filesystemPolicy = new FilesystemPolicy(store);
@@ -151,6 +158,17 @@ export function createApi(
       runs.readiness?.(environment) ?? { state: "ready" as const },
   };
   const assistant = createAssistantRoutes(service, {
+    proposals: {
+      startProject: async (workflowId) => {
+        if (!runs.enabled)
+          throw new AppError(
+            409,
+            "execution_paused",
+            "Execution is paused. Resume execution to start these saved tasks; this also resumes other queued work.",
+          );
+        return resumeProject(service, discovery, workflowId);
+      },
+    },
     context: {
       liveEnabled: () => runs.enabled,
       readiness: (environment) =>
@@ -612,8 +630,27 @@ export function createApi(
       if (method === "GET" && path === "/runtime-capabilities")
         return send({ capabilities: runtimeCapabilities() });
       if (method === "POST" && path === "/runtimes/refresh") {
-        await discovery.refresh();
+        if (readiness) await readiness.rescan({ always: true });
+        else {
+          await discovery.refresh();
+          store.emit("runtimes.discovered", "runtimes");
+        }
         return send({ runtimes: discovery.runtimes });
+      }
+      // Sign-in: the command line for the user's own shell (the renderer types it into a new
+      // terminal); arms the 5 s rescan until the runtime reports it is signed in.
+      if (
+        method === "POST" &&
+        (match = path.match(/^\/runtimes\/(codex|claude|wolfram)\/sign-in$/))
+      ) {
+        const data = z
+          .object({ shell: z.string().trim().min(1).max(4096).optional() })
+          .strict()
+          .parse(await body(req));
+        const runtime = discovery.runtimes.find((r) => r.id === match![1])!;
+        const command = signInCommand(runtime, data.shell);
+        readiness?.signInStarted(runtime.id);
+        return send(command);
       }
       if (method === "GET" && path === "/skills")
         return send({
@@ -797,7 +834,12 @@ export function createApi(
           .object({ paused: z.boolean() })
           .strict()
           .parse(await body(req));
-        return send(service.pauseWorkflow(id(match[1]), data.paused));
+        // Resume runs the checks its gates need first (src/readiness.ts resumeProject).
+        return send(
+          data.paused
+            ? service.pauseWorkflow(id(match[1]), true)
+            : await resumeProject(service, discovery, id(match[1])),
+        );
       }
       if (
         method === "POST" &&
@@ -913,12 +955,15 @@ export function createApi(
         // with the transition.
         const task = store.get<Task>("task", taskId);
         const result = typeof change.result === "string" ? change.result : "";
+        await service.delegations.verifyChildren(task);
         if (typeof change.result === "string") {
           const agent = store.get<Agent>("agent", task.agentId);
           await service.limits.evaluate(
             task,
             change.result,
-            agent.workspaces.find((w) => w.active)?.path ?? runs.cwd,
+            task.resourcePaths?.[0] ??
+              agent.workspaces.find((w) => w.active)?.path ??
+              runs.cwd,
           );
         }
         const output = await service.shared.prepare(task, result);

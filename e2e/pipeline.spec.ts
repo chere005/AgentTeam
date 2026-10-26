@@ -109,10 +109,11 @@ test("pipeline team then project: configure the team, assign a project, verify b
     const assign = async (goal: string) => {
       await openFeature(page, "Projects");
       await page
-        .getByRole("button", { name: "Assign project", exact: true })
+        .getByRole("button", { name: "Run a task", exact: true })
         .first()
         .click();
       const form = page.getByRole("form", { name: "Assign project" });
+      await form.getByLabel("Work type").selectOption("project");
       await expect(form.getByTestId("assign-project-type")).toContainText(
         "Plan → implement",
       );
@@ -143,12 +144,19 @@ test("pipeline team then project: configure the team, assign a project, verify b
       pipeline.getByLabel("Pipeline stages").locator("li"),
     ).toHaveCount(1 + 2 + 2 + 1 + 2 + 2 + 1);
 
-    // Resume is refused until verified; the default Codex effort "max" is not advertised by the fixture.
+    // Resume prepares first and is refused while a check fails; the default Codex effort "max"
+    // is not advertised by the fixture. The card's control says so and shows the failed check.
     const workflowId = (await request("GET", "/snapshot")).workflows[0].id;
+    const resume = wf.getByRole("button", { name: "Prepare and resume" });
+    await expect(resume).toBeVisible();
+    await resume.click();
+    await expect(wf.getByTestId("resume-error")).toContainText(
+      'does not advertise effort "max"',
+    );
     const refused = await request("POST", `/workflows/${workflowId}/pause`, {
       paused: false,
     });
-    expect(refused.__error).toContain("Verify the model mapping");
+    expect(refused.__error).toContain('does not advertise effort "max"');
     await pipeline.getByRole("button", { name: "Prepare and verify" }).click();
     await expect(pipeline.getByLabel("Preflight checks")).toContainText(
       'does not advertise effort "max"',

@@ -450,6 +450,15 @@ test("team templates: save selection, library preview and mapped insert", async 
     await expect(insert.getByTestId("insert-issues")).toContainText(
       "needs a directory mapping",
     );
+    // Replacement models are dropdowns that default to keeping the template's model.
+    const replacement = insert.getByLabel(/^Replacement model for /).first();
+    await expect(replacement).toHaveValue("");
+    await expect(replacement.locator("option").first()).toHaveText(
+      /^Keep template model \(/,
+    );
+    await expect(replacement.locator("option").last()).toHaveText(
+      "Custom model ID…",
+    );
     await insert
       .getByLabel("Allow environments that are not installed")
       .check();

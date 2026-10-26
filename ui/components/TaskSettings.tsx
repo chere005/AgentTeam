@@ -17,7 +17,11 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 // ---- pure form logic (unit-testable, no React) ------------------------------------------------
 export type CheckDraft = {
   type:
-    "output-fields" | "output-matches" | "artifact-exists" | "validation-gate";
+    | "output-fields"
+    | "output-matches"
+    | "artifact-exists"
+    | "artifact-matches"
+    | "validation-gate";
   fields: string;
   pattern: string;
   flags: string;
@@ -44,6 +48,11 @@ export const CHECK_TYPES: {
     help: "A file must exist at this path, relative to the agent's active workspace. Absolute paths and .. are rejected.",
   },
   {
+    type: "artifact-matches",
+    label: "File content matches pattern",
+    help: "A UTF-8 text file of at most 256 KiB must match this regular expression. The path is relative to the task's working directory and must be inside its readable attached workspace and declared folders.",
+  },
+  {
     type: "validation-gate",
     label: "Validation gate passed",
     help: "A real Wolfram kernel validation must have passed for the task's current inputs. Needs the validation requirement below.",
@@ -64,10 +73,12 @@ export function draftsFromChecks(
   return (checks ?? []).map((c) => ({
     ...emptyCheck(c.type),
     ...(c.type === "output-fields" ? { fields: c.fields.join(", ") } : {}),
-    ...(c.type === "output-matches"
+    ...(c.type === "output-matches" || c.type === "artifact-matches"
       ? { pattern: c.pattern, flags: c.flags ?? "" }
       : {}),
-    ...(c.type === "artifact-exists" ? { path: c.path } : {}),
+    ...(c.type === "artifact-exists" || c.type === "artifact-matches"
+      ? { path: c.path }
+      : {}),
   }));
 }
 /** Client-side validation; the backend remains the authority. Throws a readable message. */
@@ -89,7 +100,13 @@ export function checksFromDrafts(drafts: CheckDraft[]) {
       if (fields.length > 50) throw new Error(`${n}: at most 50 fields`);
       return { type: d.type, fields };
     }
-    if (d.type === "output-matches") {
+    if (d.type === "artifact-exists" || d.type === "artifact-matches") {
+      const path = d.path.trim();
+      if (!path) throw new Error(`${n}: enter a file path`);
+      if (path.length > 1000) throw new Error(`${n}: path is too long`);
+      if (d.type === "artifact-exists") return { type: d.type, path };
+    }
+    if (d.type === "output-matches" || d.type === "artifact-matches") {
       if (!d.pattern) throw new Error(`${n}: enter a pattern`);
       if (d.pattern.length > 500)
         throw new Error(`${n}: the pattern may have at most 500 characters`);
@@ -98,13 +115,12 @@ export function checksFromDrafts(drafts: CheckDraft[]) {
       } catch (e) {
         throw new Error(`${n}: not a valid regular expression (${message(e)})`);
       }
-      return { type: d.type, pattern: d.pattern, flags: d.flags };
-    }
-    if (d.type === "artifact-exists") {
-      const path = d.path.trim();
-      if (!path) throw new Error(`${n}: enter a file path`);
-      if (path.length > 1000) throw new Error(`${n}: path is too long`);
-      return { type: d.type, path };
+      return {
+        type: d.type,
+        ...(d.type === "artifact-matches" ? { path: d.path.trim() } : {}),
+        pattern: d.pattern,
+        flags: d.flags,
+      };
     }
     return { type: d.type };
   });
@@ -302,8 +318,8 @@ function CompletionChecksEditor({
       <p className="hint">
         Returned text alone is not success. When checks are set, the task
         completes only if every check passes against its exact result; a failed
-        check fails the task and the reason is recorded. With no checks, any
-        non-empty reply completes the task.
+        check fails the task and the reason is recorded. Required delegated work
+        must also finish before the parent can complete.
       </p>
       {!drafts.length && <small className="quiet">No checks set.</small>}
       {drafts.map((d, i) => {
@@ -341,7 +357,7 @@ function CompletionChecksEditor({
                 />
               </label>
             )}
-            {d.type === "output-matches" && (
+            {(d.type === "output-matches" || d.type === "artifact-matches") && (
               <>
                 <label>
                   Pattern (regular expression)
@@ -378,7 +394,8 @@ function CompletionChecksEditor({
                 </div>
               </>
             )}
-            {d.type === "artifact-exists" && (
+            {(d.type === "artifact-exists" ||
+              d.type === "artifact-matches") && (
               <label>
                 File path (relative to the workspace)
                 <input

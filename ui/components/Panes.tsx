@@ -14,8 +14,14 @@ import {
   WorkflowGateSummary,
 } from "./Validation";
 import { PipelineHistory, PIPELINE_SAMPLE_ID } from "./Pipeline";
-import { AssignProject, openAssignProject, useAssignRequest } from "./Projects";
+import {
+  AssignProject,
+  openAssignProject,
+  useAssignRequest,
+  type AssignmentRequest,
+} from "./Projects";
 import { ProjectLifecycle } from "./ProjectLifecycle";
+import { ProjectResume } from "./ProjectResume";
 import { WorkflowRecovery } from "./Recovery";
 import { WorkflowSharedState } from "./SharedState";
 import { WorkflowStateEditor } from "./StateEditor";
@@ -30,7 +36,6 @@ import { EditorSettings } from "./EditorSettings";
 import {
   ConversationLink,
   ConversationSearch,
-  LiveActivity,
   RunProgress,
   NewBelow,
   OwnershipBar,
@@ -56,6 +61,7 @@ import { taskCompletionProblem } from "../../src/task-results";
 import { useWorkspaceWatch } from "./useWorkspaceWatch";
 import { EffectiveAccess, LaunchReview, ExternalNotice } from "./AccessUi";
 import { accessLabel } from "../access-view";
+import { middleClickProps } from "../middle-click";
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowUp,
@@ -69,7 +75,6 @@ import {
   RefreshCw,
   Plus,
   Play,
-  Pause,
   Check,
   Settings2,
   ExternalLink,
@@ -424,39 +429,50 @@ export function Chat(p: PaneProps) {
           </span>
         </div>
       )}
-      <InvocationPanel
-        agent={agent}
-        limit={agent.maxConcurrentInvocations}
-        data={p.data}
-      />
-      {mode === "cli" ? (
-        <div className="scroll section">
-          <h3>Continue in your agent’s interface</h3>
-          <p>{cli?.message}</p>
-          {cli?.cwd && (
-            <>
-              <label>
-                Working directory<pre>{cli.cwd}</pre>
-              </label>
-              <label>
-                Resume command<pre>{cli.command}</pre>
-              </label>
-              <button
-                onClick={() => void navigator.clipboard.writeText(cli.command)}
-              >
-                Copy command
-              </button>
-              <p className="hint">
-                CLI sessions run in your own terminal. Ownership was taken so
-                the team scheduler and embedded chat leave this agent alone; use
-                Return ownership above when you are done.
-              </p>
-            </>
-          )}
-        </div>
-      ) : (
-        <>
-          <div className="messages scroll" ref={box} onScroll={scroll.onScroll}>
+      {/* One scroll region below the header: the team assignments section scrolls with the
+          messages (or the CLI notice) so a tall section never pushes the composer off the pane. */}
+      <div
+        className="chat-body scroll"
+        ref={mode === "cli" ? undefined : box}
+        onScroll={mode === "cli" ? undefined : scroll.onScroll}
+      >
+        <InvocationPanel
+          agent={agent}
+          limit={agent.maxConcurrentInvocations}
+          data={p.data}
+          openRecovery={
+            p.openFeature ? () => p.openFeature!("recovery") : undefined
+          }
+        />
+        {mode === "cli" ? (
+          <div className="section">
+            <h3>Continue in your agent’s interface</h3>
+            <p>{cli?.message}</p>
+            {cli?.cwd && (
+              <>
+                <label>
+                  Working directory<pre>{cli.cwd}</pre>
+                </label>
+                <label>
+                  Resume command<pre>{cli.command}</pre>
+                </label>
+                <button
+                  onClick={() =>
+                    void navigator.clipboard.writeText(cli.command)
+                  }
+                >
+                  Copy command
+                </button>
+                <p className="hint">
+                  CLI sessions run in your own terminal. Ownership was taken so
+                  the team scheduler and embedded chat leave this agent alone;
+                  use Return ownership above when you are done.
+                </p>
+              </>
+            )}
+          </div>
+        ) : (
+          <div className="messages">
             {!messages.length && (
               <div className="welcome">
                 <span className={"welcome-icon " + agent.environment}>
@@ -556,6 +572,10 @@ export function Chat(p: PaneProps) {
                       messageId={m.id}
                       events={p.events}
                       send={(text) => sendText(text, false)}
+                      openTasks={(id) => {
+                        p.setCurrentProject?.(id);
+                        p.openFeature?.("projects");
+                      }}
                       openChanges={
                         p.openFeature
                           ? () => p.openFeature!("assistant")
@@ -573,13 +593,6 @@ export function Chat(p: PaneProps) {
                 )}
               </article>
             ))}
-            {session && (
-              <LiveActivity
-                events={p.events}
-                sessionId={session.id}
-                name={displayName}
-              />
-            )}
             {failureMessage && (
               <div
                 className="notice"
@@ -591,95 +604,123 @@ export function Chat(p: PaneProps) {
             )}
             <NewBelow n={scroll.below} jump={scroll.toBottom} />
           </div>
-          <div className="composer-wrap">
-            {session?.state === "running" && (
-              <RunProgress
-                name={displayName}
-                startedAt={
-                  session.startedAt ?? new Date(fallbackStartedAt).toISOString()
-                }
-                timeoutMs={session.timeoutMs}
-                now={clock}
-              />
-            )}
-            {!p.data.liveExecution && (
-              <div className="notice">
-                Execution is paused. Messages stay queued until you resume in
-                Settings.
+        )}
+      </div>
+      {mode !== "cli" && (
+        <div className="composer-wrap">
+          {session?.state === "running" && (
+            <RunProgress
+              key={session.id}
+              events={p.events}
+              sessionId={session.id}
+              name={displayName}
+              startedAt={
+                session.startedAt ?? new Date(fallbackStartedAt).toISOString()
+              }
+              now={clock}
+            />
+          )}
+          {!p.data.liveExecution && (
+            <div className="notice">
+              Execution is paused. Use Resume execution in the top bar to run
+              queued messages and tasks.
+            </div>
+          )}
+          {p.openFeature &&
+            p.data.agents.some(
+              (member) => member.kind !== "team-assistant",
+            ) && (
+              <div className="composer-scope">
+                <span>Chat with {displayName}</span>
+                <button
+                  type="button"
+                  className="text-button"
+                  disabled={sending}
+                  title="Use your draft as independent tasks for the team. Review the agents and folder before starting."
+                  onClick={() => {
+                    openAssignProject({
+                      goal: draft,
+                      workspace: p.currentProject?.setup?.workspace,
+                      focusStart: true,
+                    });
+                    p.openFeature!("projects");
+                  }}
+                >
+                  Assign to team
+                </button>
               </div>
             )}
-            <div className="composer">
-              <textarea
-                aria-label="Message"
-                placeholder={`Message ${displayName}…`}
-                value={draft}
-                onChange={(e) => {
-                  setDraft(e.target.value);
-                  persist("draft." + agent.id, e.target.value);
-                }}
-                onCompositionStart={() => (composing.current = true)}
-                onCompositionEnd={() => {
-                  // Safari fires the confirming Enter keydown after compositionend.
-                  setTimeout(() => (composing.current = false), 0);
-                }}
-                onKeyDown={(e) => {
-                  if (
-                    e.key === "Enter" &&
-                    !e.shiftKey &&
-                    !e.repeat &&
-                    !composing.current &&
-                    !e.nativeEvent.isComposing &&
-                    e.keyCode !== 229
-                  ) {
-                    e.preventDefault();
-                    void send();
+          <div className="composer">
+            <textarea
+              aria-label="Message"
+              placeholder={`Message ${displayName}…`}
+              value={draft}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                persist("draft." + agent.id, e.target.value);
+              }}
+              onCompositionStart={() => (composing.current = true)}
+              onCompositionEnd={() => {
+                // Safari fires the confirming Enter keydown after compositionend.
+                setTimeout(() => (composing.current = false), 0);
+              }}
+              onKeyDown={(e) => {
+                if (
+                  e.key === "Enter" &&
+                  !e.shiftKey &&
+                  !e.repeat &&
+                  !composing.current &&
+                  !e.nativeEvent.isComposing &&
+                  e.keyCode !== 229
+                ) {
+                  e.preventDefault();
+                  void send();
+                }
+              }}
+            />
+            <div className="row between">
+              <span className="hint">
+                Enter to send · Shift+Enter for a new line
+              </span>
+              {session?.state === "running" ? (
+                <button
+                  className="send"
+                  aria-label="Stop generation"
+                  onClick={() =>
+                    void p.act(() =>
+                      api("/sessions/" + session.id + "/cancel", "POST"),
+                    )
                   }
-                }}
-              />
-              <div className="row between">
-                <span className="hint">
-                  Enter to send · Shift+Enter for a new line
-                </span>
-                {session?.state === "running" ? (
+                >
+                  <Square size={16} />
+                </button>
+              ) : (
+                <div className="row">
+                  {session && messages.some((m) => m.status === "queued") && (
+                    <button
+                      disabled={!p.data.liveExecution}
+                      onClick={() =>
+                        void p.act(() =>
+                          api("/sessions/" + session.id + "/run", "POST"),
+                        )
+                      }
+                    >
+                      Run queued
+                    </button>
+                  )}
                   <button
                     className="send"
-                    aria-label="Stop generation"
-                    onClick={() =>
-                      void p.act(() =>
-                        api("/sessions/" + session.id + "/cancel", "POST"),
-                      )
-                    }
+                    aria-label="Send message"
+                    disabled={!draft.trim() || sending}
+                    onClick={() => void send()}
                   >
-                    <Square size={16} />
+                    <ArrowUp size={19} />
                   </button>
-                ) : (
-                  <div className="row">
-                    {session && messages.some((m) => m.status === "queued") && (
-                      <button
-                        disabled={!p.data.liveExecution}
-                        onClick={() =>
-                          void p.act(() =>
-                            api("/sessions/" + session.id + "/run", "POST"),
-                          )
-                        }
-                      >
-                        Run queued
-                      </button>
-                    )}
-                    <button
-                      className="send"
-                      aria-label="Send message"
-                      disabled={!draft.trim() || sending}
-                      onClick={() => void send()}
-                    >
-                      <ArrowUp size={19} />
-                    </button>
-                  </div>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           </div>
-        </>
+        </div>
       )}
     </div>
   );
@@ -710,6 +751,8 @@ export function Workflows(p: PaneProps) {
     Record<string, string>
   >({});
   const [assigning, setAssigning] = useState(false);
+  const [assignmentRequest, setAssignmentRequest] =
+    useState<AssignmentRequest>();
   // Archived projects are hidden unless asked for (src/project-lifecycle.ts).
   const [showArchived, setShowArchived] = useState(false);
   const projectWorkflows = p.data.workflows.filter(isProjectWorkflow);
@@ -729,9 +772,24 @@ export function Workflows(p: PaneProps) {
     shownWorkflows.find((workflow) => workflow.id === focusedProjectId) ??
     shownWorkflows.find((workflow) => workflow.id === p.currentProjectId) ??
     shownWorkflows[0];
-  useAssignRequest(() => setAssigning(true));
+  useAssignRequest((request) => {
+    setAssignmentRequest(request);
+    setAssigning(true);
+  });
   const teamName = p.data.teamView?.team.name ?? "this team";
   const w = focusedProject;
+  const currentProject =
+    p.currentProject ??
+    projectWorkflows.find((workflow) => workflow.id === p.currentProjectId);
+  const projectStatus = (workflow: Snapshot["workflows"][number]) =>
+    workflow.tasks.length === 0 &&
+    !["archived", "completed"].includes(
+      (workflow as { lifecycle?: { state: string } }).lifecycle?.state ?? "",
+    )
+      ? "No tasks assigned"
+      : workflow.status === "needs-attention"
+        ? "Needs attention"
+        : workflow.status;
   return (
     <div className="scroll section">
       <div className="section-title">
@@ -744,37 +802,58 @@ export function Workflows(p: PaneProps) {
             className="primary"
             title={`Give ${teamName} a project: goal, workspace and tasks for its existing agents`}
             aria-expanded={assigning}
-            onClick={() => setAssigning(!assigning)}
+            onClick={() => {
+              setAssignmentRequest(undefined);
+              setAssigning(!assigning);
+            }}
           >
             <Plus size={16} />
-            Assign project
+            Run a task
           </button>
-          <button
-            title="New blank project with one coordinator (no team setup, starts unpaused)"
-            onClick={() => setCreating(!creating)}
-          >
-            Blank project
-          </button>
+          <details className="projects-advanced-create">
+            <summary>Advanced</summary>
+            <button
+              title="New blank project with one coordinator (no team setup, starts unpaused)"
+              onClick={() => setCreating(!creating)}
+            >
+              Blank project
+            </button>
+          </details>
         </div>
       </div>
-      <p className="hint projects-hint">
-        Choose a project to see its progress, tasks, blockers, and run report.
-      </p>
-      <div className="projects-current-context">
-        <span>Current project</span>
-        <b>{p.currentProject?.name ?? "None selected"}</b>
-        <small>
-          {p.currentProject
-            ? "Files and reports follow this project."
-            : "Choose a project below and make it current to keep the app in context."}
-        </small>
-      </div>
+      {!assigning && (
+        <>
+          <p className="hint projects-hint">
+            Choose a project to see its progress, tasks, blockers, and run
+            report.
+          </p>
+          <div className="projects-current-context">
+            <span>Current project</span>
+            <b>{currentProject?.name ?? "None selected"}</b>
+            <small>
+              {currentProject
+                ? "Files and reports follow this project."
+                : "Choose a project below and make it current to keep the app in context."}
+            </small>
+          </div>
+        </>
+      )}
       {assigning && (
         <AssignProject
+          key={assignmentRequest?.requestId ?? "empty"}
+          initialDraft={assignmentRequest}
           teamId={p.data.activeTeamId ?? "main"}
           teamName={teamName}
           act={p.act}
-          close={() => setAssigning(false)}
+          executionEnabled={p.data.liveExecution}
+          onAssigned={(id) => {
+            setFocusedProjectId(id);
+            p.setCurrentProject?.(id);
+          }}
+          close={() => {
+            setAssigning(false);
+            setAssignmentRequest(undefined);
+          }}
         />
       )}
       {creating && (
@@ -839,7 +918,7 @@ export function Workflows(p: PaneProps) {
             Assign this team a project: a goal and a workspace for its agents.
             Other teams’ projects are listed when you switch to that team.
           </p>
-          <button onClick={() => setAssigning(true)}>Assign project</button>
+          <button onClick={() => setAssigning(true)}>Run a task</button>
         </div>
       )}
       {archived > 0 && (
@@ -880,12 +959,12 @@ export function Workflows(p: PaneProps) {
                   <span className="project-nav-title">{workflow.name}</span>
                   <span className="project-nav-meta">
                     <i className={`project-state-dot ${workflow.status}`} />
-                    {workflow.status === "needs-attention"
-                      ? "Needs attention"
-                      : workflow.status}
-                    <span>
-                      {resolved}/{workflow.tasks.length} tasks
-                    </span>
+                    {projectStatus(workflow)}
+                    {workflow.tasks.length > 0 && (
+                      <span>
+                        {resolved}/{workflow.tasks.length} tasks
+                      </span>
+                    )}
                   </span>
                   {attention > 0 && (
                     <span className="project-nav-alert">
@@ -915,9 +994,7 @@ export function Workflows(p: PaneProps) {
                       "badge " + (w.status === "running" ? "green" : "")
                     }
                   >
-                    {w.status === "needs-attention"
-                      ? "needs attention"
-                      : w.status}
+                    {projectStatus(w)}
                   </span>
                   {p.setCurrentProject && (
                     <button
@@ -946,62 +1023,80 @@ export function Workflows(p: PaneProps) {
               <ProjectLifecycle workflow={w} act={p.act} />
               <SampleSetup workflow={w} act={p.act} />
               <WorkflowGateSummary tasks={w.tasks} />
-              <div className="project-progress-row">
+              {w.tasks.length === 0 ? (
                 <div
-                  className="progress project-progress"
-                  role="progressbar"
-                  aria-label={`${w.name} resolved task progress`}
-                  aria-valuemin={0}
-                  aria-valuemax={w.tasks.length}
-                  aria-valuenow={w.tasks.filter(taskIsResolved).length}
+                  className="project-no-tasks"
+                  data-testid="project-no-tasks"
                 >
-                  <span
-                    style={{
-                      width: `${w.tasks.length ? (100 * w.tasks.filter(taskIsResolved).length) / w.tasks.length : 0}%`,
-                    }}
-                  />
+                  <b>No agents are working on this project yet.</b>
+                  <p>
+                    It has a goal, but no tasks were assigned. Run a simple task
+                    to give work directly to your agents.
+                  </p>
+                  <button
+                    className="primary"
+                    onClick={() => setAssigning(true)}
+                  >
+                    Run a simple task
+                  </button>
                 </div>
-                <small>
-                  {w.tasks.filter(taskIsResolved).length} of {w.tasks.length}{" "}
-                  resolved · {w.tasks.filter(taskIsComplete).length} complete
-                  {w.tasks.some(
-                    (task) => taskViewStatus(task) === "superseded",
-                  ) &&
-                    ` · ${w.tasks.filter((task) => taskViewStatus(task) === "superseded").length} superseded`}
-                  {w.tasks.some(taskNeedsAttention) &&
-                    ` · ${w.tasks.filter(taskNeedsAttention).length} need attention`}
-                </small>
-                <button
-                  className="icon"
-                  title={w.paused ? "Resume project" : "Pause project"}
-                  aria-label={w.paused ? "Resume project" : "Pause project"}
-                  onClick={() =>
-                    void p.act(() =>
-                      api("/workflows/" + w.id + "/pause", "POST", {
-                        paused: !w.paused,
-                      }),
-                    )
-                  }
-                >
-                  {w.paused ? <Play size={15} /> : <Pause size={15} />}
-                </button>
-              </div>
-              <section className="project-tasks">
-                <header className="project-tasks-heading">
-                  <b>Tasks</b>
+              ) : (
+                <div className="project-progress-row">
+                  {w.tasks.length > 0 && (
+                    <div
+                      className="progress project-progress"
+                      role="progressbar"
+                      aria-label={`${w.name} resolved task progress`}
+                      aria-valuemin={0}
+                      aria-valuemax={w.tasks.length}
+                      aria-valuenow={w.tasks.filter(taskIsResolved).length}
+                    >
+                      <span
+                        style={{
+                          width: `${w.tasks.length ? (100 * w.tasks.filter(taskIsResolved).length) / w.tasks.length : 0}%`,
+                        }}
+                      />
+                    </div>
+                  )}
                   <small>
-                    {w.tasks.length} total ·{" "}
-                    {
-                      w.tasks.filter(
-                        (t) => t.status === "queued" || t.status === "running",
-                      ).length
-                    }{" "}
-                    active · {w.tasks.filter(taskNeedsAttention).length} need
-                    attention
+                    {w.tasks.filter(taskIsResolved).length} of {w.tasks.length}{" "}
+                    resolved · {w.tasks.filter(taskIsComplete).length} complete
                     {w.tasks.some(
                       (task) => taskViewStatus(task) === "superseded",
                     ) &&
                       ` · ${w.tasks.filter((task) => taskViewStatus(task) === "superseded").length} superseded`}
+                    {w.tasks.some(taskNeedsAttention) &&
+                      ` · ${w.tasks.filter(taskNeedsAttention).length} need attention`}
+                  </small>
+                  <ProjectResume
+                    workflow={w}
+                    refresh={() => p.act(async () => undefined)}
+                  />
+                </div>
+              )}
+              <section className="project-tasks">
+                <header className="project-tasks-heading">
+                  <b>Tasks</b>
+                  <small>
+                    {w.tasks.length === 0 ? (
+                      "None assigned"
+                    ) : (
+                      <>
+                        {w.tasks.length} total ·{" "}
+                        {
+                          w.tasks.filter(
+                            (t) =>
+                              t.status === "queued" || t.status === "running",
+                          ).length
+                        }{" "}
+                        active · {w.tasks.filter(taskNeedsAttention).length}{" "}
+                        need attention
+                        {w.tasks.some(
+                          (task) => taskViewStatus(task) === "superseded",
+                        ) &&
+                          ` · ${w.tasks.filter((task) => taskViewStatus(task) === "superseded").length} superseded`}
+                      </>
+                    )}
                   </small>
                 </header>
                 {w.tasks.map((t) => (
@@ -1009,10 +1104,30 @@ export function Workflows(p: PaneProps) {
                     <summary>
                       <span className={"task-dot " + taskViewStatus(t)} />
                       <span className="task-title" title={t.title}>
-                        <b>{taskDisplayTitle(t.title)}</b>
+                        <b>
+                          {w.setup?.executionMode === "file-only"
+                            ? (p.data.agents.find((a) => a.id === t.agentId)
+                                ?.name ?? taskDisplayTitle(t.title))
+                            : taskDisplayTitle(t.title)}
+                        </b>
                         <small>
-                          {p.data.agents.find((a) => a.id === t.agentId)?.name}
+                          {w.setup?.executionMode === "file-only"
+                            ? (t.completionChecks ?? [])
+                                .filter(
+                                  (check) =>
+                                    check.type === "artifact-exists" ||
+                                    check.type === "artifact-matches",
+                                )
+                                .map((check) => check.path)
+                                .join(", ") || taskDisplayTitle(t.title)
+                            : p.data.agents.find((a) => a.id === t.agentId)
+                                ?.name}
                         </small>
+                        {t.runtimeBlocker && (
+                          <small className="err">
+                            Setup required: {t.runtimeBlocker.message}
+                          </small>
+                        )}
                         {taskResultPreview(t) && (
                           <small className="task-result-preview">
                             {taskResultPreview(t)}
@@ -2109,6 +2224,7 @@ export function Workspace(
                             className="workspace-open-tab"
                             role="presentation"
                             key={file.id}
+                            {...middleClickProps(() => closeFileTab(file.id))}
                           >
                             <button
                               id={`file-tab-${index}`}
@@ -2130,7 +2246,7 @@ export function Workspace(
                             <button
                               className="workspace-close-file"
                               aria-label={`Close ${file.name}`}
-                              title={`Close ${file.name}`}
+                              title={`Close ${file.name} (or middle-click)`}
                               onClick={() => closeFileTab(file.id)}
                             >
                               <X size={13} />

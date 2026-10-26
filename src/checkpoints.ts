@@ -4,6 +4,7 @@ import type { TeamService } from "./service.ts";
 import { errorKindOf } from "./provider-errors.ts";
 import { assert, type Message, type Task } from "./model.ts";
 import type { ApprovalRecord } from "./approvals.ts";
+import type { RuntimeWait } from "./runtime-waits.ts";
 
 /**
  * Engine-agnostic durable execution: immutable checkpoints, an effect ledger and recovery.
@@ -99,6 +100,8 @@ export type TaskRecovery = {
   notBefore: string | null;
   interruptReason?: string;
   toolCheckpoints: number;
+  /** Separate provider effect keys for bounded continuations after delegated work. */
+  continuation?: number;
 };
 const decisionSchema = z
   .object({
@@ -432,6 +435,13 @@ export class RecoveryService {
     if (to === "running") this.assertNoUncertain(task);
     if (to !== "queued") return;
     this.assertNoUncertain(task);
+    const runtimeBlocker = this.runtimeBlocker(task);
+    assert(
+      !runtimeBlocker,
+      "runtime_capability_blocked",
+      runtimeBlocker?.message ??
+        "The required sandbox is still unavailable. Fix the setup before resuming; this task resumes automatically when it is ready.",
+    );
     if (task.status === "failed") {
       const s = this.state(task.id);
       assert(
@@ -454,6 +464,18 @@ export class RecoveryService {
       "effect_uncertain",
       `Outcome of "${u[0]?.description}" is uncertain; record a decision before this task can run again`,
     );
+  }
+  private runtimeBlocker(task: Task) {
+    if (task.status !== "blocked") return undefined;
+    return this.store
+      .list<RuntimeWait>("runtime-wait")
+      .find(
+        (wait) =>
+          wait.kind === "task" &&
+          wait.targetId === task.id &&
+          wait.reason === "sandbox-unavailable" &&
+          wait.attempt === this.state(task.id).attempt,
+      );
   }
   /** Runs inside the transition's transaction, after the task row changed. */
   onTransition(task: Task, from: Task["status"]) {
@@ -533,6 +555,7 @@ export class RecoveryService {
       case "queued": {
         if (from === "failed") {
           s.attempt++;
+          s.continuation = 0;
           s.toolCheckpoints = 0;
         }
         this.saveState(s);
@@ -550,19 +573,22 @@ export class RecoveryService {
     }
   }
   // ---- provider run boundaries (used by the scheduler) ------------------------------------
-  /** True when startRun would replay this attempt's recorded provider output instead of running it. */
-  willReplayRun(task: Task) {
+  private runKey(task: Task) {
     const s = this.state(task.id);
     return (
-      this.ledger.find(`provider-run:${task.id}:${s.attempt}`)?.state ===
-      "completed"
+      `provider-run:${task.id}:${s.attempt}` +
+      (s.continuation ? `:continuation:${s.continuation}` : "")
     );
+  }
+  /** True when startRun would replay this attempt's recorded provider output instead of running it. */
+  willReplayRun(task: Task) {
+    return this.ledger.find(this.runKey(task))?.state === "completed";
   }
   startRun(task: Task, mutating: boolean) {
     const s = this.state(task.id);
     const { effect, action } = this.ledger.begin({
       taskId: task.id,
-      key: `provider-run:${task.id}:${s.attempt}`,
+      key: this.runKey(task),
       kind: "provider-run",
       description: `Provider run for "${task.title}" (attempt ${s.attempt})`,
       mutating,
@@ -621,7 +647,10 @@ export class RecoveryService {
     const status = typeof u.status === "string" ? u.status : "pending";
     const title = typeof u.title === "string" ? u.title : kind;
     if (callId && MUTATING_TOOL_KINDS.has(kind)) {
-      const key = `tool:${task.id}:${s.attempt}:${callId}`;
+      const key =
+        `tool:${task.id}:${s.attempt}:` +
+        (s.continuation ? `continuation:${s.continuation}:` : "") +
+        callId;
       let effect = this.ledger.find(key);
       if (!effect)
         effect = this.ledger.begin({
@@ -739,13 +768,53 @@ export class RecoveryService {
         });
       return;
     }
-    if (task.status === "blocked" && !this.ledger.uncertainFor(task.id).length)
+    if (
+      task.status === "blocked" &&
+      !this.ledger.uncertainFor(task.id).length &&
+      !["waiting", "blocked"].includes(
+        this.service.delegations.view(task.id)?.state ?? "",
+      )
+    )
       this.service.transitionTask(task.id, { status: "interrupted" });
   }
   // ---- explicit actions -------------------------------------------------------------------
-  /** Resume an interrupted task, or retry a failed/blocked one, from its last checkpoint. */
-  requeue(taskId: string) {
+  /** Continue a finished provider turn after its required child results have arrived. */
+  continueDelegation(taskId: string): Task {
     const task = this.store.get<Task>("task", taskId);
+    assert(
+      task.status === "blocked",
+      "not_resumable",
+      "The parent must be waiting for delegated work.",
+    );
+    assert(
+      !this.service.delegations.pending(task).length,
+      "delegated_work_pending",
+      "Required delegated tasks and their reviews must succeed first.",
+    );
+    this.assertNoUncertain(task);
+    return this.store.transaction(() => {
+      const state = this.state(taskId);
+      assert(
+        (state.continuation ?? 0) < 3,
+        "delegation_continuation_limit",
+        "Automatic continuation limit reached. Review the delegated work before starting another assignment.",
+      );
+      state.continuation = (state.continuation ?? 0) + 1;
+      this.saveState(state);
+      this.service.delegations.markContinuing(taskId);
+      return this.requeue(taskId);
+    });
+  }
+  /** Resume an interrupted task, or retry a failed/blocked one, from its last checkpoint. */
+  requeue(taskId: string): Task {
+    const task = this.store.get<Task>("task", taskId);
+    const delegation = this.service.delegations.view(taskId);
+    if (
+      task.status === "blocked" &&
+      delegation &&
+      delegation.state !== "continuing"
+    )
+      return this.continueDelegation(taskId);
     assert(
       ["interrupted", "blocked", "failed"].includes(task.status),
       "not_resumable",
@@ -773,11 +842,35 @@ export class RecoveryService {
   retryGate(task: Task) {
     const s = this.state(task.id);
     const left = s.policy.maxAttempts - s.attempt;
+    const runtimeBlocker = this.runtimeBlocker(task);
+    if (runtimeBlocker)
+      return {
+        allowed: false,
+        blocker: "runtime-capability" as const,
+        reason:
+          runtimeBlocker.message ??
+          "Fix the unavailable sandbox or choose a file-only simple task. This task resumes automatically when ready.",
+        notBefore: null,
+        attemptsLeft: Math.max(0, left),
+      };
     const uncertain = this.ledger.uncertainFor(task.id);
     if (uncertain.length)
       return {
         allowed: false,
         reason: `Decide on uncertain effect: ${uncertain[0].description}`,
+        notBefore: null,
+        attemptsLeft: Math.max(0, left),
+      };
+    const delegation = this.service.delegations.view(task.id);
+    if (
+      delegation &&
+      delegation.state !== "continuing" &&
+      (this.service.delegations.pending(task).length ||
+        (s.continuation ?? 0) >= 3)
+    )
+      return {
+        allowed: false,
+        reason: delegation.message,
         notBefore: null,
         attemptsLeft: Math.max(0, left),
       };
@@ -838,13 +931,22 @@ export class RecoveryService {
         `Decide on uncertain effect "${e.description}": retry, mark applied, or abandon`,
       );
     if (!pendingApprovals.length && !uncertainEffects.length) {
-      const run = this.ledger.find(`provider-run:${task.id}:${s.attempt}`);
+      const run = this.ledger.find(this.runKey(task));
+      const delegation = this.service.delegations.view(task.id);
+      const runtimeBlocker = this.runtimeBlocker(task);
       if (
         task.status === "failed" ||
         task.status === "interrupted" ||
         task.status === "blocked"
       ) {
-        if (run?.state === "completed")
+        if (runtimeBlocker)
+          next.push(
+            runtimeBlocker.message ??
+              "Fix the required sandbox. The task resumes automatically once its setup is ready.",
+          );
+        else if (delegation && delegation.state !== "continuing")
+          next.push(delegation.message);
+        else if (run?.state === "completed")
           next.push(
             "Finalize from the saved provider output (no provider call)",
           );

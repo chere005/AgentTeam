@@ -104,6 +104,64 @@ test("an agent's Chat pane leads with its result and tucks full instructions beh
     await groupChat.getByRole("button", { name: "Invite" }).click();
     await expect(groupChat).toContainText("Code Reviewer");
 
+    // A tall invocation section scrolls with the messages in one region at a short, narrow
+    // window: nothing is cut off at the window edge and the composer stays in view.
+    const size = (w: number, h: number) =>
+      app.evaluate(
+        ({ BrowserWindow }, [a, b]) =>
+          BrowserWindow.getAllWindows()[0].setContentSize(a, b),
+        [w, h] as const,
+      );
+    await size(1100, 600);
+    await expect.poll(() => page.evaluate(() => window.innerHeight)).toBe(600);
+    const scroller = () =>
+      panel.evaluate((el) => {
+        for (let node = el.parentElement; node; node = node.parentElement) {
+          const style = getComputedStyle(node);
+          if (!/auto|scroll/.test(style.overflowY)) continue;
+          const box = node.getBoundingClientRect();
+          return {
+            overflowY: style.overflowY,
+            minHeight: style.minHeight,
+            overflows: node.scrollHeight > node.clientHeight,
+            bottom: box.bottom,
+            viewport: window.innerHeight,
+            holdsComposer: !!node.querySelector(
+              'textarea[aria-label="Message"]',
+            ),
+            chat: !!node.closest(".chat"),
+          };
+        }
+        return null;
+      });
+    await expect.poll(async () => (await scroller())?.overflows).toBe(true);
+    const region = (await scroller())!;
+    expect(region.chat).toBe(true);
+    expect(region.overflowY).toMatch(/auto|scroll/);
+    expect(region.minHeight).toBe("0px");
+    expect(region.holdsComposer).toBe(false);
+    expect(region.bottom).toBeLessThanOrEqual(region.viewport);
+    await expect(
+      page.getByRole("textbox", { name: "Message" }),
+    ).toBeInViewport();
+    // The mouse wheel scrolls the region: from the top down to the group chat's button.
+    const sendToGroup = groupChat.getByRole("button", {
+      name: "Send to group",
+    });
+    await page.getByText("Team assignments & conversations").hover();
+    await page.mouse.wheel(0, -5000);
+    await expect(
+      page.getByText("Team assignments & conversations"),
+    ).toBeInViewport();
+    await expect(async () => {
+      await page.mouse.wheel(0, 150);
+      await expect(sendToGroup).toBeInViewport({ timeout: 250 });
+    }).toPass();
+    await expect(
+      page.getByRole("textbox", { name: "Message" }),
+    ).toBeInViewport();
+    await size(1500, 960);
+
     await page.locator("#tab-team-chat").click();
     await expect(
       page.getByRole("navigation", { name: "Team conversations" }),

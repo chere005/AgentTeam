@@ -74,16 +74,23 @@ export function classifyEvent(name: string | null): { git: boolean } | null {
 export async function folderFingerprint(root: string): Promise<string> {
   const parts: string[] = [];
   let budget = 2000;
-  const walk = async (dir: string, depth: number) => {
+  const pending = [{ dir: root, depth: 0 }];
+  while (pending.length && budget > 0) {
+    const { dir, depth } = pending.shift()!;
     let names: import("node:fs").Dirent[];
     try {
       names = await readdir(dir, { withFileTypes: true });
     } catch {
-      return;
+      continue;
     }
+    names.sort(
+      (a, b) =>
+        Number(a.isDirectory()) - Number(b.isDirectory()) ||
+        a.name.localeCompare(b.name),
+    );
     for (const e of names) {
       if (e.name === ".git" || e.name === "node_modules") continue;
-      if (budget-- <= 0) return;
+      if (budget-- <= 0) break;
       const full = join(dir, e.name);
       try {
         const s = await lstat(full);
@@ -91,10 +98,10 @@ export async function folderFingerprint(root: string): Promise<string> {
       } catch {
         continue;
       }
-      if (e.isDirectory() && depth < 3) await walk(full, depth + 1);
+      if (e.isDirectory() && depth < 3)
+        pending.push({ dir: full, depth: depth + 1 });
     }
-  };
-  await walk(root, 0);
+  }
   for (const f of ["HEAD", "index", "MERGE_HEAD"])
     try {
       const s = await lstat(join(root, ".git", f));

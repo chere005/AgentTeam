@@ -53,6 +53,10 @@
 .invocation-status.failed {
   color: #f18d8d;
 }
+.invocation-status.blocked,
+.invocation-status.interrupted {
+  color: var(--warning, #b06d1b);
+}
 .invocation-result,
 .invocation-instructions {
   min-width: 0;

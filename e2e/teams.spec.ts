@@ -209,6 +209,21 @@ test("example teams create their own team; other teams' running work and inbox i
       .click();
     await page.getByRole("button", { name: "Insert…", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: /Insert “/ });
+    // Model options are dropdowns that keep the example's model selected, whatever its status.
+    // Test mode never scans, so Claude is "not detected": the model stays selected, grayed out.
+    const lead = dialog.getByLabel("Lead model (Opus 5.5)", { exact: true });
+    await expect(lead).toHaveValue("claude-opus-5-5");
+    await expect(lead.locator("option:checked")).toHaveText(
+      "Claude Opus 5.5 (installation not detected)",
+    );
+    await expect(lead.locator("option:checked")).toHaveJSProperty(
+      "disabled",
+      true,
+    );
+    await expect(
+      lead.locator("option", { hasText: "Claude recommended" }),
+    ).toHaveJSProperty("disabled", false);
+    await expect(lead.locator("option").last()).toHaveText("Custom model ID…");
     await dialog.getByLabel("Insert with unverified models").check();
     await dialog
       .getByRole("button", { name: "Insert as new team", exact: true })

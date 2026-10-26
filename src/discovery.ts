@@ -1,4 +1,4 @@
-import { access, readdir } from "node:fs/promises";
+import { access, readdir, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { join, delimiter, dirname } from "node:path";
@@ -104,12 +104,131 @@ export function normalizeModels(data: any): ModelChoice[] {
         .filter((e: unknown) => typeof e === "string"),
     }));
 }
-export async function findExecutable(name: string) {
-  const home = homedir(),
-    names = executableNames(name);
-  const paths = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
+type BundleOptions = {
+  platform: NodeJS.Platform;
+  home: string;
+  env: Record<string, string | undefined>;
+};
+async function mtimeOf(path: string) {
+  try {
+    return (await stat(path)).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+async function subdirs(dir: string) {
+  try {
+    return (await readdir(dir, { withFileTypes: true }))
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+  } catch {
+    return [];
+  }
+}
+/** The `<hash>` folder under `dir` whose `file` was modified last, as a path plus its mtime. */
+async function newestIn(dir: string, file: string) {
+  let best: { path: string; mtime: number } | undefined;
+  for (const hash of await subdirs(dir)) {
+    const path = join(dir, hash, file);
+    const mtime = await mtimeOf(path);
+    if (mtime !== null && (!best || mtime > best.mtime)) best = { path, mtime };
+  }
+  return best;
+}
+/** Numeric semver-style segments, or null for a folder name that is not a plain version. */
+function versionParts(name: string) {
+  return /^\d+(\.\d+)*$/.test(name) ? name.split(".").map(Number) : null;
+}
+function compareVersions(a: number[] | null, b: number[] | null) {
+  if (!a || !b) return a ? -1 : b ? 1 : 0;
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const d = (b[i] ?? 0) - (a[i] ?? 0);
+    if (d) return d;
+  }
+  return 0;
+}
+/**
+ * Executables bundled by the Claude and Codex desktop apps. They live in versioned or hashed
+ * folders that are not on PATH. Returns existing files, newest first; never throws.
+ */
+export async function bundledExecutables(
+  name: string,
+  { platform, home, env }: BundleOptions,
+): Promise<string[]> {
+  const win = platform === "win32";
+  if (name === "codex") {
+    if (!win) return [];
+    const local = env.LOCALAPPDATA ?? join(home, "AppData", "Local");
+    const found: { path: string; mtime: number }[] = [];
+    const root = join(local, "OpenAI", "Codex", "bin");
+    for (const hash of await subdirs(root)) {
+      const path = join(root, hash, "codex.exe");
+      const mtime = await mtimeOf(path);
+      if (mtime !== null) found.push({ path, mtime });
+    }
+    return found.sort((a, b) => b.mtime - a.mtime).map((f) => f.path);
+  }
+  if (name !== "claude") return [];
+  const file = win ? "claude.exe" : "claude";
+  const roots: string[] = [];
+  if (win) {
+    roots.push(
+      join(
+        env.APPDATA ?? join(home, "AppData", "Roaming"),
+        "Claude",
+        "claude-code",
+      ),
+    );
+    const local = env.LOCALAPPDATA ?? join(home, "AppData", "Local");
+    for (const pkg of (await subdirs(join(local, "Packages")))
+      .filter((d) => d.startsWith("Claude_"))
+      .sort())
+      roots.push(
+        join(
+          local,
+          "Packages",
+          pkg,
+          "LocalCache",
+          "Roaming",
+          "Claude",
+          "claude-code",
+        ),
+      );
+  } else if (platform === "darwin")
+    roots.push(
+      join(home, "Library", "Application Support", "Claude", "claude-code"),
+    );
+  else roots.push(join(home, ".config", "Claude", "claude-code"));
+  const found: { path: string; mtime: number; version: number[] | null }[] = [];
+  for (const root of roots)
+    for (const version of await subdirs(root)) {
+      const best = await newestIn(join(root, version), file);
+      if (best) found.push({ ...best, version: versionParts(version) });
+    }
+  return found
+    .sort((a, b) => compareVersions(a.version, b.version) || b.mtime - a.mtime)
+    .map((f) => f.path);
+}
+/**
+ * Find a harness executable. Order: real executables on PATH and in the usual install folders,
+ * then the Claude/Codex desktop app bundles, then `.cmd`/`.bat` shims (Windows). A real
+ * executable beats a shim because shims launched through cmd.exe cannot carry line breaks in
+ * arguments. `opts` exists so tests can run against a fake machine.
+ */
+export async function findExecutable(
+  name: string,
+  opts: Partial<BundleOptions> = {},
+) {
+  const platform = opts.platform ?? process.platform;
+  const home = opts.home ?? homedir(),
+    env = opts.env ?? process.env;
+  const win = platform === "win32";
+  const names = executableNames(name, platform);
+  const direct = names.filter((n) => !/\.(cmd|bat)$/i.test(n));
+  const shims = names.filter((n) => !direct.includes(n));
+  const paths = (env.PATH ?? "").split(win ? ";" : delimiter).filter(Boolean);
   // Tests set AGENTTEAM_DISCOVERY_PATH_ONLY=1 so scans never find the developer's real installs.
-  const pathOnly = process.env.AGENTTEAM_DISCOVERY_PATH_ONLY === "1";
+  const pathOnly = env.AGENTTEAM_DISCOVERY_PATH_ONLY === "1";
   const dirs = pathOnly
     ? paths
     : [
@@ -119,13 +238,13 @@ export async function findExecutable(name: string) {
         "/opt/homebrew/bin",
         "/usr/local/bin",
       ];
-  if (process.platform === "win32" && !pathOnly)
+  if (win && !pathOnly)
     dirs.push(
-      join(process.env.LOCALAPPDATA ?? home, "Microsoft", "WinGet", "Links"),
-      join(process.env.APPDATA ?? home, "npm"),
+      join(env.LOCALAPPDATA ?? home, "Microsoft", "WinGet", "Links"),
+      join(env.APPDATA ?? home, "npm"),
     );
-  const candidates = dirs.flatMap((dir) => names.map((n) => join(dir, n)));
-  if (process.platform === "darwin" && name === "codex" && !pathOnly)
+  const candidates = dirs.flatMap((dir) => direct.map((n) => join(dir, n)));
+  if (platform === "darwin" && name === "codex" && !pathOnly)
     for (const root of ["/Applications", join(home, "Applications")])
       for (const app of ["Codex.app", "ChatGPT.app"])
         candidates.push(
@@ -136,7 +255,7 @@ export async function findExecutable(name: string) {
           ),
           join(root, app, "Contents/Resources/codex"),
         );
-  if (process.platform === "darwin" && name === "wolframscript" && !pathOnly) {
+  if (platform === "darwin" && name === "wolframscript" && !pathOnly) {
     for (const root of ["/Applications", join(home, "Applications")])
       try {
         for (const app of (await readdir(root))
@@ -146,16 +265,22 @@ export async function findExecutable(name: string) {
           candidates.push(join(root, app, "Contents/MacOS/wolframscript"));
       } catch {}
   }
-  if (name === "wolframscript" && process.env.AGENTTEAM_WOLFRAMSCRIPT)
-    candidates.unshift(process.env.AGENTTEAM_WOLFRAMSCRIPT);
-  for (const path of candidates)
+  if (name === "wolframscript" && env.AGENTTEAM_WOLFRAMSCRIPT)
+    candidates.unshift(env.AGENTTEAM_WOLFRAMSCRIPT);
+  const exists = async (path: string) => {
     try {
-      await access(
-        path,
-        process.platform === "win32" ? constants.F_OK : constants.X_OK,
-      );
-      return path;
-    } catch {}
+      await access(path, win ? constants.F_OK : constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  for (const path of candidates) if (await exists(path)) return path;
+  if (!pathOnly)
+    for (const path of await bundledExecutables(name, { platform, home, env }))
+      if (await exists(path)) return path;
+  for (const path of dirs.flatMap((dir) => shims.map((n) => join(dir, n))))
+    if (await exists(path)) return path;
   return null;
 }
 export async function codexModels(
@@ -255,20 +380,53 @@ async function probeVersion(executable: string) {
   });
   return result.stdout.trim().split(/\r?\n/)[0].slice(0, 120) || null;
 }
+/**
+ * Read `loggedIn` from `claude auth status --json` output. Returns null when the output holds no
+ * JSON object with a boolean `loggedIn` (tolerates noise around the first `{...}` block).
+ */
+export function parseClaudeAuthStatus(stdout: string): boolean | null {
+  const parse = (text: string) => {
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      return undefined;
+    }
+  };
+  let parsed = parse(stdout);
+  if (parsed === undefined) {
+    const start = stdout.indexOf("{");
+    const end = stdout.lastIndexOf("}");
+    if (start >= 0 && end > start) parsed = parse(stdout.slice(start, end + 1));
+  }
+  const loggedIn =
+    parsed && typeof parsed === "object"
+      ? (parsed as { loggedIn?: unknown }).loggedIn
+      : undefined;
+  return typeof loggedIn === "boolean" ? loggedIn : null;
+}
 export const systemScanDeps: ScanDeps = {
   find: findExecutable,
   check: checkExecutable,
   codexModels,
   async claudeAuth(executable) {
     const plan = await planSpawn(executable, ["auth", "status", "--json"]);
-    const result = await exec(plan.command, plan.args, {
-      timeout: 8000,
-      maxBuffer: 128000,
-      windowsHide: true,
-      ...plan.options,
-    });
-    const parsed = JSON.parse(result.stdout);
-    return typeof parsed.loggedIn === "boolean" ? parsed.loggedIn : null;
+    let stdout: string;
+    try {
+      ({ stdout } = await exec(plan.command, plan.args, {
+        timeout: 8000,
+        maxBuffer: 128000,
+        windowsHide: true,
+        ...plan.options,
+      }));
+    } catch (error) {
+      // Signed out, the CLI exits non-zero but still prints the status JSON on stdout.
+      const output = (error as { stdout?: unknown }).stdout;
+      const status =
+        typeof output === "string" ? parseClaudeAuthStatus(output) : null;
+      if (status === null) throw error;
+      return status;
+    }
+    return parseClaudeAuthStatus(stdout);
   },
   version: probeVersion,
 };

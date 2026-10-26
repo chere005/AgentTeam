@@ -183,8 +183,12 @@ test("assistant changes: reviewable diff, approval, stale proposals, audit log, 
     await expect(page.locator(".message-focus")).toContainText("needle");
 
     // ---- scroll and draft are kept per agent -------------------------------------------------
-    const box = page.locator(".messages");
-    await box.evaluate((el) => (el.scrollTop = 300));
+    const box = page.locator(".chat-body");
+    // Fire the scroll event now: a hidden test window may deliver it only on its next frame.
+    await box.evaluate((el) => {
+      el.scrollTop = 300;
+      el.dispatchEvent(new Event("scroll"));
+    });
     await page
       .getByLabel("Message", { exact: true })
       .fill("unsent draft for lead");

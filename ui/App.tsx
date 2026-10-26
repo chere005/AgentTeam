@@ -49,12 +49,16 @@ import { LayoutSettings } from "./components/LayoutMenu";
 import { ThemeSettings } from "./components/ThemeSettings";
 import { useUnsavedGuard } from "./components/UnsavedGuard";
 import { TeamSwitcher, TeamNotice } from "./components/TeamSwitcher";
+import { ReadinessStrip } from "./components/ReadinessStrip";
+import { agentDisplayName } from "./agent-identity";
+import { SIGN_IN_EVENT, requestSignIn } from "./sign-in";
 import { openAssignProject } from "./components/Projects";
 import { TeamSettings } from "./components/TeamSettings";
 import { filterSnapshot, itemTeam, teamIndex, teamKey } from "./team-view";
 import { DialogFocusManager, ShortcutHelp } from "./components/A11y";
 import { focusables } from "./components/A11y";
 import { clampWidth, type PaneLayout } from "./workspace";
+import { middleClickProps } from "./middle-click";
 import { TeamChatView } from "./components/TeamChatView";
 import { HelpMenu } from "./components/HelpMenu";
 import { ProjectTrace } from "./components/ProjectTrace";
@@ -291,6 +295,26 @@ export default function App() {
     setMainView("canvas");
     setTabs((t) => openTab(t, id));
   };
+  // Sign in (readiness strip, Settings): the Terminal tab opens a new shell and types the
+  // backend's sign-in command (ui/sign-in.ts).
+  const openFeatureRef = useRef(openFeature);
+  openFeatureRef.current = openFeature;
+  const signIn = useCallback((runtime: string) => {
+    requestSignIn(runtime);
+    openFeatureRef.current("terminal");
+  }, []);
+  useEffect(() => {
+    const onSignIn = (e: Event) => {
+      const runtime = (e as CustomEvent<unknown>).detail;
+      if (typeof runtime === "string") signIn(runtime);
+    };
+    window.addEventListener(SIGN_IN_EVENT, onSignIn);
+    return () => window.removeEventListener(SIGN_IN_EVENT, onSignIn);
+  }, [signIn]);
+  const usedEnvironments = useMemo(
+    () => [...new Set(view.agents.map((a) => a.environment))],
+    [view.agents],
+  );
   const openMainView = (id: MainView) => {
     if (mainView !== id && !canLeaveFileEditor()) return;
     setMainView(id);
@@ -540,6 +564,7 @@ export default function App() {
     data: view,
     selected,
     currentProjectId,
+    currentProject,
     setCurrentProject,
     setSelected: (id: string) =>
       id === selected ? undefined : guard(() => setSelected(id)),
@@ -700,9 +725,9 @@ export default function App() {
     },
     {
       id: "assign",
-      name: "Assign project",
-      description: `Give ${team.name} a goal and a workspace.`,
-      keywords: "project work",
+      name: "Run a task",
+      description: `Tell ${team.name} what to do and where to save its work.`,
+      keywords: "project work assign start",
       run: assignProject,
     },
     {
@@ -882,11 +907,11 @@ export default function App() {
         {ready && members.length > 0 && (
           <button
             className="topbar-assign"
-            title={`Give ${team.name} a project: a goal and a workspace for its agents`}
+            title={`Tell ${team.name} what to do and start its agents`}
             onClick={assignProject}
           >
             <Briefcase size={15} />
-            Assign project
+            Run a task
           </button>
         )}
         <div className="grow" />
@@ -1009,6 +1034,16 @@ export default function App() {
         </span>
       </header>
       {notice && <TeamNotice text={notice} dismiss={() => setNotice("")} />}
+      <ReadinessStrip
+        environments={usedEnvironments}
+        openSettings={() => openFeature("settings")}
+        signIn={signIn}
+        tasks={view.workflows.flatMap((workflow) => workflow.tasks)}
+        agentNames={Object.fromEntries(
+          view.agents.map((member) => [member.id, agentDisplayName(member)]),
+        )}
+        openRecovery={() => openFeature("recovery")}
+      />
       <div
         className={`body${mainView === "team-chat" ? " team-chat-mode" : ""}`}
       >
@@ -1068,6 +1103,7 @@ export default function App() {
                       ? " active"
                       : "")
                   }
+                  {...middleClickProps(() => setTabs((t) => closeTab(t, id)))}
                 >
                   <button
                     role="tab"
@@ -1081,7 +1117,7 @@ export default function App() {
                   <button
                     className="icon view-tab-close"
                     aria-label={`Close ${tabName(id)}`}
-                    title="Close tab"
+                    title="Close tab (or middle-click)"
                     onClick={() => setTabs((t) => closeTab(t, id))}
                   >
                     <X size={13} />

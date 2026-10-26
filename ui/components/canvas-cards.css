@@ -68,6 +68,11 @@
 .agent-card .failure::before {
   content: "\26A0\FE0E  ";
 }
+.agent-card .card-waiting {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
 .edge-busy {
   stroke-dasharray: 7 5;
   animation: edge-flow 0.9s linear infinite;

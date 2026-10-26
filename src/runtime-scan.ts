@@ -114,7 +114,7 @@ export async function scanRuntime(
     diagnostics.push({
       level: "error",
       code: "not_found",
-      message: `No ${commandName(runtime.id)} installation was found on PATH or in the usual install locations. Install it or choose an executable.`,
+      message: `No ${commandName(runtime.id)} installation was found on PATH, in the usual install folders or in the Claude and Codex desktop app bundles. Install it or choose an executable.`,
     });
     runtime.note = "Installation not found";
     return runtime;
@@ -164,7 +164,7 @@ export async function scanRuntime(
           level: "warn",
           code: "signed_out",
           message:
-            "Codex is installed but not signed in. Run `codex login` in a terminal.",
+            "Codex is installed but not signed in. Press Sign in (top bar or Settings), or run `codex login` in a terminal.",
         });
       else if (found.authenticated === null)
         diagnostics.push({
@@ -181,7 +181,7 @@ export async function scanRuntime(
           level: "warn",
           code: "signed_out",
           message:
-            "Claude Code is installed but not signed in. Run `claude auth login` in a terminal.",
+            "Claude Code is installed but not signed in. Press Sign in (top bar or Settings), or run `claude auth login` in a terminal.",
         });
       else if (runtime.authenticated === null)
         diagnostics.push({

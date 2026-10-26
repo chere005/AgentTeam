@@ -11,7 +11,7 @@ Feel free to build it, change it, run your own teams on it, etc.
 ## Quick start / Install
 
 1. Download from [GitHub Releases](https://github.com/chere005/AgentTeam/releases). Unsigned, so macOS and Windows ask before the first launch.
-2. Install and sign in to the provider you want to use: Claude Code, Codex or wolframscript.
+2. Install the provider you want to use: Claude Code, Codex or wolframscript (the Claude and Codex desktop apps count). AgentTeam finds it by itself, shows at the top when something is missing or signed out, and its Sign in button starts the provider's own sign-in in the Terminal tab.
 3. Open AgentTeam, insert an example team from the library, assign it a project.
 
 ## Platforms

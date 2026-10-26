@@ -18,6 +18,7 @@ import {
 import type { Proposal } from "./assistant.ts";
 import { proposalProtocol } from "./assistant-protocol.ts";
 import type { TeamService } from "./service.ts";
+import { simpleTaskSupport } from "./simple-task-capabilities.ts";
 
 /**
  * Read-only inspection block for the Team Assistant: the ACTIVE team's agents (ids, roles, current
@@ -200,6 +201,7 @@ export function assistantContext(
         roleType: a.roleType,
         kind: a.kind,
         environment: a.environment,
+        simpleTask: simpleTaskSupport(service, a),
         model: a.model,
         control: a.control,
         parentId: a.parentId,

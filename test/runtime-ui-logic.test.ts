@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { resolveModelState } from "../src/model-choices.ts";
+import {
+  resolveModelState,
+  modelOptions,
+  isSelectableModel,
+  modelOptionLabel,
+  WELL_KNOWN_MODELS,
+} from "../src/model-choices.ts";
 import { invocationSummary } from "../src/invocation-view.ts";
 import { runtimeCapabilities, capabilityLabels } from "../src/capabilities.ts";
 import { commandFor } from "../src/runtime.ts";
@@ -65,6 +71,92 @@ test("model dropdown validates against the installation and never substitutes a 
   assert.equal(pending.status, "pending");
   assert.equal(pending.warning, null);
   assert.equal(pending.unsupportedEffort, null);
+});
+
+test("model dropdown lists every choice and grays out the unusable ones without dropping the saved model", () => {
+  const view = (opts: ReturnType<typeof modelOptions>) =>
+    opts.map((o) => [o.id, o.availability, modelOptionLabel(o)]);
+
+  // Authoritative list: advertised are available; a retired saved model is kept but unavailable.
+  const gone = modelOptions(codex, "gpt-retired");
+  assert.deepEqual(view(gone), [
+    ["default", "available", "Codex default"],
+    ["gpt-a", "available", "GPT A"],
+    ["gpt-b", "available", "GPT B"],
+    [
+      "gpt-retired",
+      "unavailable",
+      "gpt-retired (unavailable in this installation)",
+    ],
+  ]);
+  assert.equal(isSelectableModel(gone.at(-1)!), false);
+  assert.deepEqual(
+    modelOptions(codex, "gpt-a").map((o) => o.id),
+    ["default", "gpt-a", "gpt-b"],
+    "an advertised saved model is not duplicated",
+  );
+  assert.equal(
+    modelOptions(codex, " ").length,
+    3,
+    "a blank saved model adds nothing",
+  );
+
+  // Alias-only list: the well-known explicit IDs are offered, unverified but selectable.
+  const aliases = modelOptions(claude, "claude-custom-1");
+  const byId = Object.fromEntries(aliases.map((o) => [o.id, o]));
+  for (const id of ["default", "sonnet", "opus", "haiku"])
+    assert.equal(byId[id].availability, "available", id);
+  for (const id of [
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
+    "claude-fable-5-1",
+  ]) {
+    assert.equal(byId[id].availability, "unverified", id);
+    assert.ok(isSelectableModel(byId[id]), id);
+  }
+  assert.equal(
+    modelOptionLabel(byId["claude-custom-1"]),
+    "claude-custom-1 (not verified)",
+  );
+  assert.equal(
+    aliases.filter((o) => o.id === "opus").length,
+    1,
+    "advertised aliases are not repeated from the well-known list",
+  );
+  assert.equal(
+    resolveModelState(claude, "claude-opus-5-5", null).status,
+    "unlisted",
+    "the dropdown entry does not change what the resolver reports",
+  );
+  assert.ok(WELL_KNOWN_MODELS.claude.some((m) => m.id === "claude-opus-5-5"));
+  assert.equal(WELL_KNOWN_MODELS.codex, undefined);
+
+  // Not installed: everything except the provider default is grayed out.
+  const missing = modelOptions({ ...claude, installed: false }, "opus");
+  for (const o of missing)
+    assert.equal(
+      o.availability,
+      o.id === "default" ? "available" : "unknown-installation",
+      o.id,
+    );
+  assert.equal(
+    modelOptionLabel(missing.find((o) => o.id === "opus")!),
+    "Opus (installation not detected)",
+  );
+  assert.ok(!missing.filter((o) => o.id !== "default").some(isSelectableModel));
+
+  // Still loading: nothing is marked, the saved model is listed, Codex falls back to the default.
+  const pending = modelOptions(undefined, "gpt-z", "codex");
+  assert.deepEqual(view(pending), [
+    ["default", "available", "Provider default"],
+    ["gpt-z", "unverified", "gpt-z"],
+  ]);
+  assert.ok(pending.every(isSelectableModel));
+  assert.ok(
+    modelOptions(undefined, null, "claude").some(
+      (o) => o.id === "claude-fable-5-1",
+    ),
+  );
 });
 
 test("invocation summary names the running children that fill the limit and why others wait", () => {

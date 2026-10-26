@@ -60,10 +60,11 @@ test("validation gate: Wolfram team project, model verification, panel, cancel, 
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await openFeature(page, "Projects");
     await page
-      .getByRole("button", { name: "Assign project", exact: true })
+      .getByRole("button", { name: "Run a task", exact: true })
       .first()
       .click();
     const form = page.getByRole("form", { name: "Assign project" });
+    await form.getByLabel("Work type").selectOption("project");
     await form
       .getByLabel("Project goal")
       .fill("Check that Sin^2 + Cos^2 equals 1 for real arguments");
@@ -76,9 +77,13 @@ test("validation gate: Wolfram team project, model verification, panel, cancel, 
     await expect(wf.getByTestId("gate-line").first()).toContainText(
       "no validation record yet",
     );
-    // Model mapping is unverified (no runtimes discovered in test mode) and resume is refused.
+    // Model mapping is unverified (no runtimes discovered in test mode, so nothing was checked
+    // automatically) and resume is refused; "Check again" runs the check now.
     await expect(wf.getByLabel("Model mapping")).toContainText("not verified");
-    await wf.getByRole("button", { name: "Verify models" }).click();
+    await expect(wf.getByTestId("model-check-status")).toContainText(
+      "Checked automatically once the installed providers were detected",
+    );
+    await wf.getByRole("button", { name: "Check again" }).click();
     await expect(wf.getByLabel("Model mapping")).toContainText(
       "not installed or detected",
     );
@@ -95,7 +100,7 @@ test("validation gate: Wolfram team project, model verification, panel, cancel, 
         return String(e);
       }
     });
-    expect(refused).toContain("Verify the model mapping");
+    expect(refused).toContain("The model check did not pass");
 
     // Validation panel on the first validation-required task.
     const task = wf.locator("details.task", {

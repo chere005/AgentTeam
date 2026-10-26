@@ -26,6 +26,7 @@ import { ToolSessions } from "./tool-endpoint.ts";
 import { GroupChats } from "./group-chat.ts";
 import { ensureWorkspaceBaseline } from "./workspace-changes.ts";
 import { codexTaskPermissions } from "./provider-filesystem.ts";
+import { assertProviderCapabilities } from "./provider-capabilities.ts";
 
 /** Provider file access is available only inside the current unrestricted attachment. */
 function workspaceCapabilities(plan: LaunchPlan) {
@@ -254,6 +255,9 @@ export function commandFor(
         ]),
     "-c",
     'approval_policy="never"',
+    ...(plan.executionMode === "file-only"
+      ? ["-c", "features.shell_tool=false"]
+      : []),
   ];
   if (writable && !plan.taskScoped)
     for (const root of roots)
@@ -315,7 +319,7 @@ export function decodeEvent(environment: string, event: any): RuntimeEvent[] {
             throw new AppError(
               401,
               "authentication_required",
-              "Claude Code needs you to sign in again. Run `claude auth login` in Terminal, then retry this message.",
+              "Claude Code needs you to sign in again. Press Sign in (top bar or Settings) or run `claude auth login` in a terminal, then retry this message.",
             );
           events.push({ type: "text", data: content.text });
         }
@@ -661,6 +665,11 @@ export class RunManager {
   readiness?: (environment: string) => Readiness;
   /** Provider executor for chat runs; replaceable so sandboxes (playground) never reach real CLIs. */
   execute: typeof executeCommand = executeCommand;
+  /** Actual provider host; fixture executors can explicitly select their simulated platform. */
+  runtimePlatform: NodeJS.Platform = process.platform;
+  assertCommandReady(command: Command, environment: string) {
+    assertProviderCapabilities(command, environment, this.runtimePlatform);
+  }
   constructor(service: TeamService, enabled: boolean, cwd: string) {
     this.service = service;
     this.enabled = enabled;
@@ -782,6 +791,7 @@ export class RunManager {
         prompt;
     }
     let command = commandFor(plan, session.providerSessionId, prompt, this.cwd);
+    this.assertCommandReady(command, plan.environment);
     store.transaction(() => {
       const current = store.get<Session>("session", sessionId);
       assert(
@@ -929,6 +939,8 @@ export class RunManager {
             const session = store.get<Session>("session", id);
             session.providerSessionId = String(event.data);
             store.put("session", session);
+            if (conversationTask)
+              this.service.recovery.observe(conversationTask, event);
           }
           if (event.type === "text")
             text += (command.acp ? "" : text ? "\n" : "") + String(event.data);
@@ -967,11 +979,29 @@ export class RunManager {
           );
         store.emit("session.completed", id);
       });
-      if (conversationTask)
-        this.service.transitionTask(conversationTask.id, {
-          status: "completed",
-          result: text.slice(0, 100000),
-        });
+      if (conversationTask) {
+        await this.service.delegations.verifyChildren(conversationTask);
+        if (
+          !this.service.delegations.defer(
+            conversationTask,
+            text,
+            command.cwd,
+            id,
+          )
+        ) {
+          const evidence = await this.service.limits.evaluate(
+            conversationTask,
+            text.slice(0, 100000),
+            command.cwd,
+          );
+          if (evidence && !evidence.passed)
+            throw new Error(this.service.limits.failedChecksText(evidence));
+          this.service.transitionTask(conversationTask.id, {
+            status: "completed",
+            result: text.slice(0, 100000),
+          });
+        }
+      }
     } catch (e) {
       if (effectId) this.service.recovery.failEffect(effectId, e);
       if (this.executionInterrupts.has(id) && text.trim()) {

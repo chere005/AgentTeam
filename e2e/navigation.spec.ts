@@ -117,7 +117,7 @@ test("first run shows four main views, a useful empty state and a slim top bar",
       bar.getByRole("button", { name: /^Attention inbox/ }),
     ).toHaveCount(0);
     await expect(
-      bar.getByRole("button", { name: "Assign project" }),
+      bar.getByRole("button", { name: "Run a task" }),
     ).toHaveCount(0);
     // "Insert an example team" opens the library as a closable tab.
     await empty.getByRole("button", { name: "Insert an example team" }).click();
@@ -210,7 +210,7 @@ test("Cmd+Shift+P opens commands and Cmd+P searches files and chats with scope p
   });
 });
 
-test("Chat shows a live run timer and the one-hour provider budget", async () => {
+test("Chat shows elapsed activity without inventing completion progress", async () => {
   await withApp(async ({ directory, start }) => {
     const { page, errors } = await start();
     const agent = await api(page, "POST", "/agents", {
@@ -240,10 +240,12 @@ test("Chat shows a live run timer and the one-hour provider budget", async () =>
     const progress = page.getByTestId("run-progress");
     await expect(progress).toBeVisible();
     await expect(progress).toContainText("Long-running Builder is working");
-    await expect(progress).toContainText("elapsed · up to");
-    const bar = progress.getByRole("progressbar");
-    expect(Number(await bar.getAttribute("aria-valuenow"))).toBeGreaterThan(0);
-    await expect(bar).toHaveAttribute("aria-valuemax", "100");
+    await expect(progress).toContainText(/1m \d+s elapsed/);
+    await expect(progress).not.toContainText(/remaining|up to|%/);
+    await expect(progress.getByRole("progressbar")).toHaveCount(0);
+    await expect(
+      page.getByText("Long-running Builder is working", { exact: true }),
+    ).toHaveCount(1);
     expect(errors).toEqual([]);
   });
 });
@@ -337,6 +339,27 @@ test("feature tabs are remembered per team; the four main views are always avail
     await expect(tab(page, "Projects")).toBeVisible();
     await expect(tab(page, "Git")).toHaveAttribute("aria-selected", "true");
     await expect(tab(page, "Inbox")).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+});
+
+test("middle-clicking a feature tab closes it; the permanent views ignore middle click", async () => {
+  await withApp(async ({ start }) => {
+    const { page, errors } = await start();
+    await openFeature(page, "Projects");
+    await expect(tab(page, "Projects")).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await tab(page, "Chat").click({ button: "middle" });
+    await expect(tab(page, "Chat")).toHaveCount(1);
+    await expect(tab(page, "Projects")).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await tab(page, "Projects").click({ button: "middle" });
+    await expect(tab(page, "Projects")).toHaveCount(0);
+    await expect(tab(page, "Layout")).toHaveAttribute("aria-selected", "true");
     expect(errors).toEqual([]);
   });
 });

@@ -45,7 +45,14 @@ export type ExampleField =
       max: number;
       default: number;
     }
-  | { key: string; label: string; kind: "text"; default: string };
+  | {
+      key: string;
+      label: string;
+      kind: "text";
+      default: string;
+      /** Set for a model ID: the environment whose models the UI offers in a dropdown. */
+      environment?: string;
+    };
 
 type Example = {
   id: string;
@@ -61,6 +68,13 @@ const text = (key: string, label: string, value: string): ExampleField => ({
   kind: "text",
   default: value,
 });
+/** A model ID option, picked from the given environment's models. */
+const model = (
+  key: string,
+  label: string,
+  value: string,
+  environment: string,
+): ExampleField => ({ key, label, kind: "text", default: value, environment });
 
 const PI_300_REFERENCE =
   "3.14159265358979323846264338327950288419716939937510582097494459230781640628620899862803482534211706798214808651328230664709384460955058223172535940812848111745028410270193852110555964462294895493038196442881097566593344612847564823378678316527120190914564856692346034861045432664821339360726024914127";
@@ -253,24 +267,42 @@ const EXAMPLES: Example[] = [
         max: MAX_WORKERS,
         default: 3,
       },
-      text("planner", "Planner model (Opus 5.5)", DEFAULT_MODELS.planner),
-      text("worker", "Worker model (Sonnet 5.5)", DEFAULT_MODELS.worker),
-      text(
+      model(
+        "planner",
+        "Planner model (Opus 5.5)",
+        DEFAULT_MODELS.planner,
+        "claude",
+      ),
+      model(
+        "worker",
+        "Worker model (Sonnet 5.5)",
+        DEFAULT_MODELS.worker,
+        "claude",
+      ),
+      model(
         "codexReviewer",
         "Codex reviewer model",
         DEFAULT_MODELS.codexReviewer,
+        "codex",
       ),
-      text(
+      model(
         "fableReviewer",
         "Fable reviewer model (Fable 5.1)",
         DEFAULT_MODELS.fableReviewer,
+        "claude",
       ),
-      text(
+      model(
         "adjudicator",
         "Adjudicator model (Fable 5.1)",
         DEFAULT_MODELS.adjudicator,
+        "claude",
       ),
-      text("reporter", "Reporter model (Fable 5.1)", DEFAULT_MODELS.reporter),
+      model(
+        "reporter",
+        "Reporter model (Fable 5.1)",
+        DEFAULT_MODELS.reporter,
+        "claude",
+      ),
       text("codexEffort", "Codex reviewer effort", DEFAULT_CODEX_EFFORT),
     ],
     build: (o) =>
@@ -300,8 +332,8 @@ const EXAMPLES: Example[] = [
         max: 2,
         default: 2,
       },
-      text("leadModel", "Lead model (Opus 5.5)", "claude-opus-5-5"),
-      text("wolframModel", "Wolfram model", "default"),
+      model("leadModel", "Lead model (Opus 5.5)", "claude-opus-5-5", "claude"),
+      model("wolframModel", "Wolfram model", "default", "wolfram"),
     ],
     build: (o) =>
       wolframTeamTemplate({
@@ -315,8 +347,8 @@ const EXAMPLES: Example[] = [
     shape:
       "Engineering Manager → frontend, backend, QA, technical writer; mandatory code reviewer; advisory security reviewer",
     fields: [
-      text("claudeModel", "Claude agents' model", "default"),
-      text("codexModel", "Codex agents' model", "default"),
+      model("claudeModel", "Claude agents' model", "default", "claude"),
+      model("codexModel", "Codex agents' model", "default", "codex"),
     ],
     build: (o) => {
       const t = productFeatureTemplate();

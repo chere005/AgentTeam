@@ -15,7 +15,22 @@ export function explicitlyReportsNoWork(value: string | null | undefined) {
     /\b(?:nothing|no files?)\s+(?:was|were|has been|have been)\s+(?:created|written|modified|changed|built|run|executed)\b/i.test(
       value,
     );
-  return unableToComplete && (noToolsToAct || nothingDone);
+  const missingFiles =
+    /\b(?:none of [^.\n]{0,100}\bfiles?|no files?)\s+exist(?:s)?(?:\s+yet)?\b/i.test(
+      value,
+    );
+  const allDelegatedWorkQueued =
+    /\b(?:all|every)\s+[^.\n]{0,50}\b(?:tasks?|assignments?)\s+(?:are|is|remain|remains|still)\s+(?:still\s+)?queued\b/i.test(
+      value,
+    );
+  const nothingExecuted =
+    /\bnothing\s+(?:has\s+|have\s+)?(?:been\s+)?(?:run|executed|started)\b/i.test(
+      value,
+    );
+  return (
+    (unableToComplete && (noToolsToAct || nothingDone)) ||
+    (missingFiles && allDelegatedWorkQueued && nothingExecuted)
+  );
 }
 
 /**

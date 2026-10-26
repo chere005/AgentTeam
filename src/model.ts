@@ -217,6 +217,8 @@ export const taskSchema = z
     completionCriteria: z.string().min(1),
     requiresValidation: z.boolean().optional(),
     parentTaskId: z.string().optional(),
+    /** Task-local capability narrowing. Omitted on older tasks means the agent's usual tools. */
+    executionMode: z.enum(["standard", "file-only"]).optional(),
     /** Scope evidence for specialist/mandatory-review rules (src/orchestration.ts). */
     changedFiles: z.array(z.string().max(500)).max(1000).optional(),
     tags: z.array(z.string().max(100)).max(100).optional(),
@@ -258,7 +260,7 @@ export type Task = z.infer<typeof taskSchema> & {
     | "cancelled"
     /** Backend stopped mid-run; resumable from its last checkpoint (src/checkpoints.ts). */
     | "interrupted"
-    /** Waiting for an explicit user decision about an uncertain external effect. */
+    /** Waiting for delegated work, an unavailable capability, or an uncertain-effect decision. */
     | "blocked";
   result?: string;
   queuedAt?: string;

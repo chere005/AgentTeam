@@ -1,5 +1,8 @@
 import { useEffect, useRef } from "react";
 import { api } from "../api";
+import { WorkspaceWatchSubscriptions } from "../workspace-watches";
+
+const subscriptions = new WorkspaceWatchSubscriptions(api);
 
 /**
  * Subscribe to debounced external-change events for one workspace while a view is mounted.
@@ -17,12 +20,7 @@ export function useWorkspaceWatch(
   useEffect(() => {
     if (!agentId || !workspace || !enabled || !window.agentteam) return;
     let alive = true;
-    const start = () =>
-      void api(`/agents/${agentId}/watch/start`, "POST", { workspace }).catch(
-        () => {},
-      );
-    start();
-    const renew = setInterval(start, 30_000);
+    const release = subscriptions.subscribe(agentId, workspace);
     const off = window.agentteam.onEvent((e) => {
       if (
         e.type === "workspace.changed" &&
@@ -34,11 +32,8 @@ export function useWorkspaceWatch(
     });
     return () => {
       alive = false;
-      clearInterval(renew);
       off();
-      void api(`/agents/${agentId}/watch/stop`, "POST", { workspace }).catch(
-        () => {},
-      );
+      release();
     };
   }, [agentId, workspace, enabled]);
 }

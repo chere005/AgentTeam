@@ -1264,6 +1264,12 @@ export class WorkspaceService {
 type ReviewResult = Awaited<ReturnType<WorkspaceService["gitInfo"]>> & {
   source?: "git" | "folder";
   baselineAt?: string;
+  /** Incomplete folder coverage must never be presented as a clean comparison. */
+  scanIncomplete?: boolean;
+  baselineIncomplete?: boolean;
+  comparisonNote?: string;
+  /** Present-day text when the saved folder snapshot has no original for this file. */
+  currentContent?: string;
   files: { status: string; path: string; from?: string; similarity?: number }[];
   filesTruncated: boolean;
   compare: {

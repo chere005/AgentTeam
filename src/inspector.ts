@@ -5,7 +5,12 @@ import { queueReasons, resourceBusyReason } from "./queue.ts";
 import { realpath } from "node:fs/promises";
 import { overlaps, contains } from "./resources.ts";
 import { priorityName } from "./priorities.ts";
-import { invocationSummary } from "./invocation-view.ts";
+import {
+  failedInvocationDependencies,
+  invocationSummary,
+  invocationFailureCause,
+  sandboxUnavailable,
+} from "./invocation-view.ts";
 import { Redactor } from "./redact.ts";
 import { filesystemPolicy } from "./filesystem-policy.ts";
 import type { Event } from "./store.ts";
@@ -622,6 +627,7 @@ function explainTask(
 ): WaitExplanation {
   const store = service.store;
   const task = store.get<Task>("task", taskId);
+  const state = service.taskState(taskId);
   const agent = store.get<Agent>("agent", task.agentId);
   const wf = store.get<Workflow>("workflow", task.workflowId);
   const reasons: WaitReason[] = [];
@@ -633,7 +639,9 @@ function explainTask(
       subject,
       status: task.status,
       waiting,
-      headline: first ? `Waiting: ${first.title}` : fallback,
+      headline: first
+        ? `${["dependency-failed", "sandbox-unavailable", "delegation-blocked"].includes(first.code) ? "Blocked" : "Waiting"}: ${first.title}`
+        : fallback,
       reasons,
     };
   };
@@ -673,6 +681,21 @@ function explainTask(
   }
   if (task.status === "completed" || task.status === "cancelled")
     return finish(false, `Task ${task.status}; nothing is pending`);
+  if (
+    ["failed", "blocked"].includes(task.status) &&
+    (state.runtimeBlocker || sandboxUnavailable(task.result))
+  ) {
+    push({
+      code: "sandbox-unavailable",
+      blocking: true,
+      title: "Required sandbox is unavailable",
+      detail:
+        state.runtimeBlocker?.message ??
+        "Choose a runtime with supported sandboxing (on Windows, a configured WSL2 runtime), or remove an unnecessary shell grant for file-only work. Retry after fixing the configuration; sandbox enforcement stays enabled.",
+      refs: { recoveryTaskId: task.id },
+    });
+    return finish(true, "Blocked: required sandbox is unavailable");
+  }
   if (task.status === "failed") {
     const gate = service.recovery.retryGate(task);
     push({
@@ -687,6 +710,54 @@ function explainTask(
     return finish(false, "Task failed; it will not start without a retry");
   }
   if (task.status === "interrupted" || task.status === "blocked") {
+    const delegation = state.delegation;
+    if (delegation && delegation.state !== "continuing" && !uncertain.length) {
+      push({
+        code:
+          delegation.state === "blocked"
+            ? "delegation-blocked"
+            : "delegation-pending",
+        blocking: true,
+        title:
+          delegation.state === "blocked"
+            ? "Delegated work needs attention"
+            : "Waiting for delegated work",
+        detail: delegation.message,
+        refs: { childTaskIds: delegation.childIds },
+      });
+      return finish(true, delegation.message);
+    }
+    const children = store
+      .list<Task>("task")
+      .filter(
+        (child) =>
+          child.parentTaskId === task.id && child.status !== "completed",
+      );
+    if (task.status === "blocked" && children.length && !uncertain.length) {
+      const failed = children.filter((child) =>
+        ["failed", "cancelled", "blocked", "interrupted"].includes(
+          child.status,
+        ),
+      );
+      push({
+        code: failed.length ? "delegation-blocked" : "delegation-pending",
+        blocking: true,
+        title: failed.length
+          ? "Delegated work needs attention"
+          : "Waiting for delegated work",
+        detail: children
+          .map(
+            (child) =>
+              `"${child.title}" (${name(child.agentId)}) is ${child.status}${failed.includes(child) ? `: ${invocationFailureCause(child)}` : ""}`,
+          )
+          .join("; "),
+        refs: {
+          childTaskIds: children.map((child) => child.id),
+          recoveryTaskIds: failed.map((child) => child.id),
+        },
+      });
+      return finish(true, "Waiting for delegated work");
+    }
     const s = service.recovery.state(task.id);
     push({
       code: task.status,
@@ -749,7 +820,25 @@ function explainTask(
   const unfinished = task.dependsOn
     .map((id) => store.get<Task>("task", id))
     .filter((d) => d.status !== "completed");
-  if (unfinished.length)
+  const failedDependencies = failedInvocationDependencies(
+    task,
+    store.list<Task>("task"),
+    Object.fromEntries(store.list<Agent>("agent").map((a) => [a.id, a.name])),
+  );
+  if (failedDependencies.length)
+    push({
+      code: "dependency-failed",
+      blocking: true,
+      title: "A prerequisite failed and needs recovery",
+      detail: failedDependencies
+        .map((d) => `"${d.title}" (${d.agentName}) is ${d.status}: ${d.cause}`)
+        .join("; "),
+      refs: {
+        dependencyIds: failedDependencies.map((d) => d.id),
+        recoveryTaskIds: failedDependencies.map((d) => d.id),
+      },
+    });
+  else if (unfinished.length)
     push({
       code: "dependencies",
       blocking: true,
@@ -834,7 +923,7 @@ function explainTask(
         code: "runtime-unavailable",
         blocking: true,
         title: `${agent.environment} runtime is unavailable`,
-        detail: `${ready.message}. The task will fail with runtime_unavailable when started.`,
+        detail: `${ready.message}. If it starts now it fails with runtime_unavailable and is re-queued automatically once the runtime is ready.`,
       });
   }
   if (!ctx.liveEnabled())

@@ -4,6 +4,7 @@ import { api, type TeamEvent } from "../api";
 import { starterTeams } from "./starterTeams";
 import { TeamPacks, applyInsertedGroups } from "./TeamPacks";
 import { requestArrange } from "../arrange-request";
+import { ModelPicker, useRuntimeList } from "./ModelPicker";
 import "./teams.css";
 
 export type Point = { x: number; y: number };
@@ -43,7 +44,14 @@ type ExampleField =
       max: number;
       default: number;
     }
-  | { key: string; label: string; kind: "text"; default: string };
+  | {
+      key: string;
+      label: string;
+      kind: "text";
+      default: string;
+      /** A model ID field: offered as a dropdown of this environment's models. */
+      environment?: string;
+    };
 type Example = {
   id: string;
   name: string;
@@ -363,19 +371,8 @@ export function InsertTeamDialog({
     [embedded, setEmbedded] = useState(false),
     [preview, setPreview] = useState<Preview | null>(null),
     [error, setError] = useState(""),
-    [busy, setBusy] = useState(false),
-    [advertised, setAdvertised] = useState<Record<string, string[]>>({});
-  useEffect(() => {
-    api("/runtimes")
-      .then((r: any) =>
-        setAdvertised(
-          Object.fromEntries(
-            r.runtimes.map((x: any) => [x.id, x.models.map((m: any) => m.id)]),
-          ),
-        ),
-      )
-      .catch(() => undefined);
-  }, []);
+    [busy, setBusy] = useState(false);
+  const runtimes = useRuntimeList();
   const body = () => ({
     ...source,
     workspaces: Object.fromEntries(
@@ -535,8 +532,9 @@ export function InsertTeamDialog({
       )}
       <h3>Models and environments</h3>
       <p className="hint">
-        Leave a replacement empty to keep the template’s model. Nothing is
-        substituted unless you choose it.
+        Keep the template’s model or pick a replacement. Nothing is substituted
+        unless you choose it; grayed-out models are not available in the
+        detected installation.
       </p>
       <div className="team-slots">
         {pairs.map((pair) => {
@@ -550,20 +548,14 @@ export function InsertTeamDialog({
                 <b>{env}</b>
                 <small>template model: {model}</small>
               </div>
-              <input
-                aria-label={`Replacement model for ${pair}`}
-                list={`models-${env}`}
-                placeholder="Keep as is"
+              <ModelPicker
+                label={`Replacement model for ${pair}`}
+                environment={env}
+                runtimes={runtimes}
+                keepLabel={`Keep template model (${model})`}
                 value={models[pair] ?? ""}
-                onChange={(e) =>
-                  setModels({ ...models, [pair]: e.target.value })
-                }
+                onChange={(m) => setModels({ ...models, [pair]: m })}
               />
-              <datalist id={`models-${env}`}>
-                {(advertised[env] ?? []).map((m) => (
-                  <option key={m} value={m} />
-                ))}
-              </datalist>
             </div>
           );
         })}
@@ -686,6 +678,7 @@ export function ExampleInsertDialog({
     } | null>(null),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  const runtimes = useRuntimeList();
   const latest = useRef(0);
   useEffect(() => {
     const run = ++latest.current;
@@ -783,6 +776,14 @@ export function ExampleInsertDialog({
                   <option key={i}>{f.min + i}</option>
                 ))}
               </select>
+            ) : f.environment ? (
+              <ModelPicker
+                label={f.label}
+                environment={f.environment}
+                runtimes={runtimes}
+                value={String(options[f.key] ?? "")}
+                onChange={(m) => setOptions({ ...options, [f.key]: m })}
+              />
             ) : (
               <input
                 aria-label={f.label}

@@ -23,7 +23,12 @@ import {
   type Snapshot,
   type TeamEvent,
 } from "../api";
-import { resolveModelState } from "../../src/model-choices";
+import {
+  isSelectableModel,
+  modelOptionLabel,
+  modelOptions,
+  resolveModelState,
+} from "../../src/model-choices";
 import { InvocationPanel } from "./InvocationPanel";
 import { usePersistedDetails } from "./persisted-details";
 import { RoleTypeSelect } from "./RoleType";
@@ -195,15 +200,9 @@ export function AgentFormSections({
   }, []);
   const runtime = runtimes.find((r) => r.id === form.environment);
   const modelState = resolveModelState(runtime, form.model, form.effort);
-  const modelOptions = modelState.options;
+  // Every choice, the saved model included; unusable ones are grayed out, never dropped.
+  const modelChoices = modelOptions(runtime, form.model, form.environment);
   const effortOptions = modelState.efforts;
-  const savedModelLabel = {
-    unavailable: " (unavailable in this installation)",
-    unlisted: " (not verified)",
-    unverifiable: " (installation not detected)",
-    pending: "",
-    ok: "",
-  }[modelState.status];
   const compatible = (catalog?.[source]?.groups?.[form.environment] ??
     []) as any[];
   const allSkills = useMemo(() => {
@@ -450,16 +449,15 @@ export function AgentFormSections({
                 }
               }}
             >
-              {modelOptions.map((m: any) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
+              {modelChoices.map((m) => (
+                <option
+                  key={m.id}
+                  value={m.id}
+                  disabled={!isSelectableModel(m)}
+                >
+                  {modelOptionLabel(m)}
                 </option>
               ))}
-              {!modelOptions.some((m: any) => m.id === form.model) && (
-                <option value={form.model}>
-                  {form.model + savedModelLabel}
-                </option>
-              )}
               <option value="custom">Custom model ID (not validated)…</option>
             </select>
           </label>
@@ -779,6 +777,7 @@ export function AgentFormSections({
           agent={agent}
           limit={form.maxConcurrentInvocations}
           data={data}
+          openRecovery={openFeature ? () => openFeature("recovery") : undefined}
         />
       )}
 
@@ -1231,7 +1230,8 @@ export function AgentPanel({
   }, [source]);
   const activity = data.activity.find((a) => a.agentId === agent.id);
   const failed = activity?.failedTaskIds.length ?? 0,
-    interrupted = activity?.interruptedTaskIds?.length ?? 0;
+    interrupted = activity?.interruptedTaskIds?.length ?? 0,
+    blocked = activity?.blockedTaskIds?.length ?? 0;
   const changes = useChanges(agent, events);
   const state = activity?.state ?? "idle";
   async function save() {
@@ -1332,7 +1332,7 @@ export function AgentPanel({
           <X size={17} />
         </button>
       </header>
-      {(changes > 0 || failed > 0 || interrupted > 0) && (
+      {(changes > 0 || failed > 0 || interrupted > 0 || blocked > 0) && (
         <div className="agent-context" role="group" aria-label="Needs a look">
           {changes > 0 && (
             <button onClick={() => openFeature("review")}>
@@ -1340,13 +1340,13 @@ export function AgentPanel({
               Review changes ({changes})
             </button>
           )}
-          {(failed > 0 || interrupted > 0) && (
+          {(failed > 0 || interrupted > 0 || blocked > 0) && (
             <button
               className="warn"
               onClick={() => openFeature(failed ? "projects" : "recovery")}
             >
               <AlertTriangle size={14} />
-              View blockers ({failed + interrupted})
+              View blockers ({failed + interrupted + blocked})
             </button>
           )}
         </div>

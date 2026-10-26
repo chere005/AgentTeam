@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type Task, type WorkflowSetup } from "../api";
 import { Markdown } from "./Markdown";
+import { checkedText } from "../readiness";
 import "./validation.css";
+import "./readiness.css";
 
 type Assertion = { name: string; passed: boolean; detail?: string };
 export type GateView = {
@@ -401,7 +403,10 @@ export function TaskValidation({
   );
 }
 
-/** Sample setup: model-mapping verification that must pass before the workflow can resume. */
+/**
+ * Model check that must pass before the project can resume. It runs by itself (after a runtime
+ * scan, an agent change, a new task and on Resume; src/readiness.ts); "Check again" runs it now.
+ */
 export function SampleSetup({
   workflow,
   act,
@@ -412,6 +417,19 @@ export function SampleSetup({
   const setup = workflow.setup;
   if (!setup?.requiresModelVerification) return null;
   const c = setup.modelCheck;
+  const checkAgain = (
+    <button
+      className="text-button"
+      title="Run the model check now"
+      onClick={() =>
+        void act(() =>
+          api("/samples/workflows/" + workflow.id + "/verify-models", "POST"),
+        )
+      }
+    >
+      Check again
+    </button>
+  );
   return (
     <div className="gate-summary" aria-label="Model mapping">
       <div className="row between">
@@ -426,26 +444,19 @@ export function SampleSetup({
           {c.resolved.length === 1 ? "agent" : "agents"}
         </span>
       </div>
+      <div className="check-status" data-testid="model-check-status">
+        <span className="quiet">
+          {checkedText(c) ??
+            "Checked automatically once the installed providers were detected"}
+        </span>
+        {checkAgain}
+      </div>
       {!c.verified &&
         c.issues.map((i) => (
           <span className="blocker" key={i}>
             {i}
           </span>
         ))}
-      {!c.verified && (
-        <button
-          onClick={() =>
-            void act(() =>
-              api(
-                "/samples/workflows/" + workflow.id + "/verify-models",
-                "POST",
-              ),
-            )
-          }
-        >
-          Verify models
-        </button>
-      )}
       <details className="model-mapping-details" open={!c.verified}>
         <summary>
           Model details
@@ -463,20 +474,6 @@ export function SampleSetup({
             Note: {w}
           </span>
         ))}
-        {c.verified && (
-          <button
-            onClick={() =>
-              void act(() =>
-                api(
-                  "/samples/workflows/" + workflow.id + "/verify-models",
-                  "POST",
-                ),
-              )
-            }
-          >
-            Verify models again
-          </button>
-        )}
       </details>
     </div>
   );

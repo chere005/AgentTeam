@@ -462,15 +462,20 @@ test("the adjudication gate cannot be bypassed by editing dependencies, agents o
   for (const id of r.tasks.fix) await finish(w, id, "fixed");
   const int2 = w.rec().stage2.integrationTaskId!;
   await finish(w, int2, "integrated again");
-  // the recorded decision is what unlocks later stages: replace it with prose and nothing starts
+  // Changing the recorded decision invalidates its exact-result evidence before later stages start.
   const good = w.task(r.tasks.adjudicate);
   w.store.put("task", { ...good, result: "no structured decision" });
   assert.equal(
     await code(() =>
       w.service.transitionTask(r.tasks.finalCodex, { status: "running" }),
     ),
-    "adjudication_required",
+    "dependency_pending",
   );
+  assert.equal(
+    w.service.taskState(r.tasks.finalCodex).waitReason,
+    "dependency-failed",
+  );
+  assert.equal(w.task(r.tasks.finalCodex).status, "queued");
   w.store.put("task", good);
   // dropping the adjudication dependency from a final reviewer is refused by the structure check
   const final = w.task(r.tasks.finalFable);

@@ -28,6 +28,13 @@ export type Proposal = {
   base?: Record<string, string | null>;
   /** What applying changed, one line per operation. */
   summary?: string[];
+  ops?: {
+    op: string;
+    tasks?: { agentId: string; title: string }[];
+    workspace?: string;
+  }[];
+  result?: { index: number; op: string; id: string }[];
+  execution?: { state: "started" | "blocked"; reason?: string };
 };
 export type Detail = {
   proposal: Proposal;
@@ -139,6 +146,7 @@ function Proposals({ events, data }: { events: TeamEvent[]; data: Snapshot }) {
   const [audit, setAudit] = useState<Audit[]>([]);
   const [error, setError] = useState("");
   const [json, setJson] = useState("");
+  const [busy, setBusy] = useState(false);
   const last = events.length ? events[events.length - 1].seq : 0;
   const load = useCallback(async () => {
     try {
@@ -154,15 +162,25 @@ function Proposals({ events, data }: { events: TeamEvent[]; data: Snapshot }) {
   }, [load, last]);
   const run = async (fn: () => Promise<unknown>) => {
     setError("");
+    setBusy(true);
     try {
       await fn();
     } catch (e) {
       setError(err(e));
+    } finally {
+      setBusy(false);
     }
     await load();
   };
   const post = (id: string, action: string, body: object = {}) =>
     run(() => api(`/assistant/proposals/${id}/${action}`, "POST", body));
+  const taskRun =
+    detail?.proposal.ops?.length === 1 &&
+    detail.proposal.ops[0].op === "project.start";
+  const retryStart =
+    taskRun &&
+    detail?.proposal.status === "applied" &&
+    detail.proposal.execution?.state === "blocked";
   const readLatest = () =>
     run(async () => {
       const snap: Snapshot = await api("/snapshot");
@@ -257,8 +275,15 @@ function Proposals({ events, data }: { events: TeamEvent[]; data: Snapshot }) {
             </ul>
           )}
           <ProposalDiff diff={detail.diff} />
+          {detail.proposal.execution && (
+            <p role="status">
+              {detail.proposal.execution.state === "blocked"
+                ? detail.proposal.execution.reason
+                : "Tasks submitted. The agents will work automatically."}
+            </p>
+          )}
           <div className="row">
-            {detail.needsApproval && (
+            {detail.needsApproval && !taskRun && (
               <button
                 data-testid="approve"
                 onClick={() => void post(detail.proposal.id, "approve")}
@@ -269,19 +294,44 @@ function Proposals({ events, data }: { events: TeamEvent[]; data: Snapshot }) {
             <button
               data-testid="apply"
               className="primary"
-              disabled={!detail.canApply}
+              disabled={
+                busy ||
+                (!retryStart &&
+                  !detail.canApply &&
+                  !(taskRun && detail.needsApproval))
+              }
               title={
-                detail.needsApproval
-                  ? "Approve the significant changes first"
-                  : detail.canApply
-                    ? "Apply through the same validation as the forms"
-                    : "This proposal can no longer be applied"
+                taskRun
+                  ? "Start the listed tasks after setup checks pass"
+                  : detail.needsApproval
+                    ? "Approve the significant changes first"
+                    : detail.canApply
+                      ? "Apply through the same validation as the forms"
+                      : "This proposal can no longer be applied"
               }
               onClick={() =>
-                void post(detail.proposal.id, "apply", { confirm: true })
+                void run(async () => {
+                  if (taskRun && detail.needsApproval)
+                    await api(
+                      `/assistant/proposals/${detail.proposal.id}/approve`,
+                      "POST",
+                      {},
+                    );
+                  await api(
+                    `/assistant/proposals/${detail.proposal.id}/apply`,
+                    "POST",
+                    { confirm: true },
+                  );
+                })
               }
             >
-              Apply
+              {busy
+                ? "Starting…"
+                : taskRun
+                  ? retryStart
+                    ? "Try starting saved tasks"
+                    : "Start tasks"
+                  : "Apply"}
             </button>
             <button
               disabled={

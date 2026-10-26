@@ -1,8 +1,18 @@
 import { createHash } from "node:crypto";
-import { realpath, stat } from "node:fs/promises";
+import { open, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { createContext, runInContext } from "node:vm";
-import { AppError, assert, type Task, type Workflow } from "./model.ts";
+import {
+  AppError,
+  assert,
+  type Agent,
+  type Task,
+  type Workflow,
+} from "./model.ts";
+import { decideBoth } from "./access.ts";
+import { filesystemPolicy } from "./filesystem-policy.ts";
+import { relativeWithin } from "./path-utils.ts";
+import { contains } from "./resources.ts";
 import {
   DEFAULT_LIMITS,
   limitsPatchSchema,
@@ -14,6 +24,8 @@ import type { TeamService } from "./service.ts";
 
 /** Upper bound for one `output-matches` evaluation (the pattern is user input, the text agent output). */
 export const REGEX_CHECK_TIMEOUT_MS = 500;
+/** Content checks never load arbitrarily large or binary files into the backend. */
+export const MAX_CHECK_ARTIFACT_BYTES = 256 * 1024;
 const regexContext = createContext({});
 /**
  * Test a user-supplied pattern against untrusted text without letting catastrophic backtracking
@@ -137,6 +149,9 @@ export type CheckResult = {
 export type CheckEvidence = {
   passed: boolean;
   resultHash: string;
+  checksHash?: string;
+  /** Original task working directory; later verification must not follow a changed active folder. */
+  cwd?: string;
   at: string;
   results: CheckResult[];
 };
@@ -766,6 +781,9 @@ export class LimitsService {
       );
       task.completionChecks = checks;
       this.store.put("task", task);
+      const meta = this.meta(task.id);
+      delete meta.checks;
+      this.saveMeta(meta);
       this.store.emit("task.updated", taskId, { agentId: task.agentId });
       return task;
     });
@@ -783,6 +801,8 @@ export class LimitsService {
     const evidence: CheckEvidence = {
       passed: results.every((r) => r.passed),
       resultHash: sha(result),
+      checksHash: sha(canonical(checks)),
+      cwd: resolve(cwd),
       at: new Date().toISOString(),
       results,
     };
@@ -804,8 +824,17 @@ export class LimitsService {
   assertCompletion(task: Task, result: string | undefined) {
     if (!task.completionChecks?.length) return;
     const ev = this.meta(task.id).checks;
+    // Older evidence retained the full ordered checks in its results but had no checksHash.
+    // Accept that exact contract only; empty, partial, reordered or failed evidence stays closed.
+    const checksMatch =
+      ev?.checksHash !== undefined
+        ? ev.checksHash === sha(canonical(task.completionChecks))
+        : !!ev?.results.length &&
+          ev.results.every((entry) => entry.passed) &&
+          canonical(ev.results.map((entry) => entry.check)) ===
+            canonical(task.completionChecks);
     assert(
-      ev?.passed && ev.resultHash === sha(result ?? ""),
+      ev?.passed && ev.resultHash === sha(result ?? "") && checksMatch,
       "completion_checks_failed",
       "Completion checks have not passed for this result" +
         (ev && !ev.passed
@@ -825,6 +854,79 @@ export class LimitsService {
         .map((r) => r.detail)
         .join("; ")
     );
+  }
+  /** Re-check current grants as well as lexical and real paths before inspecting an artifact. */
+  private async checkArtifactPath(task: Task, path: string, cwd: string) {
+    assert(
+      !isAbsolute(path) &&
+        !/^[A-Za-z]:/.test(path) &&
+        !path.startsWith("\\") &&
+        !path.includes("\0") &&
+        !path.split(/[\\/]/).includes(".."),
+      "invalid_artifact_path",
+      `Artifact path ${path} must be relative and inside the workspace`,
+      400,
+    );
+    const policy = filesystemPolicy(this.store);
+    const lexical = resolve(cwd, path);
+    policy.assertPath(lexical, false);
+    const base = await realpath(cwd);
+    const target = await realpath(lexical);
+    policy.assertPath(target, false);
+    const rel = relativeWithin(base, target);
+    assert(
+      rel !== null &&
+        !rel.split("/").some((part) => part.toLowerCase() === ".git") &&
+        !path.split(/[\\/]/).some((part) => part.toLowerCase() === ".git"),
+      "artifact_path_escape",
+      `Artifact ${path} resolves outside the workspace or into Git internals`,
+      403,
+    );
+    const agent = this.store.get<Agent>("agent", task.agentId);
+    const workspace = agent.workspaces
+      .filter((ws) => contains(ws.path, lexical))
+      .sort((a, b) => b.path.length - a.path.length)[0];
+    assert(
+      workspace,
+      "artifact_workspace_required",
+      "Artifact checks require a readable attached workspace",
+      403,
+    );
+    const root = await realpath(workspace.path);
+    assert(
+      root === workspace.path,
+      "workspace_changed",
+      "Artifact workspace target changed; reattach it before checking files",
+      409,
+    );
+    const actual = relativeWithin(root, target);
+    assert(
+      actual !== null,
+      "artifact_path_escape",
+      `Artifact ${path} resolves outside the attached workspace`,
+      403,
+    );
+    const access = decideBoth(
+      workspace,
+      relative(workspace.path, lexical).split(sep).join("/"),
+      actual,
+    );
+    assert(
+      access.access !== "none",
+      "access_denied",
+      `Artifact access denied: ${access.reason}`,
+      403,
+    );
+    assert(
+      !task.resourcePaths?.length ||
+        task.resourcePaths.some(
+          (scope) => contains(scope, lexical) && contains(scope, target),
+        ),
+      "artifact_scope_denied",
+      `Artifact ${path} is outside the task's declared directories`,
+      403,
+    );
+    return target;
   }
   private async runCheck(
     task: Task,
@@ -871,27 +973,83 @@ export class LimitsService {
               `Output does not match /${check.pattern}/${check.flags}`,
             );
       }
-      if (check.type === "artifact-exists") {
-        if (isAbsolute(check.path) || check.path.split(/[\\/]/).includes(".."))
-          return done(
-            false,
-            `Artifact path ${check.path} must be relative and inside the workspace`,
+      if (
+        check.type === "artifact-exists" ||
+        check.type === "artifact-matches"
+      ) {
+        const target = await this.checkArtifactPath(task, check.path, cwd);
+        if (!(await stat(target)).isFile())
+          return done(false, `Artifact ${check.path} is not a file`);
+        if (check.type === "artifact-exists")
+          return done(true, `Artifact ${check.path} exists`);
+        const file = await open(target, "r");
+        try {
+          const info = await file.stat();
+          if (!info.isFile() || info.size > MAX_CHECK_ARTIFACT_BYTES)
+            return done(
+              false,
+              `Artifact ${check.path} must be a text file of at most ${MAX_CHECK_ARTIFACT_BYTES} bytes`,
+            );
+          // A handle bounds memory even if the file grows after stat. Rechecking the path catches
+          // a replaced symlink before content is read through the already opened handle.
+          const current = await this.checkArtifactPath(task, check.path, cwd);
+          const currentInfo = await stat(current);
+          if (
+            current !== target ||
+            info.dev !== currentInfo.dev ||
+            info.ino !== currentInfo.ino
+          )
+            return done(
+              false,
+              `Artifact ${check.path} changed while checking it`,
+            );
+          const buffer = Buffer.alloc(MAX_CHECK_ARTIFACT_BYTES + 1);
+          let length = 0;
+          while (length < buffer.length) {
+            const { bytesRead } = await file.read(
+              buffer,
+              length,
+              buffer.length - length,
+              length,
+            );
+            if (!bytesRead) break;
+            length += bytesRead;
+          }
+          if (length > MAX_CHECK_ARTIFACT_BYTES)
+            return done(
+              false,
+              `Artifact ${check.path} exceeds the text check limit`,
+            );
+          const after = await file.stat();
+          if (info.size !== after.size || info.mtimeMs !== after.mtimeMs)
+            return done(
+              false,
+              `Artifact ${check.path} changed while checking it`,
+            );
+          const bytes = buffer.subarray(0, length);
+          if (bytes.includes(0))
+            return done(
+              false,
+              `Artifact ${check.path} is not a UTF-8 text file`,
+            );
+          const content = new TextDecoder("utf-8", { fatal: true }).decode(
+            bytes,
           );
-        const base = await realpath(cwd);
-        const target = await realpath(resolve(base, check.path));
-        const rel = relative(base, target);
-        if (
-          rel.startsWith("..") ||
-          isAbsolute(rel) ||
-          rel.split(sep).includes(".git")
-        )
-          return done(
-            false,
-            `Artifact ${check.path} resolves outside the workspace`,
-          );
-        return (await stat(target)).isFile()
-          ? done(true, `Artifact ${check.path} exists`)
-          : done(false, `Artifact ${check.path} is not a file`);
+          const matched = boundedRegexTest(check.pattern, check.flags, content);
+          if (matched === "timeout")
+            return done(
+              false,
+              `Artifact ${check.path} content pattern took longer than ${REGEX_CHECK_TIMEOUT_MS} ms and was stopped; simplify the pattern`,
+            );
+          return matched
+            ? done(true, `Artifact ${check.path} contains the required content`)
+            : done(
+                false,
+                `Artifact ${check.path} does not match the required content`,
+              );
+        } finally {
+          await file.close();
+        }
       }
       if (!task.requiresValidation)
         return done(
@@ -906,7 +1064,9 @@ export class LimitsService {
       const code = (e as { code?: string }).code;
       return done(
         false,
-        check.type === "artifact-exists" && code === "ENOENT"
+        (check.type === "artifact-exists" ||
+          check.type === "artifact-matches") &&
+          code === "ENOENT"
           ? `Artifact ${(check as { path: string }).path} does not exist`
           : `Check ${check.type} could not be evaluated: ${e instanceof Error ? e.message : "error"}`,
       );

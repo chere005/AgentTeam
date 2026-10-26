@@ -11,7 +11,15 @@ type SnapshotLike = {
     id: string;
     name: string;
     paused: boolean;
-    tasks: { id: string; title: string; status: string; agentId: string }[];
+    lifecycle?: { state: string };
+    tasks: {
+      id: string;
+      title: string;
+      status: string;
+      agentId: string;
+      runtimeBlocker?: { message: string };
+      delegation?: { state: string; message: string };
+    }[];
   }[];
   activity: {
     agentId: string;
@@ -79,10 +87,19 @@ export function buildInbox(input: InboxInput): InboxItem[] {
   const items: InboxItem[] = [];
   const agentName = (id?: string) =>
     data.agents.find((a) => a.id === id)?.name ?? "An agent";
-  const taskIndex = new Map<string, { title: string; workflowId: string }>();
+  const taskIndex = new Map<
+    string,
+    { title: string; workflowId: string; inactive: boolean }
+  >();
   for (const w of data.workflows)
     for (const t of w.tasks)
-      taskIndex.set(t.id, { title: t.title, workflowId: w.id });
+      taskIndex.set(t.id, {
+        title: t.title,
+        workflowId: w.id,
+        inactive: ["archived", "completed"].includes(
+          w.lifecycle?.state ?? "active",
+        ),
+      });
   for (const a of input.approvals ?? [])
     items.push({
       id: "approval:" + a.id,
@@ -101,9 +118,12 @@ export function buildInbox(input: InboxInput): InboxItem[] {
       );
   const readyReview = new Set<string>();
   for (const w of data.workflows) {
+    const inactive = ["archived", "completed"].includes(
+      w.lifecycle?.state ?? "active",
+    );
     const paused = w.paused;
     const trip = input.trips?.[w.id];
-    if (trip)
+    if (trip && !inactive)
       items.push({
         id: "limit:" + w.id,
         kind: "limit",
@@ -112,7 +132,7 @@ export function buildInbox(input: InboxInput): InboxItem[] {
         workflowId: w.id,
         target: "workflows",
       });
-    else if (paused)
+    else if (paused && !inactive)
       items.push({
         id: "paused:" + w.id,
         kind: "paused",
@@ -122,6 +142,7 @@ export function buildInbox(input: InboxInput): InboxItem[] {
         target: "workflows",
       });
     for (const t of w.tasks) {
+      if (inactive && !uncertain.has(t.id)) continue;
       const who = agentName(t.agentId);
       if (t.status === "failed")
         items.push({
@@ -143,14 +164,18 @@ export function buildInbox(input: InboxInput): InboxItem[] {
           workflowId: w.id,
           target: "workflows",
         });
-      else if (t.status === "blocked")
+      else if (t.status === "blocked" && t.delegation?.state !== "waiting")
         items.push({
           id: "blocked:" + t.id,
           kind: "blocked",
-          title: `${t.title} needs a decision`,
+          title: uncertain.has(t.id)
+            ? `${t.title} needs a decision`
+            : `${t.title} is blocked`,
           detail:
             uncertain.get(t.id)?.join("; ") ??
-            `${who} in ${w.name}: an external effect is uncertain.`,
+            t.runtimeBlocker?.message ??
+            t.delegation?.message ??
+            `${who} in ${w.name}: review the task's blocker before continuing.`,
           agentId: t.agentId,
           workflowId: w.id,
           target: "workflows",
@@ -178,6 +203,7 @@ export function buildInbox(input: InboxInput): InboxItem[] {
     for (const q of act.queuedTasks)
       if (q.waitReason === "validation-required") {
         const t = taskIndex.get(q.id);
+        if (t?.inactive) continue;
         items.push({
           id: "validation:" + q.id,
           kind: "validation",

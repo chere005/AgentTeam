@@ -1130,6 +1130,8 @@ test("chat coordinator delegates to four teammates, waits for their task results
     service.saveEdge({ from: manager.id, to: teammate.id, kind: "delegate" });
 
   const runs = new RunManager(service, true, process.cwd());
+  // This executor simulates a supported sandboxed provider; no native process runs.
+  runs.runtimePlatform = "linux";
   const server = createApi(service, "desktop-token", runs);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const url =

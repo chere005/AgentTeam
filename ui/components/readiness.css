@@ -1,0 +1,50 @@
+/* Top-bar readiness strip (ReadinessStrip.tsx), styled like .team-notice. */
+.readiness-strip {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 20px;
+  background: #3a2606;
+  border-bottom: 1px solid #7a5216;
+  color: #ffd9a0;
+  font-size: 12px;
+}
+.readiness-strip > svg {
+  flex: none;
+}
+.readiness-strip ul {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.readiness-strip li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.readiness-strip li button {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+.readiness-strip .readiness-error {
+  flex-basis: 100%;
+  color: #f6b3a6;
+}
+.project-resume-error {
+  grid-column: 1 / -1;
+  margin: 4px 0 0;
+}
+.project-resume-error ul {
+  margin: 2px 0 0;
+  padding-left: 18px;
+}
+.check-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}

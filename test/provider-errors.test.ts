@@ -48,6 +48,24 @@ const cases: [string, Parameters<typeof classifyProviderFailure>[0], string][] =
       "process-failure",
     ],
     ["empty", {}, "process-failure"],
+    [
+      "sandbox metadata refusal",
+      { code: "sandbox_unavailable", message: "unsupported execution profile" },
+      "sandbox-unavailable",
+    ],
+    [
+      "sandbox startup failure",
+      {
+        message:
+          "Claude request failed: Sandbox required but unavailable: sandbox is enabled but the Windows sandbox is not active on this session (feature gate off). Set sandbox.failIfUnavailable=false to allow unsandboxed execution.",
+      },
+      "sandbox-unavailable",
+    ],
+    [
+      "sandbox command denial",
+      { message: "Sandbox denied access to C:/private/output.txt" },
+      "process-failure",
+    ],
   ];
 for (const [name, input, kind] of cases)
   test(`classify ${name}`, () =>

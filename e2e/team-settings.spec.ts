@@ -166,10 +166,11 @@ test("free-form project with per-task instructions and dependencies; archive hid
       "Product feature team",
     );
     await page
-      .getByRole("button", { name: "Assign project", exact: true })
+      .getByRole("button", { name: "Run a task", exact: true })
       .first()
       .click();
     const form = page.getByRole("form", { name: "Assign project" });
+    await form.getByLabel("Work type").selectOption("project");
     await form.getByLabel("Project goal").fill("Add CSV export to reports");
     await form.getByLabel("Project workspace").fill(workspace);
     await form.getByRole("button", { name: "Add task" }).click();

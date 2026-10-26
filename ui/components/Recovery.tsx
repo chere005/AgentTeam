@@ -29,7 +29,12 @@ type TaskRecovery = {
   completedEffects: string[];
   uncertainEffects: Effect[];
   pendingApprovals: Approval[];
-  retry: { allowed: boolean; reason: string; notBefore: string | null };
+  retry: {
+    allowed: boolean;
+    reason: string;
+    notBefore: string | null;
+    blocker?: "runtime-capability";
+  };
 };
 type Overview = { tasks: TaskRecovery[] };
 
@@ -105,7 +110,7 @@ export function WorkflowRecovery({
             </p>
           )}
           <div>
-            <small>Runs next</small>
+            <small>{r.retry.allowed ? "Runs next" : "Next step"}</small>
             <ol className="recovery-next" data-testid="recovery-next">
               {r.next.map((n) => (
                 <li key={n}>{n}</li>
@@ -223,9 +228,11 @@ export function WorkflowRecovery({
                 )
               }
             >
-              {r.task.status === "failed"
-                ? "Retry from checkpoint"
-                : "Resume from checkpoint"}
+              {r.retry.blocker === "runtime-capability"
+                ? "Setup required"
+                : r.task.status === "failed"
+                  ? "Retry from checkpoint"
+                  : "Resume from checkpoint"}
             </button>
             {r.task.status !== "failed" && (
               <button

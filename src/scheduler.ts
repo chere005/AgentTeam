@@ -5,6 +5,7 @@ import { prepareRunContext } from "./run-context.ts";
 import type { Agent, Task } from "./model.ts";
 import { ensureWorkspaceBaseline } from "./workspace-changes.ts";
 import { prepareTaskResourceFolders } from "./project-worktrees.ts";
+import { noteRuntimeWait } from "./runtime-waits.ts";
 import {
   explicitlyReportsIncompleteExecution,
   explicitlyReportsNoWork,
@@ -51,6 +52,7 @@ export class Scheduler {
       this.service.graphs.sweep(); // workflow-graph steps waiting on gates without an event
       this.service.locks.sweep(); // draining leases whose processes have exited
       this.service.pipelines.sweep(); // pipeline sample: assign stage-5 workers once integration finished
+      await this.service.delegations.sweep(); // stopped parents whose delegated results are ready
       // One ordering for tasks and chat run requests (src/queue.ts): Preempt first, then priority plus
       // aging; one clock reading keeps equal-age work FIFO. Entries waiting only for a lease on paths
       // overlapping a lower-ranked entry reserve those paths (starvation guard).
@@ -92,6 +94,44 @@ export class Scheduler {
                 message:
                   error instanceof Error ? error.message : "Unable to start",
               });
+              // Missing or signed-out runtime: the still-queued messages run once it is ready
+              // (src/readiness.ts).
+              if (code === "runtime_unavailable") {
+                const store = this.service.store;
+                const agentId = store
+                  .list<{ id: string; agentId: string }>("session")
+                  .find((s) => s.id === candidate.request.id)?.agentId;
+                const agent = store
+                  .list<Agent>("agent")
+                  .find((a) => a.id === agentId);
+                if (agent)
+                  noteRuntimeWait(store, {
+                    kind: "chat",
+                    targetId: candidate.request.id,
+                    environment: agent.environment,
+                  });
+              }
+              if (code === "sandbox_unavailable") {
+                const store = this.service.store;
+                const session = store
+                  .list<{ id: string; agentId: string }>("session")
+                  .find((s) => s.id === candidate.request.id);
+                const agent = store
+                  .list<Agent>("agent")
+                  .find((a) => a.id === session?.agentId);
+                if (agent)
+                  noteRuntimeWait(store, {
+                    kind: "chat",
+                    targetId: candidate.request.id,
+                    environment: agent.environment,
+                    reason: "sandbox-unavailable",
+                    capability: "sandboxed-shell",
+                    message:
+                      error instanceof Error
+                        ? error.message
+                        : "Required sandbox unavailable",
+                  });
+              }
             }
           }
           continue;
@@ -134,7 +174,22 @@ export class Scheduler {
     try {
       this.runs.assertRuntimeReady(plan);
       // Reject an unsupported access contract before recording a possibly mutating provider effect.
-      commandFor(plan, null, "", this.runs.cwd);
+      this.runs.assertCommandReady(
+        commandFor(plan, null, "", this.runs.cwd),
+        plan.environment,
+      );
+      if (this.service.delegations.view(task.id)?.state === "continuing") {
+        await this.service.delegations.verifyChildren(task);
+        if (
+          this.service.delegations.defer(
+            task,
+            "Waiting for delegated work to pass its checks.",
+            plan.cwd ?? this.runs.cwd,
+          )
+        )
+          return;
+      }
+      const delegationInputs = this.service.delegations.continuationNote(task);
       const agent = this.service.store.get<Agent>("agent", task.agentId);
       await Promise.all(
         (plan.providerRoots ?? plan.workspaces)
@@ -175,7 +230,7 @@ export class Scheduler {
           ),
       );
       effectId = run.effectId;
-      const prompt = `${task.title}\n${task.instructions}\nCompletion criteria: ${task.completionCriteria}\nDependency results:\n${inputs}${recovery.continuationNote(task)}`;
+      const prompt = `${task.title}\n${task.instructions}\nCompletion criteria: ${task.completionCriteria}\nDependency results:\n${inputs}${recovery.continuationNote(task)}${delegationInputs}`;
       let command;
       try {
         command = commandFor(plan, run.sessionId, prompt, this.runs.cwd);
@@ -235,6 +290,11 @@ export class Scheduler {
       }
       if (!result.trim()) throw new Error("Provider returned no text");
       if (run.replay === null) recovery.finishRun(task, run.effectId, result);
+      await this.service.delegations.verifyChildren(task);
+      if (
+        this.service.delegations.defer(task, result, plan.cwd ?? this.runs.cwd)
+      )
+        return;
       if (
         explicitlyReportsNoWork(result) ||
         explicitlyReportsIncompleteExecution(task, result) ||
@@ -277,18 +337,51 @@ export class Scheduler {
         error instanceof Error ? error.message : "Execution failed",
         result,
       );
+      const interrupted = this.runs.executionInterrupts.has("task:" + task.id);
+      const capabilityBlocked =
+        !effectId &&
+        (error as { code?: string })?.code === "sandbox_unavailable";
+      if (capabilityBlocked)
+        noteRuntimeWait(this.service.store, {
+          kind: "task",
+          targetId: task.id,
+          environment: plan.environment,
+          reason: "sandbox-unavailable",
+          capability: "sandboxed-shell",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Required sandbox unavailable",
+          attempt: this.service.recovery.state(task.id).attempt,
+        });
       this.service.transitionTask(
         task.id,
-        this.runs.executionInterrupts.has("task:" + task.id)
-          ? {
-              status: "interrupted",
-              result: (
-                "Paused immediately. Resume from Recovery after checking any uncertain effects.\n" +
-                result
-              ).slice(0, 100000),
-            }
-          : abnormal,
+        capabilityBlocked
+          ? { status: "blocked", result: abnormal.result }
+          : interrupted
+            ? {
+                status: "interrupted",
+                result: (
+                  "Paused immediately. Resume from Recovery after checking any uncertain effects.\n" +
+                  result
+                ).slice(0, 100000),
+              }
+            : abnormal,
       );
+      // Failed before any provider started because the runtime is missing or signed out: retried
+      // through Recovery's requeue (a new attempt) once the runtime is ready (src/readiness.ts).
+      if (
+        !interrupted &&
+        !effectId &&
+        abnormal.status === "failed" &&
+        (error as { code?: string } | null)?.code === "runtime_unavailable"
+      )
+        noteRuntimeWait(this.service.store, {
+          kind: "task",
+          targetId: task.id,
+          environment: plan.environment,
+          attempt: this.service.recovery.state(task.id).attempt,
+        });
     } finally {
       this.service.approvals.cancelAgent(task.agentId);
       this.runs.finishActive("task:" + task.id);

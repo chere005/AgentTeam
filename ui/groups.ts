@@ -132,6 +132,8 @@ export function summarizeGroup(
     state: string;
     failedTaskIds: string[];
     interruptedTaskIds?: string[];
+    blockedTaskIds?: string[];
+    waitingTaskIds?: string[];
   }[],
 ): GroupSummary {
   let processing = 0,
@@ -142,7 +144,7 @@ export function summarizeGroup(
     if (!a) continue;
     if (a.state === "processing") processing++;
     if (a.failedTaskIds.length) failed++;
-    if (a.interruptedTaskIds?.length) attention++;
+    if (a.interruptedTaskIds?.length || a.blockedTaskIds?.length) attention++;
   }
   return { members: g.agentIds.length, processing, failed, attention };
 }

@@ -64,10 +64,33 @@ export const completionCheckSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("artifact-exists"),
-      /** Relative to the agent's active workspace (or the app working directory); must stay inside it. */
+      /** Relative to the task working directory; must stay inside a readable attached workspace and task scope. */
       path: z.string().min(1).max(1000),
     })
     .strict(),
+  z
+    .object({
+      type: z.literal("artifact-matches"),
+      /** UTF-8 file relative to the task working directory, subject to the same access policy as artifact-exists. */
+      path: z.string().min(1).max(1000),
+      pattern: z.string().min(1).max(500),
+      flags: z
+        .string()
+        .regex(/^[imsu]*$/)
+        .default(""),
+    })
+    .strict()
+    .superRefine((c, ctx) => {
+      try {
+        new RegExp(c.pattern, c.flags);
+      } catch (e) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["pattern"],
+          message: `Invalid regular expression: ${(e as Error).message}`,
+        });
+      }
+    }),
   z.object({ type: z.literal("validation-gate") }).strict(),
 ]);
 export type CompletionCheck = z.infer<typeof completionCheckSchema>;

@@ -38,8 +38,11 @@ import {
 } from "./team-profiles.ts";
 import { teamIdSchema } from "./team-spaces.ts";
 import { projectState, type ProjectWorkflow } from "./project-lifecycle.ts";
+import { completionCheckSchema } from "./limits-schema.ts";
+import { simpleTaskSupport } from "./simple-task-capabilities.ts";
 
 export const FREE_FORM_PROJECT = "free-form-project";
+export const SIMPLE_TASK_PROJECT = "simple-task-project";
 
 const freeFormSchema = z
   .object({
@@ -56,6 +59,7 @@ const freeFormSchema = z
             title: z.string().trim().min(1).max(200),
             agentId: z.string().min(1).max(200),
             instructions: z.string().max(20_000).default(""),
+            completionChecks: z.array(completionCheckSchema).max(20).optional(),
             /** Indexes (0-based) of other tasks in this list that must finish first. */
             dependsOn: z
               .array(z.number().int().min(0).max(29))
@@ -167,8 +171,19 @@ export async function createFreeFormProject(
   service: TeamService,
   teamId: string,
   input: unknown,
+  options: { simple?: boolean } = {},
 ) {
-  const o = freeFormSchema.parse(input);
+  const schema = options.simple
+    ? freeFormSchema.extend({ goal: z.string().trim().min(1).max(20_000) })
+    : freeFormSchema;
+  const o = schema.parse(
+    options.simple && input && typeof input === "object"
+      ? {
+          ...input,
+          sequential: "sequential" in input ? input.sequential : false,
+        }
+      : input,
+  );
   const { deps, order } = planTaskOrder(o.tasks, o.sequential);
   const workspace = await resolveProjectWorkspace(o.workspace, service.store);
   const store = service.store;
@@ -191,19 +206,45 @@ export async function createFreeFormProject(
     inTeam(ownerId, "The project lead");
     for (const t of o.tasks) inTeam(t.agentId, `The agent of "${t.title}"`);
     const profile = teamProfile(store, teamId);
+    const involved = new Set(
+      o.tasks.length
+        ? [
+            ...o.tasks.map((t) => t.agentId),
+            ...(options.simple ? [] : [ownerId]),
+          ]
+        : [ownerId],
+    );
+    if (options.simple)
+      for (const agent of agents.filter((a) => involved.has(a.id))) {
+        const support = simpleTaskSupport(service, agent);
+        assert(
+          support.available,
+          "simple_task_unsupported",
+          `${agent.name}: ${support.reason}`,
+          409,
+        );
+      }
     // The workspace goes to the agents the profile names (with its access), or to every agent
     // of the team with an access derived from its role (read-only roles read).
-    const access: Record<string, "read" | "write"> = profile?.workspace
+    const access: Record<string, "read" | "write"> = options.simple
       ? Object.fromEntries(
-          Object.entries(profile.workspace.access).filter(([aid]) =>
-            agents.some((a) => a.id === aid),
-          ),
+          agents
+            .filter((a) => involved.has(a.id))
+            .map((a) => [a.id, defaultProjectAccess(a)]),
         )
-      : Object.fromEntries(agents.map((a) => [a.id, defaultProjectAccess(a)]));
+      : profile?.workspace
+        ? Object.fromEntries(
+            Object.entries(profile.workspace.access).filter(([aid]) =>
+              agents.some((a) => a.id === aid),
+            ),
+          )
+        : Object.fromEntries(
+            agents.map((a) => [a.id, defaultProjectAccess(a)]),
+          );
     // An explicit role map can intentionally leave the coordinator without the project folder.
     // Giving it a fallback read attachment still creates a folder lease for the whole manager
     // run, which blocks the writers it has just delegated work to.
-    if (!profile?.workspace && !access[ownerId])
+    if (!options.simple && !profile?.workspace && !access[ownerId])
       access[ownerId] = defaultProjectAccess(
         agents.find((a) => a.id === ownerId)!,
       );
@@ -218,16 +259,20 @@ export async function createFreeFormProject(
         o.completionCriteria ??
         "The goal is met; the lead reports what was done, what was checked and what remains unverified.",
     });
-    const involved = new Set([ownerId, ...o.tasks.map((t) => t.agentId)]);
     const expectations: Record<string, ModelExpectation> = {};
-    for (const aid of involved)
-      expectations[aid] = profile?.expectations[aid] ?? {
+    for (const aid of involved) {
+      const a = agents.find((agent) => agent.id === aid)!;
+      expectations[aid] = (!options.simple
+        ? profile?.expectations[aid]
+        : undefined) ?? {
         label: "its configured model",
         family: "",
         version: "",
+        ...(a.effort ? { effort: a.effort } : {}),
       };
+    }
     const setup: WorkflowSetup = {
-      sample: FREE_FORM_PROJECT,
+      sample: options.simple ? SIMPLE_TASK_PROJECT : FREE_FORM_PROJECT,
       intendedLead: owner.name,
       requiresModelVerification: true,
       modelCheck: {
@@ -240,6 +285,7 @@ export async function createFreeFormProject(
       expectations,
       workspace,
       attachments,
+      ...(options.simple ? { executionMode: "file-only" as const } : {}),
     };
     store.put("workflow", { ...workflow, paused: true, setup });
     store.emit("workflow.paused", workflow.id);
@@ -247,9 +293,13 @@ export async function createFreeFormProject(
       ? o.tasks
       : [
           {
-            title: "Plan and coordinate",
+            title: options.simple
+              ? o.goal.slice(0, 200)
+              : "Plan and coordinate",
             agentId: ownerId,
-            instructions: `PROJECT WORKSPACE (absolute path): ${workspace}\n\nGOAL:\n${o.goal}\n\nRestate the goal as acceptance criteria, then plan and delegate the work to the team through AgentTeam. Report what was done, what was checked and what remains unverified.`,
+            instructions: options.simple
+              ? `TASK WORKSPACE (absolute path): ${workspace}\n\nTASK:\n${o.goal}\n\nComplete this small task directly using your existing file tools and replies. Terminal access is unavailable for this task. Do not create a pipeline or delegate the entire team unless the user explicitly requested delegation. Report the actual result and any checks that passed.`
+              : `PROJECT WORKSPACE (absolute path): ${workspace}\n\nGOAL:\n${o.goal}\n\nRestate the goal as acceptance criteria, then plan and delegate the work to the team through AgentTeam. Report what was done, what was checked and what remains unverified.`,
           },
         ];
     // Created in dependency order so every dependency exists when its dependent is created.
@@ -263,6 +313,12 @@ export async function createFreeFormProject(
         instructions:
           t.instructions || `Contribute to the project goal:\n${o.goal}`,
         completionCriteria: "Done as described, with evidence",
+        ...("completionChecks" in t && t.completionChecks
+          ? { completionChecks: t.completionChecks }
+          : {}),
+        ...(options.simple
+          ? { executionMode: "file-only", resourcePaths: [workspace] }
+          : {}),
         ...(o.tasks.length && deps[i].length
           ? { dependsOn: deps[i].map((j) => ids[j]) }
           : {}),
@@ -285,12 +341,21 @@ export async function assignProject(
   teamId: string,
   input: unknown,
 ) {
+  const { mode, ...projectInput } = z
+    .object({ mode: z.enum(["simple", "team"]).optional() })
+    .passthrough()
+    .parse(input);
+  if (mode === "simple")
+    return createFreeFormProject(service, teamId, projectInput, {
+      simple: true,
+    });
   const profile = teamProfile(service.store, teamId);
   const type: ProjectType = profile?.type ?? "free-form";
-  if (type === "pipeline") return createPipelineProject(service, teamId, input);
+  if (type === "pipeline")
+    return createPipelineProject(service, teamId, projectInput);
   if (type === "wolfram-validated")
-    return createWolframProject(service, teamId, input);
-  return createFreeFormProject(service, teamId, input);
+    return createWolframProject(service, teamId, projectInput);
+  return createFreeFormProject(service, teamId, projectInput);
 }
 
 /** What the "Assign project" form needs for this team. */
@@ -298,11 +363,26 @@ export function projectInfo(service: TeamService, teamId: string) {
   service.teamSpaces.get(teamId);
   const profile = teamProfile(service.store, teamId);
   const type: ProjectType = profile?.type ?? "free-form";
-  const agents = teamAgents(service, teamId).map((a) => ({
+  const members = teamAgents(service, teamId);
+  const leadId = defaultLead(service, teamId);
+  const lead = members.find((agent) => agent.id === leadId);
+  const workspace =
+    lead?.workspaces.find((folder) => folder.active)?.path ??
+    members.flatMap((agent) => agent.workspaces).find((folder) => folder.active)
+      ?.path ??
+    "";
+  const agents = members.map((a) => ({
     id: a.id,
     name: a.name,
     roleType: a.roleType,
     parentId: a.parentId,
+    simpleAvailable: simpleTaskSupport(service, a).available,
+    simpleBlocker: simpleTaskSupport(service, a).reason,
+    canWriteFiles:
+      a.tools.includes("read") &&
+      (a.tools.includes("write") || a.tools.includes("edit")) &&
+      (a.workspaces.some((folder) => folder.access === "write") ||
+        defaultProjectAccess(a) === "write"),
   }));
   const projects = service.teamSpaces
     .members(teamId)
@@ -318,11 +398,12 @@ export function projectInfo(service: TeamService, teamId: string) {
     projectType: type,
     projectLabel: PROJECT_TYPE_LABEL[type],
     profile,
-    leadId: defaultLead(service, teamId),
+    leadId,
     agents,
     projects,
-    defaults:
-      type === "pipeline"
+    defaults: {
+      workspace,
+      ...(type === "pipeline"
         ? {
             implementationWorkers: (profile?.roles.implement ?? []).length,
             fixWorkers: (profile?.roles.fix ?? []).length,
@@ -331,7 +412,8 @@ export function projectInfo(service: TeamService, teamId: string) {
           }
         : type === "wolfram-validated"
           ? { validators: (profile?.roles.validators ?? []).length }
-          : {},
+          : {}),
+    },
   };
 }
 

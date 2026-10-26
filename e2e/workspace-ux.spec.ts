@@ -957,7 +957,7 @@ test("accessibility smoke: landmarks, names, tab order, dialog focus trap and re
     }
     // The active-team switcher comes first in the top bar.
     expect(order[0]).toMatch(/^Active team: Main team, idle/);
-    expect(order[1]).toBe("Assign project");
+    expect(order[1]).toBe("Run a task");
     expect(order).toContain("More");
     expect(order).toContain("Settings");
     expect(order.indexOf("More")).toBeLessThan(order.indexOf("Settings"));

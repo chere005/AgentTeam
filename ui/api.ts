@@ -3,13 +3,19 @@ import type {
   Edge,
   Rule,
   Session,
-  Task,
+  Task as ModelTask,
   Workflow,
 } from "../src/model";
 import type { WorkflowSetup } from "../src/samples";
 import type { TeamSummary } from "../src/team-spaces";
 import type { CrossTeamLink } from "./team-view";
-export type { Edge, Rule, Session, Task, Workflow, WorkflowSetup, TeamSummary };
+export type { Edge, Rule, Session, Workflow, WorkflowSetup, TeamSummary };
+/** Additive task-state facts returned with each snapshot task. */
+export type Task = ModelTask &
+  Pick<
+    import("../src/invocation-view").InvocationTask,
+    "delegation" | "runtimeBlocker" | "dependencyBlockers"
+  >;
 /** Snapshot agents carry their resolved team; null = the global Team Assistant. */
 export type Agent = Omit<ModelAgent, "teamId"> & { teamId?: string | null };
 export type Activity = {
@@ -18,8 +24,12 @@ export type Activity = {
   runningTaskIds: string[];
   queuedTasks: { id: string; waitReason: string | null }[];
   failedTaskIds: string[];
-  /** Interrupted or blocked tasks awaiting resume or a decision (Recovery panel). */
+  /** Interrupted provider execution awaiting resume (older snapshots may also include blocked tasks). */
   interruptedTaskIds: string[];
+  /** Blocked work requiring a decision, separate from interrupted provider execution. */
+  blockedTaskIds?: string[];
+  /** Logical parents awaiting children; no provider process or resume action is needed. */
+  waitingTaskIds?: string[];
   capacity: { running: number; queued: number; limit: number | null };
 };
 export type Snapshot = {

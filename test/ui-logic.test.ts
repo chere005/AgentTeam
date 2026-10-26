@@ -18,6 +18,7 @@ import {
   renameLayout,
 } from "../ui/workspace.ts";
 import { buildInbox } from "../ui/inbox.ts";
+import { middleClickProps } from "../ui/middle-click.ts";
 import {
   FEATURES,
   FEATURE_GROUPS,
@@ -302,4 +303,35 @@ test("sparkline points fit the box and handle one or no value", () => {
   assert.equal(sparklinePoints([5], 100, 20), "50.0,0.0");
   assert.equal(sparklinePoints([0, 10], 100, 20), "0.0,20.0 100.0,0.0");
   assert.equal(sparklinePoints([0, 0], 100, 20), "0.0,20.0 100.0,20.0");
+});
+
+test("middle click closes a tab and suppresses autoscroll; other buttons do not", () => {
+  let closed = 0;
+  const handlers = middleClickProps(() => {
+    closed += 1;
+  });
+  const fake = (button: number) => {
+    let prevented = 0;
+    return {
+      event: { button, preventDefault: () => (prevented += 1) } as never,
+      prevented: () => prevented,
+    };
+  };
+  for (const button of [0, 2]) {
+    const up = fake(button);
+    handlers.onAuxClick(up.event);
+    assert.equal(up.prevented(), 0);
+    const down = fake(button);
+    handlers.onMouseDown(down.event);
+    assert.equal(down.prevented(), 0);
+  }
+  assert.equal(closed, 0);
+  const down = fake(1);
+  handlers.onMouseDown(down.event);
+  assert.equal(down.prevented(), 1);
+  assert.equal(closed, 0);
+  const up = fake(1);
+  handlers.onAuxClick(up.event);
+  assert.equal(up.prevented(), 1);
+  assert.equal(closed, 1);
 });

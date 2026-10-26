@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { Markdown } from "./Markdown";
+import { checkedText } from "../readiness";
 import "./pipeline.css";
+import "./readiness.css";
 
 export const PIPELINE_SAMPLE_ID = "plan-implement-review-pipeline";
 type Note = {
@@ -34,6 +36,7 @@ type View = {
   preflight: null | {
     verified: boolean;
     checkedAt: string;
+    trigger?: "auto" | "manual";
     checks: { name: string; ok: boolean; detail: string }[];
     warnings: string[];
   };
@@ -47,7 +50,10 @@ type View = {
   notes: Note[];
 };
 
-/** Preflight (Prepare and verify), stage list and the scrollable, append-only handoff history. */
+/**
+ * Preflight (run by Resume, or by Prepare and verify on its own), stage list and the scrollable,
+ * append-only handoff history.
+ */
 export function PipelineHistory({
   workflowId,
   act,
@@ -102,21 +108,30 @@ export function PipelineHistory({
           {p?.verified ? "verified" : "not verified"}
         </span>
       </div>
-      <button
-        onClick={() =>
-          void act(async () => {
-            setError("");
-            try {
-              await api("/pipelines/" + workflowId + "/prepare", "POST");
-            } catch (e) {
-              setError(e instanceof Error ? e.message : String(e));
-            }
-            await load();
-          })
-        }
-      >
-        Prepare and verify
-      </button>
+      <div className="check-status" data-testid="preflight-status">
+        <span className="quiet">
+          {p
+            ? checkedText(p)
+            : "Not prepared yet: Resume runs the checks (providers, models, caps, read-only roles, workspace, parallel access), then assigns workers and creates worktrees, and starts the project only if every check passes."}
+        </span>
+        <button
+          className="text-button"
+          title="Run the checks now and, if they pass, assign workers and create worktrees, without resuming"
+          onClick={() =>
+            void act(async () => {
+              setError("");
+              try {
+                await api("/pipelines/" + workflowId + "/prepare", "POST");
+              } catch (e) {
+                setError(e instanceof Error ? e.message : String(e));
+              }
+              await load();
+            })
+          }
+        >
+          Prepare and verify
+        </button>
+      </div>
       {error && (
         <p className="blocker" role="alert">
           {error}
@@ -133,12 +148,7 @@ export function PipelineHistory({
             <li key={w}>Note: {w}</li>
           ))}
         </ul>
-      ) : (
-        <p className="quiet">
-          Not verified yet: resume stays refused until provider availability,
-          models, caps and parallel resource access were checked.
-        </p>
-      )}
+      ) : null}
       {view.stage2.state === "failed" && (
         <p className="blocker">
           Fix-worker assignment failed: {view.stage2.error}{" "}

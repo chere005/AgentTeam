@@ -14,6 +14,7 @@ test("review: branch compare, side-by-side, keyboard navigation and narrow layou
   git("init", "-q", "-b", "main");
   git("config", "user.name", "Test");
   git("config", "user.email", "test@example.invalid");
+  git("config", "core.autocrlf", "false");
   const lines = Array.from({ length: 40 }, (_, i) => `const v${i} = ${i};`);
   await writeFile(join(project, "code.ts"), lines.join("\n") + "\n");
   await writeFile(join(project, "move-me.txt"), "same\ncontent\nhere\n");
@@ -27,6 +28,8 @@ test("review: branch compare, side-by-side, keyboard navigation and narrow layou
   await rename(join(project, "move-me.txt"), join(project, "moved.txt"));
   await chmod(join(project, "run.sh"), 0o755);
   git("add", "-A");
+  // Windows filesystems do not expose Git's executable bit through chmod.
+  git("update-index", "--chmod=+x", "run.sh");
   git("commit", "-qm", "feature work");
   // Main moves on: a merge-base comparison must not show this file.
   git("checkout", "-q", "main");

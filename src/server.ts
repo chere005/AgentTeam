@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile, chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { RuntimeDiscovery } from "./discovery.ts";
+import { ReadinessService } from "./readiness.ts";
 import { Store } from "./store.ts";
 import { SkillCatalog } from "./skills.ts";
 import { TeamService } from "./service.ts";
@@ -35,10 +36,17 @@ const scheduler = new Scheduler(service, runs);
 scheduler.start();
 const discovery = new RuntimeDiscovery(store);
 runs.readiness = (environment) => discovery.readiness(environment);
-void discovery
-  .refresh()
-  .then(() => store.emit("runtimes.discovered", "runtimes"));
-const server = createApi(service, token, runs, discovery);
+// Periodic rescans while a used runtime is blocked, model checks and re-queues (src/readiness.ts).
+const readiness = new ReadinessService({
+  service,
+  discovery,
+  runs,
+  auto: process.env.AGENTTEAM_TEST !== "1",
+}).start();
+void readiness.rescan({ always: true }).catch((error) => {
+  console.error("Runtime discovery failed:", error);
+});
+const server = createApi(service, token, runs, discovery, readiness);
 const port = Number(process.env.AGENTTEAM_PORT ?? 4317);
 if (!Number.isInteger(port) || port < 0 || port > 65535)
   throw new Error("Invalid port");
@@ -56,6 +64,7 @@ let closing = false;
 async function stop() {
   if (closing) return;
   closing = true;
+  readiness.stop();
   scheduler.stop();
   runs.close();
   server.closeAllConnections();

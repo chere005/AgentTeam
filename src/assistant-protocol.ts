@@ -125,6 +125,52 @@ export const PROTOCOL_EXAMPLES: { request: string; proposal: unknown }[] = [
     },
   },
   {
+    request:
+      "Have the lead and writer each write their own report-for-duty file",
+    proposal: {
+      title: "Write each agent's duty file",
+      ops: [
+        {
+          op: "project.start",
+          teamId: "ACTIVE_TEAM_ID",
+          name: "Report for duty",
+          goal: "Each selected agent writes its own duty file",
+          workspace: "ABSOLUTE_WORKSPACE_PATH",
+          tasks: [
+            {
+              agentId: "AGENT_ID_OF_LEAD",
+              title: "Write Lead.txt",
+              instructions:
+                "Write Lead.txt in the selected workspace containing exactly: say who you are, reporting for duty",
+              completionChecks: [
+                { type: "artifact-exists", path: "Lead.txt" },
+                {
+                  type: "artifact-matches",
+                  path: "Lead.txt",
+                  pattern: "^say who you are, reporting for duty(?:\\r?\\n)?$",
+                },
+              ],
+            },
+            {
+              agentId: "AGENT_ID_OF_WRITER",
+              title: "Write Writer.txt",
+              instructions:
+                "Write Writer.txt in the selected workspace containing exactly: say who you are, reporting for duty",
+              completionChecks: [
+                { type: "artifact-exists", path: "Writer.txt" },
+                {
+                  type: "artifact-matches",
+                  path: "Writer.txt",
+                  pattern: "^say who you are, reporting for duty(?:\\r?\\n)?$",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     request: "Make the lead's role clearer and cap the project at 40 turns",
     proposal: {
       title: "Clarify the lead and bound the project",
@@ -169,7 +215,8 @@ export function proposalProtocol(): string {
     "- agent.update {id, changes: some AgentFields}: replace the given fields (skills given here replace the whole list; prefer agent.skills).",
     "- edge.create {edge: EdgeFields}: a communication link from → to. edge.update {id, changes: some EdgeFields}.",
     "- rule.create {rule: RuleFields}: a routing rule; mode mandatory means a required review (kind review).",
-    "- workflow.create {ref?, workflow: WorkflowFields}: a project owned by ownerId.",
+    "- project.start {teamId, name?, goal, workspace, tasks:[{agentId,title,instructions,completionChecks?}]}: create AND start independent simple file tasks on existing agents in the active team. It must be the ONLY operation. The user's Start tasks action applies it and starts the saved tasks through readiness checks; no planner turn or second dispatch is needed. Use this when the user asks the team to DO simple work. Include one explicit task for each participating ordinary agent, including the lead when requested; exclude Team Assistant. Check each agent's simpleTask availability, name any unavailable agents and explain any omitted agents in the paragraph. Never silently substitute models, widen permissions or claim unavailable agents ran. Use the user's chosen workspace (or an existing shared writable folder when unambiguous). For file requests include explicit safe filenames and actual artifact-exists/artifact-matches checks; never use output prose as proof a file exists. Escape literal text in a regex and sanitize Windows-invalid filename characters, trailing dots/spaces and reserved device names; filenames must be unique after sanitizing. Tasks run independently without pipeline stages or delegation chains. Team configuration changes belong in a separate proposal.",
+    "- workflow.create {ref?, workflow: WorkflowFields}: create an EMPTY DRAFT project container owned by ownerId. This creates NO tasks and starts NO agents. Use only when the user specifically wants a blank draft; never use this to fulfill a request to start work.",
     "- workflow.limits {workflowId, limits: LimitFields}: stopping conditions (null removes a bound).",
     "- resource.assign {agentId, action: add|remove, workspace: {path, access?: read|write, active?}}: attach or detach a folder (absolute path).",
     `AgentFields: ${fieldsOf(agentSchema, ["kind", "allowUnverified"])}`,

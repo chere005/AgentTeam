@@ -4,6 +4,7 @@ export const providerErrorKinds = [
   "authentication",
   "quota",
   "model-unavailable",
+  "sandbox-unavailable",
   "process-failure",
   "timeout",
   "cancellation",
@@ -23,6 +24,10 @@ const quotaPattern =
   /\b(rate[ _-]?limit(ed)?|too many requests|quota|usage limit|limit reached|credit balance|insufficient[ _-]?(credits?|funds|quota)|billing|429|overloaded|resource[ _-]?exhausted|exceeded your)\b/i;
 const modelPattern =
   /\b(model[^.\n]{0,60}(not found|unavailable|not available|does not exist|unsupported|not supported|deprecated|no access)|(unknown|invalid|unsupported|unavailable) model|no such model|model_not_found|do(es)? not have access to (the )?model)\b/i;
+// Only startup refusal diagnostics. A normal command denied by a running sandbox is not a
+// missing sandbox, and this classification alone never establishes that no effects occurred.
+const sandboxUnavailablePattern =
+  /\bsandbox required but unavailable\b|\bsandbox is enabled but the Windows sandbox is not active\b|\bsandbox(?:ing)? (?:is |currently )?(?:only supported on|requires WSL2)\b/i;
 
 /** Pure classification of a provider failure into a stable kind. */
 export function classifyProviderFailure(
@@ -37,6 +42,12 @@ export function classifyProviderFailure(
   )
     return "timeout";
   const text = input.message ?? "";
+  if (
+    input.code === "sandbox_unavailable" ||
+    input.code === "provider_sandbox_unavailable" ||
+    sandboxUnavailablePattern.test(text)
+  )
+    return "sandbox-unavailable";
   if (modelPattern.test(text)) return "model-unavailable";
   if (authPattern.test(text)) return "authentication";
   if (quotaPattern.test(text)) return "quota";

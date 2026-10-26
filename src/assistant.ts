@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { z } from "zod";
-import { limitsPatchSchema } from "./limits-schema.ts";
+import { completionCheckSchema, limitsPatchSchema } from "./limits-schema.ts";
+import { assignProject } from "./projects.ts";
 import { Store } from "./store.ts";
 import { withRoleDefaults } from "./roles.ts";
 import { TeamService } from "./service.ts";
@@ -14,6 +16,7 @@ import {
   type Message,
   type Rule,
   type Session,
+  type Task,
   type Workflow,
 } from "./model.ts";
 
@@ -45,7 +48,32 @@ const skillAdd = z
   })
   .strict();
 
+/** An executable assignment, deliberately separate from an empty project container. */
+export const startProjectOpSchema = z
+  .object({
+    op: z.literal("project.start"),
+    teamId: z.string().min(1).max(200),
+    name: z.string().trim().min(1).max(120).optional(),
+    goal: z.string().trim().min(1).max(20_000),
+    workspace: z.string().min(1).max(4096),
+    tasks: z
+      .array(
+        z
+          .object({
+            agentId: z.string().min(1).max(200),
+            title: z.string().trim().min(1).max(200),
+            instructions: z.string().trim().min(1).max(20_000),
+            completionChecks: z.array(completionCheckSchema).max(20).optional(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(30),
+  })
+  .strict();
+
 export const opSchema = z.discriminatedUnion("op", [
+  startProjectOpSchema,
   z
     .object({
       op: z.literal("agent.create"),
@@ -158,6 +186,8 @@ export type Proposal = {
   result?: { index: number; op: Op["op"]; id: string }[];
   /** What applying changed, one line per operation (from the diff just before applying). */
   summary?: string[];
+  /** Creation is durable before startup. Setup failures retry this same saved project. */
+  execution?: { state: "started" | "blocked"; reason?: string };
 };
 export type AuditEntry = {
   id: string;
@@ -186,8 +216,10 @@ const SNAPSHOT_KINDS = [
   "rule",
   "workflow",
   "workflow-limits",
+  "task",
+  "specialist-trigger",
 ] as const;
-const COPY_KINDS = [...SNAPSHOT_KINDS, "session", "task"] as const;
+const COPY_KINDS = [...SNAPSHOT_KINDS, "session"] as const;
 
 const agentInputOf = (a: Agent) => {
   const { id, createdAt, control, ...input } = a;
@@ -283,6 +315,23 @@ export async function executeOps(
   for (const [index, op] of ops.entries()) {
     let id = "";
     switch (op.op) {
+      case "project.start": {
+        assert(
+          op.teamId === service.teamSpaces.active(),
+          "not_in_team",
+          "Start tasks in the active team",
+          400,
+        );
+        const { op: _op, teamId, ...assignment } = op;
+        id = (
+          await assignProject(service, teamId, {
+            ...assignment,
+            mode: "simple",
+            sequential: false,
+          })
+        ).id;
+        break;
+      }
       case "agent.create": {
         const input = { ...op.agent } as Record<string, unknown>;
         if ("parentId" in input)
@@ -435,6 +484,12 @@ function touchedKeys(ops: Op[]): string[] {
   };
   for (const op of ops)
     switch (op.op) {
+      case "project.start":
+        keys.add("team-space:" + op.teamId);
+        keys.add("team-profile:" + op.teamId);
+        keys.add("settings:connections");
+        for (const task of op.tasks) agent(task.agentId);
+        break;
       case "agent.create":
         agent(op.agent.parentId);
         break;
@@ -537,6 +592,28 @@ export function buildDiff(service: TeamService, ops: Op[]): DiffEntry[] {
       significant: (e.reasons ?? []).length > 0,
     });
     switch (op.op) {
+      case "project.start": {
+        out.push(
+          entry({
+            action: "create",
+            kind: "workflow",
+            target: op.name ?? op.goal.slice(0, 120),
+            label: `Start ${op.tasks.length} independent task${op.tasks.length === 1 ? "" : "s"}`,
+            done: `Created ${op.tasks.length} task${op.tasks.length === 1 ? "" : "s"} in ${op.name ?? "a simple project"}`,
+            fields: [
+              { path: "workspace", before: null, after: op.workspace },
+              { path: "goal", before: null, after: op.goal },
+              ...op.tasks.map((task, i) => ({
+                path: `tasks.${i + 1}`,
+                before: null,
+                after: { agent: label(task.agentId), ...task },
+              })),
+            ],
+            reasons: ["Starts work with the selected agents"],
+          }),
+        );
+        break;
+      }
       case "agent.create": {
         const input = op.agent;
         if (op.ref) simulated.set("@" + op.ref, input);
@@ -815,6 +892,11 @@ async function dryRun(service: TeamService, ops: Op[]) {
     // Teams and the active team decide where new agents land and which links are cross-team.
     for (const team of service.store.list<{ id: string }>("team-space"))
       sandboxStore.put("team-space", team);
+    // Project ownership/retirement and adapter compatibility must match the live service.
+    for (const profile of service.store.list<{ id: string }>("team-profile"))
+      sandboxStore.put("team-profile", profile);
+    for (const setting of service.store.list<{ id: string }>("settings"))
+      if (setting.id === "connections") sandboxStore.put("settings", setting);
     sandboxStore.put("settings", {
       id: "active-team",
       teamId: service.teamSpaces.active(),
@@ -850,13 +932,15 @@ export type ProposalOptions = {
   /** Test seam: called after each real operation during apply (a throw simulates a mid-apply failure). */
   afterOp?: (index: number) => void;
   now?: () => number;
+  /** Production uses the same readiness/start gate as the assignment form. Never called by previews. */
+  startProject?: (workflowId: string) => Promise<unknown>;
 };
 
 export class AssistantProposals {
   service: TeamService;
   store: Store;
   opts: Required<Pick<ProposalOptions, "ttlMs" | "now">> &
-    Pick<ProposalOptions, "afterOp">;
+    Pick<ProposalOptions, "afterOp" | "startProject">;
   private chain: Promise<unknown> = Promise.resolve();
   constructor(service: TeamService, options: ProposalOptions = {}) {
     this.service = service;
@@ -865,6 +949,7 @@ export class AssistantProposals {
       ttlMs: options.ttlMs ?? 60 * 60 * 1000,
       now: options.now ?? Date.now,
       afterOp: options.afterOp,
+      startProject: options.startProject,
     };
   }
   /** Applies are serialised so two proposals can never interleave their mutations. */
@@ -947,6 +1032,69 @@ export class AssistantProposals {
   }
   /** Reference and existing-entity checks that do not need a dry run. */
   private checkStatic(ops: Op[]) {
+    const start = ops.find((op) => op.op === "project.start");
+    if (start) {
+      assert(
+        ops.length === 1,
+        "proposal_invalid",
+        "project.start must be the only operation; configure the team separately before starting work",
+        400,
+      );
+      assert(
+        new Set(start.tasks.map((task) => task.agentId)).size ===
+          start.tasks.length,
+        "proposal_invalid",
+        "project.start assigns one independent task per agent; duplicate agents are not allowed",
+        400,
+      );
+      const outputs = new Map<string, string>();
+      for (const task of start.tasks) {
+        for (const check of task.completionChecks ?? []) {
+          if (
+            check.type !== "artifact-exists" &&
+            check.type !== "artifact-matches"
+          )
+            continue;
+          const absolute = resolve(start.workspace, check.path);
+          const inside = relative(resolve(start.workspace), absolute);
+          assert(
+            !isAbsolute(check.path) &&
+              inside.length > 0 &&
+              inside !== ".." &&
+              !inside.startsWith(".." + sep) &&
+              !isAbsolute(inside),
+            "proposal_invalid",
+            `The output file ${check.path} must stay inside the selected workspace`,
+            400,
+          );
+          if (process.platform === "win32")
+            assert(
+              inside
+                .split(sep)
+                .every(
+                  (part) =>
+                    !/[<>:"|?*\x00-\x1f]/.test(part) &&
+                    !/[. ]$/.test(part) &&
+                    !/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(
+                      part,
+                    ),
+                ),
+              "proposal_invalid",
+              `The output file ${check.path} is not a valid Windows filename`,
+              400,
+            );
+          const key =
+            process.platform === "win32" ? absolute.toLowerCase() : absolute;
+          assert(
+            !outputs.has(key) || outputs.get(key) === task.agentId,
+            "proposal_invalid",
+            `Two agents cannot write the same output file: ${check.path}`,
+            400,
+          );
+          outputs.set(key, task.agentId);
+        }
+      }
+    }
     const seen = new Set<string>();
     const defined = new Set<string>();
     const need = (v: unknown, where: string) => {
@@ -1170,6 +1318,9 @@ export class AssistantProposals {
     this.requireUser(actor);
     return this.serial(async () => {
       const p = this.get(id);
+      // A second click after a setup failure retries startup, never creates another project.
+      if (p.status === "applied" && p.ops[0]?.op === "project.start")
+        return p.execution?.state === "started" ? p : this.startSavedProject(p);
       assert(
         p.status === "pending" || p.status === "approved",
         "proposal_" + p.status,
@@ -1248,8 +1399,33 @@ export class AssistantProposals {
           },
         );
       });
-      return applied;
+      return p.ops[0]?.op === "project.start"
+        ? this.startSavedProject(applied)
+        : applied;
     });
+  }
+  private async startSavedProject(p: Proposal): Promise<Proposal> {
+    const workflowId = p.result?.[0]?.id;
+    assert(workflowId, "proposal_invalid", "The saved project is missing");
+    let execution: NonNullable<Proposal["execution"]>;
+    try {
+      assert(
+        this.opts.startProject,
+        "startup_unavailable",
+        "Project startup is unavailable; the tasks are saved and paused",
+      );
+      await this.opts.startProject(workflowId);
+      execution = { state: "started" };
+    } catch (error) {
+      execution = { state: "blocked", reason: errorText(error) };
+    }
+    const updated: Proposal = { ...p, execution };
+    this.store.put("proposal", updated);
+    this.store.emit("assistant.project." + execution.state, workflowId, {
+      proposalId: p.id,
+      ...(execution.reason ? { reason: execution.reason } : {}),
+    });
+    return updated;
   }
   /**
    * Restores exactly the entities the completed operations wrote (a failing operation writes in
@@ -1264,7 +1440,23 @@ export class AssistantProposals {
     const touched: [string, string][] = [];
     for (const r of done) {
       const kind = r.op.split(".")[0];
-      if (r.op === "resource.assign") touched.push(["agent", r.id]);
+      if (r.op === "project.start") {
+        const project = this.store.get<
+          Workflow & { setup?: { attachments?: { agentId: string }[] } }
+        >("workflow", r.id);
+        touched.push(["workflow", r.id], ["workflow-limits", r.id]);
+        for (const task of this.store
+          .list<Task>("task")
+          .filter((task) => task.workflowId === r.id)) {
+          touched.push(["task", task.id]);
+          for (const trigger of this.store
+            .list<{ id: string; taskId: string }>("specialist-trigger")
+            .filter((trigger) => trigger.taskId === task.id))
+            touched.push(["specialist-trigger", trigger.id]);
+        }
+        for (const attachment of project.setup?.attachments ?? [])
+          touched.push(["agent", attachment.agentId]);
+      } else if (r.op === "resource.assign") touched.push(["agent", r.id]);
       else if (r.op === "workflow.limits")
         touched.push(["workflow-limits", r.id], ["workflow", r.id]);
       else if (r.op === "workflow.create")

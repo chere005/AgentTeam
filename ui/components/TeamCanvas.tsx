@@ -124,6 +124,8 @@ function Card({ data }: NodeProps) {
     state: string = activity?.state ?? "idle",
     failed = (activity?.failedTaskIds?.length ?? 0) > 0,
     resume = (activity?.interruptedTaskIds?.length ?? 0) > 0,
+    blocked = activity?.blockedTaskIds?.length ?? 0,
+    delegatedWaiting = (activity?.waitingTaskIds?.length ?? 0) > 0,
     limit = a.maxConcurrentInvocations ?? "∞";
   return (
     <div
@@ -133,7 +135,7 @@ function Card({ data }: NodeProps) {
         (far ? "far " : "") +
         (state === "processing" ? "busy " : "") +
         (failed ? "has-failure " : "") +
-        (resume ? "has-resume " : "")
+        (resume || blocked ? "has-resume " : "")
       }
       data-card-mode={data.simple ? "simple" : "detailed"}
       style={
@@ -162,7 +164,13 @@ function Card({ data }: NodeProps) {
                   className={"badge " + (state === "processing" ? "green" : "")}
                 >
                   {state}
-                  {failed ? " · failed" : resume ? " · resume" : ""}
+                  {failed
+                    ? " · failed"
+                    : blocked
+                      ? " · needs attention"
+                      : resume
+                        ? " · resume"
+                        : ""}
                 </span>
               </>
             )}
@@ -280,7 +288,10 @@ function Card({ data }: NodeProps) {
           </div>
         </div>
       </div>
-      {(failed || resume) && (
+      {delegatedWaiting && !failed && !blocked && !resume && (
+        <p className="card-waiting">Waiting for delegated work</p>
+      )}
+      {(failed || blocked || resume) && (
         <button
           className="failure nodrag"
           title="Open the tasks that need a decision"
@@ -289,9 +300,11 @@ function Card({ data }: NodeProps) {
             (data.blockers as Function | undefined)?.(a.id);
           }}
         >
-          {failed
-            ? `${activity.failedTaskIds.length} failed task(s)`
-            : `${activity.interruptedTaskIds.length} interrupted task(s) to resume`}{" "}
+          {blocked
+            ? `${blocked} task${blocked === 1 ? " needs" : "s need"} attention`
+            : failed
+              ? `${activity.failedTaskIds.length} failed task(s)`
+              : `${activity.interruptedTaskIds.length} interrupted task(s) to resume`}{" "}
           · View blockers
         </button>
       )}

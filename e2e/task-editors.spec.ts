@@ -237,6 +237,56 @@ test("task retry policy: validate, save, persist", async () => {
   });
 });
 
+test("file content completion checks validate, save and survive reload", async () => {
+  await withApp(async (page) => {
+    const { first } = await fixture(page);
+    await openWorkflows(page);
+    const checks = (await openTaskSettings(page, "Draft plan")).getByTestId(
+      "completion-checks",
+    );
+    await checks.getByRole("button", { name: "Add check" }).click();
+    await checks.getByLabel("Type").selectOption("artifact-matches");
+    await checks
+      .getByLabel("File path (relative to the workspace)")
+      .fill("roll-call/Writer.txt");
+    await checks.getByLabel("Pattern (regular expression)").fill("(");
+    await checks.getByRole("button", { name: "Save checks" }).click();
+    await expect(checks.getByRole("alert")).toContainText(
+      "not a valid regular expression",
+    );
+    await checks
+      .getByLabel("Pattern (regular expression)")
+      .fill("^I am Writer, reporting for duty\\.$");
+    await checks.getByLabel("ignore case").check();
+    await checks.getByRole("button", { name: "Save checks" }).click();
+    await expect(checks.getByRole("status")).toContainText(
+      "Saved 1 completion check",
+    );
+    expect(
+      (await api(page, "GET", `/tasks/${first.id}`)).completionChecks,
+    ).toEqual([
+      {
+        type: "artifact-matches",
+        path: "roll-call/Writer.txt",
+        pattern: "^I am Writer, reporting for duty\\.$",
+        flags: "i",
+      },
+    ]);
+    await reload(page);
+    const restored = (await openTaskSettings(page, "Draft plan")).getByTestId(
+      "completion-checks",
+    );
+    await expect(restored.getByLabel("Type")).toHaveValue("artifact-matches");
+    await expect(
+      restored.getByLabel("File path (relative to the workspace)"),
+    ).toHaveValue("roll-call/Writer.txt");
+    await expect(
+      restored.getByLabel("Pattern (regular expression)"),
+    ).toHaveValue("^I am Writer, reporting for duty\\.$");
+    await expect(restored.getByLabel("ignore case")).toBeChecked();
+  });
+});
+
 test("task state config: selected inputs, caps, persistence and backend refusal once running", async () => {
   await withApp(async (page) => {
     const { wf, first, second, third } = await fixture(page);
@@ -304,6 +354,9 @@ test("task state config: selected inputs, caps, persistence and backend refusal 
 });
 
 test("shared state editor: define field with permissions, edit, backend error, preview and guarded restore", async () => {
+  // This covers a reload, permission errors and several guarded restore previews. On Windows the
+  // final preview can exceed the suite's 45 s budget; keep individual assertion timeouts unchanged.
+  test.setTimeout(90_000);
   await withApp(async (page) => {
     const { a, b, wf, third } = await fixture(page);
     const spare = await api(page, "POST", "/agents", {

@@ -41,7 +41,7 @@ export function GroupNode({ data }: NodeProps) {
         <span>{s.processing} running</span>
         {s.failed > 0 && <span className="failure">{s.failed} failed</span>}
         {s.attention > 0 && (
-          <span className="failure">{s.attention} to resume</span>
+          <span className="failure">{s.attention} need attention</span>
         )}
       </div>
       <button

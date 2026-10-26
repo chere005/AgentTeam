@@ -4,6 +4,7 @@ import { ReviewComments, type ReviewScope } from "./ReviewComments";
 import { diffRows, splitRows, type Cell, type Row } from "./diffRows";
 import { highlightLine, languageFor } from "./highlight";
 import { agentSelectorLabel } from "../agent-identity";
+import { useWorkspaceWatch } from "./useWorkspaceWatch";
 
 type Change = { path: string; status: string; from?: string };
 type Meta = {
@@ -24,6 +25,10 @@ type Review = {
   baselineAt?: string;
   files: Change[];
   filesTruncated?: boolean;
+  scanIncomplete?: boolean;
+  baselineIncomplete?: boolean;
+  comparisonNote?: string;
+  currentContent?: string;
   diff: string;
   truncated?: boolean;
   truncatedReason?: string;
@@ -54,6 +59,8 @@ type CommentTarget = {
 };
 
 const NARROW = 640;
+const CURRENT_MAX_LINES = 6000;
+const CURRENT_MAX_LINE_CHARS = 5000;
 const STATUS: Record<string, string> = {
   M: "modified",
   A: "added",
@@ -85,6 +92,7 @@ function Code({ text, lang }: { text: string; lang: string | null }) {
 function MetaNotes({ review, path }: { review: Review; path: string }) {
   const m = review.meta;
   const notes: string[] = [];
+  if (review.comparisonNote) notes.push(review.comparisonNote);
   if (m?.kind === "renamed" || m?.kind === "copied")
     notes.push(
       `${m.kind === "renamed" ? "Renamed" : "Copied"} from ${m.renameFrom ?? "?"} to ${m.renameTo ?? path}${m.similarity !== undefined ? ` (${m.similarity}% similar)` : ""}.`,
@@ -94,8 +102,7 @@ function MetaNotes({ review, path }: { review: Review; path: string }) {
   if (m?.kind === "added" && m.noHunks && !m.binary)
     notes.push("New empty file.");
   if (m?.kind === "deleted") notes.push("File deleted.");
-  if (m?.binary)
-    notes.push("Binary file: contents are not shown, only that it changed.");
+  if (m?.binary) notes.push("Binary file: contents cannot be shown as text.");
   if (m?.submodule) notes.push("Submodule pointer changed.");
   if (review.unreadable) notes.push(review.unreadable);
   if (!notes.length && !review.diff)
@@ -161,12 +168,26 @@ export function ChangesReview({
   const scopeKey = JSON.stringify(scope);
   const narrow = width < NARROW;
   const selectedChange = review?.files.find((file) => file.path === path);
+  const currentContentsOnly =
+    review?.source === "folder" &&
+    selectedChange?.status.trim().startsWith("?") === true;
+  const incompleteScan =
+    review?.source === "folder" &&
+    (review.scanIncomplete ?? review.filesTruncated ?? false);
+  const incompleteBaseline =
+    review?.source === "folder" && review.baselineIncomplete === true;
   const wholeFileAdded =
-    review?.meta?.kind === "added" ||
-    selectedChange?.status.trim().startsWith("A") === true ||
-    selectedChange?.status.trim().startsWith("??") === true;
+    !currentContentsOnly &&
+    (review?.meta?.kind === "added" ||
+      selectedChange?.status.trim().startsWith("A") === true ||
+      selectedChange?.status.trim().startsWith("??") === true);
   // New files read best as one full-width green addition, not a blank old-file column beside it.
-  const split = view === "split" && !narrow && !wholeFileAdded;
+  const split =
+    view === "split" && !narrow && !wholeFileAdded && !currentContentsOnly;
+
+  useWorkspaceWatch(agentId, workspace, mode !== "compare", () => {
+    refresh((value) => value + 1);
+  });
 
   useEffect(() => {
     const el = root.current;
@@ -233,6 +254,26 @@ export function ChangesReview({
   const visibleFiles = (review?.files ?? []).filter((f) =>
     f.path.toLowerCase().includes(filter.toLowerCase()),
   );
+  const currentPreview = useMemo(() => {
+    if (!currentContentsOnly || review?.currentContent === undefined)
+      return null;
+    const lines = review.currentContent
+      .replace(/\r\n/g, "\n")
+      .split("\n", CURRENT_MAX_LINES + 1);
+    const truncated =
+      lines.length > CURRENT_MAX_LINES ||
+      lines.some((line) => line.length > CURRENT_MAX_LINE_CHARS);
+    return {
+      lines: lines
+        .slice(0, CURRENT_MAX_LINES)
+        .map((line) =>
+          line.length > CURRENT_MAX_LINE_CHARS
+            ? line.slice(0, CURRENT_MAX_LINE_CHARS) + " …[line truncated]"
+            : line,
+        ),
+      truncated,
+    };
+  }, [currentContentsOnly, review?.currentContent]);
 
   function go(next: number) {
     const n = Math.max(0, Math.min(hunkCount - 1, next));
@@ -384,7 +425,15 @@ export function ChangesReview({
       <p className="hint">
         {review?.source === "folder" ? (
           <>
-            {review.files.length} changed files · {workspace}
+            {review.files.length}{" "}
+            {incompleteScan || incompleteBaseline
+              ? review.files.length === 1
+                ? "file to inspect"
+                : "files to inspect"
+              : review.files.length === 1
+                ? "changed file"
+                : "changed files"}{" "}
+            · {workspace}
             {review.baselineAt &&
               ` · since ${new Date(review.baselineAt).toLocaleString()}`}
           </>
@@ -601,7 +650,19 @@ export function ChangesReview({
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
-          {review.filesTruncated && (
+          {(incompleteScan || incompleteBaseline) && (
+            <p
+              className="notice"
+              role="status"
+              data-testid="folder-scan-incomplete"
+            >
+              {incompleteScan &&
+                "Folder scan incomplete. Some files may be missing from this list. "}
+              {incompleteBaseline &&
+                "The saved baseline is incomplete. Files without recorded originals are listed as not compared."}
+            </p>
+          )}
+          {review.source !== "folder" && review.filesTruncated && (
             <p className="notice">
               Too many changed files: showing the first {review.files.length}.
               Narrow the workspace folder to see the rest.
@@ -610,7 +671,9 @@ export function ChangesReview({
           <div className="review-layout">
             <aside className="review-files-panel">
               <div className="review-files-heading">
-                <strong>Changed files</strong>
+                <strong>
+                  {incompleteBaseline ? "Files to inspect" : "Changed files"}
+                </strong>
                 <span>{visibleFiles.length}</span>
               </div>
               <nav className="review-files" aria-label="Changed files">
@@ -619,20 +682,31 @@ export function ChangesReview({
                     key={file.path}
                     className={path === file.path ? "active" : ""}
                     aria-current={path === file.path ? "true" : undefined}
-                    title={STATUS[file.status.trim()[0] ?? ""] ?? file.status}
+                    title={
+                      review.source === "folder" &&
+                      file.status.trim().startsWith("?")
+                        ? "Not compared: original file contents were not recorded"
+                        : (STATUS[file.status.trim()[0] ?? ""] ?? file.status)
+                    }
                     onClick={() => setPath(file.path)}
                   >
                     <code>{file.status.trim()}</code>
                     <span>
                       {file.path}
                       {file.from && <small> ← {file.from}</small>}
+                      {review.source === "folder" &&
+                        file.status.trim().startsWith("?") && (
+                          <small> · Not compared</small>
+                        )}
                     </span>
                   </button>
                 ))}
                 {!review.files.length && (
                   <p className="hint">
                     {review.source === "folder"
-                      ? "No pending changes."
+                      ? incompleteScan || incompleteBaseline
+                        ? "No changes found in the scanned files. The comparison is incomplete."
+                        : "No pending changes."
                       : `No ${mode === "compare" ? "committed differences between these revisions" : `${mode} changes`}.`}
                   </p>
                 )}
@@ -641,16 +715,28 @@ export function ChangesReview({
             {path && review.files.length > 0 && (
               <div
                 className={`review-diff${wholeFileAdded ? " review-diff-added-file" : ""}`}
-                aria-label={wholeFileAdded ? "New file contents" : undefined}
+                aria-label={
+                  currentContentsOnly
+                    ? "Current file preview"
+                    : wholeFileAdded
+                      ? "New file contents"
+                      : undefined
+                }
               >
                 <div className="review-file-heading">
                   <strong>{path}</strong>
                   <span className="review-file-stats">
-                    {wholeFileAdded && (
-                      <span className="review-added-label">New file</span>
-                    )}{" "}
-                    <span className="diff-count-add">+{added}</span> /{" "}
-                    <span className="diff-count-remove">−{removed}</span>
+                    {currentContentsOnly ? (
+                      <span>Original unavailable · not compared</span>
+                    ) : (
+                      <>
+                        {wholeFileAdded && (
+                          <span className="review-added-label">New file</span>
+                        )}{" "}
+                        <span className="diff-count-add">+{added}</span> /{" "}
+                        <span className="diff-count-remove">−{removed}</span>
+                      </>
+                    )}
                   </span>
                 </div>
                 <div
@@ -700,11 +786,13 @@ export function ChangesReview({
                   <span className="tabs" role="group" aria-label="Diff layout">
                     <button
                       className={split ? "active" : ""}
-                      disabled={narrow}
+                      disabled={narrow || currentContentsOnly}
                       title={
-                        narrow
-                          ? "Side by side needs a wider pane"
-                          : "Two columns"
+                        currentContentsOnly
+                          ? "The original contents were not recorded, so only the current file can be shown"
+                          : narrow
+                            ? "Side by side needs a wider pane"
+                            : "Two columns"
                       }
                       aria-pressed={split}
                       onClick={() => setView("split")}
@@ -727,6 +815,37 @@ export function ChangesReview({
                   </p>
                 )}
                 <MetaNotes review={review} path={path} />
+                {currentPreview?.truncated && (
+                  <p className="notice" role="note">
+                    Current contents preview shortened. Open the file in Files
+                    to read the rest.
+                  </p>
+                )}
+                {currentPreview && (
+                  <div
+                    className="diff-scroll"
+                    tabIndex={0}
+                    aria-label="Current file contents"
+                  >
+                    <table
+                      className="diff-table"
+                      aria-label="Current file contents with line numbers"
+                    >
+                      <tbody>
+                        {currentPreview.lines.map((line, index) => (
+                          <tr key={index}>
+                            <td />
+                            <td>{index + 1}</td>
+                            <td>
+                              <Code text={line} lang={lang} />
+                            </td>
+                            <td />
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
                 {displayRows.length > 0 && (
                   <div
                     className="diff-scroll"

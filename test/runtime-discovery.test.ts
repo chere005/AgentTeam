@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, mkdir, chmod, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, mkdir, chmod, rm, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../src/store.ts";
@@ -12,6 +12,10 @@ import {
   RuntimeDiscovery,
   defaults,
   normalizeModels,
+  bundledExecutables,
+  findExecutable,
+  parseClaudeAuthStatus,
+  systemScanDeps,
   type ModelChoice,
 } from "../src/discovery.ts";
 import {
@@ -438,5 +442,249 @@ test("queued work waits until its runtime is resolved and fails clearly when una
   } finally {
     scheduler.stop();
     store.close();
+  }
+});
+
+async function touch(path: string, mtimeSeconds?: number) {
+  await mkdir(join(path, ".."), { recursive: true });
+  await writeFile(path, "");
+  if (mtimeSeconds !== undefined)
+    await utimes(path, mtimeSeconds, mtimeSeconds);
+}
+
+test("bundled Claude desktop executables: newest numeric version first, hash dir with the exe, Packages mirror", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agentteam-bundled-"));
+  try {
+    const appData = join(dir, "Roaming");
+    const local = join(dir, "Local");
+    const root = join(appData, "Claude", "claude-code");
+    await touch(join(root, "2.1.293", "aaa", "claude.exe"), 1000);
+    await touch(join(root, "2.1.295", "d2e2", "claude.exe"), 2000);
+    await mkdir(join(root, "2.1.295", "empty"), { recursive: true });
+    await touch(join(root, "2.1.295", "older", "claude.exe"), 500);
+    await touch(join(root, "2.1.9", "zzz", "claude.exe"), 9000);
+    await touch(join(root, "nightly", "n", "claude.exe"), 9999);
+    const found = await bundledExecutables("claude", {
+      platform: "win32",
+      home: dir,
+      env: { APPDATA: appData, LOCALAPPDATA: local },
+    });
+    assert.deepEqual(found, [
+      join(root, "2.1.295", "d2e2", "claude.exe"),
+      join(root, "2.1.293", "aaa", "claude.exe"),
+      join(root, "2.1.9", "zzz", "claude.exe"),
+      join(root, "nightly", "n", "claude.exe"),
+    ]);
+
+    const mirror = join(
+      local,
+      "Packages",
+      "Claude_abc123",
+      "LocalCache",
+      "Roaming",
+      "Claude",
+      "claude-code",
+    );
+    await touch(join(mirror, "2.2.0", "h", "claude.exe"), 3000);
+    const viaPackages = await bundledExecutables("claude", {
+      platform: "win32",
+      home: dir,
+      env: { APPDATA: join(dir, "nothing"), LOCALAPPDATA: local },
+    });
+    assert.deepEqual(viaPackages, [join(mirror, "2.2.0", "h", "claude.exe")]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("bundled Codex desktop executable: the hash dir that holds codex.exe, latest first", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agentteam-bundled-"));
+  try {
+    const local = join(dir, "Local");
+    const bin = join(local, "OpenAI", "Codex", "bin");
+    await mkdir(join(bin, "c602dfdab3808440"), { recursive: true });
+    await touch(join(bin, "2993767bd1dfb009", "codex.exe"), 1000);
+    await touch(join(bin, "11111111", "codex.exe"), 2000);
+    const env = { APPDATA: join(dir, "Roaming"), LOCALAPPDATA: local };
+    assert.deepEqual(
+      await bundledExecutables("codex", { platform: "win32", home: dir, env }),
+      [
+        join(bin, "11111111", "codex.exe"),
+        join(bin, "2993767bd1dfb009", "codex.exe"),
+      ],
+    );
+    assert.deepEqual(
+      await bundledExecutables("codex", { platform: "linux", home: dir, env }),
+      [],
+    );
+    assert.deepEqual(
+      await bundledExecutables("wolframscript", {
+        platform: "win32",
+        home: dir,
+        env,
+      }),
+      [],
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("bundled executables: missing roots give an empty list; macOS and Linux layouts", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agentteam-bundled-"));
+  try {
+    for (const platform of ["win32", "darwin", "linux"] as const)
+      assert.deepEqual(
+        await bundledExecutables("claude", {
+          platform,
+          home: join(dir, "none"),
+          env: {},
+        }),
+        [],
+      );
+    const mac = join(
+      dir,
+      "Library",
+      "Application Support",
+      "Claude",
+      "claude-code",
+    );
+    await touch(join(mac, "2.1.10", "h1", "claude"), 1000);
+    await touch(join(mac, "2.1.2", "h2", "claude"), 5000);
+    assert.deepEqual(
+      await bundledExecutables("claude", {
+        platform: "darwin",
+        home: dir,
+        env: {},
+      }),
+      [join(mac, "2.1.10", "h1", "claude"), join(mac, "2.1.2", "h2", "claude")],
+    );
+    const linux = join(dir, ".config", "Claude", "claude-code");
+    await touch(join(linux, "3.0.0", "h", "claude"), 1000);
+    assert.deepEqual(
+      await bundledExecutables("claude", {
+        platform: "linux",
+        home: dir,
+        env: {},
+      }),
+      [join(linux, "3.0.0", "h", "claude")],
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("findExecutable prefers a real executable, then app bundles, then .cmd shims; PATH-only skips bundles", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agentteam-find-"));
+  try {
+    const first = join(dir, "first");
+    const second = join(dir, "second");
+    await touch(join(first, "claude.cmd"));
+    await touch(join(second, "claude.exe"));
+    const path = `${first};${second}`;
+    const env = { PATH: path, AGENTTEAM_DISCOVERY_PATH_ONLY: "1" };
+    const opts = { platform: "win32" as const, home: dir };
+    assert.equal(
+      await findExecutable("claude", { ...opts, env }),
+      join(second, "claude.exe"),
+    );
+
+    // Only a shim on PATH, plus a desktop bundle: the bundle wins unless PATH-only.
+    const shimOnly = join(dir, "shim-only");
+    await touch(join(shimOnly, "claude.cmd"));
+    const appData = join(dir, "Roaming");
+    const bundled = join(
+      appData,
+      "Claude",
+      "claude-code",
+      "2.1.295",
+      "h",
+      "claude.exe",
+    );
+    await touch(bundled);
+    const bundleEnv = {
+      PATH: shimOnly,
+      APPDATA: appData,
+      LOCALAPPDATA: join(dir, "Local"),
+    };
+    assert.equal(
+      await findExecutable("claude", { ...opts, env: bundleEnv }),
+      bundled,
+    );
+    assert.equal(
+      await findExecutable("claude", {
+        ...opts,
+        env: { ...bundleEnv, AGENTTEAM_DISCOVERY_PATH_ONLY: "1" },
+      }),
+      join(shimOnly, "claude.cmd"),
+    );
+    assert.equal(
+      await findExecutable("claude", {
+        ...opts,
+        env: { PATH: "", AGENTTEAM_DISCOVERY_PATH_ONLY: "1" },
+      }),
+      null,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+const signedOut = `{
+  "loggedIn": false,
+  "authMethod": "none",
+  "apiProvider": "firstParty"
+}
+`;
+test("Claude auth status JSON is parsed, tolerating noise around it", () => {
+  assert.equal(parseClaudeAuthStatus(signedOut), false);
+  assert.equal(
+    parseClaudeAuthStatus('{"loggedIn":true,"authMethod":"claude.ai"}'),
+    true,
+  );
+  assert.equal(
+    parseClaudeAuthStatus(`update available\n${signedOut}done`),
+    false,
+  );
+  assert.equal(parseClaudeAuthStatus("Not logged in"), null);
+  assert.equal(parseClaudeAuthStatus(""), null);
+  assert.equal(parseClaudeAuthStatus('{"loggedIn":"no"}'), null);
+  assert.equal(parseClaudeAuthStatus('{"authMethod":"none"}'), null);
+});
+
+test("claudeAuth reads the status a signed-out CLI prints with a non-zero exit", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agentteam-claude-auth-"));
+  // Fake `claude`: prints `body`, exits with `code`. On Windows an npm-style .cmd shim, whose
+  // Node script planSpawn runs directly; elsewhere an executable shebang script.
+  const fake = async (name: string, body: string, code: number) => {
+    const win = process.platform === "win32";
+    const script = join(dir, `${name}.mjs`);
+    await writeFile(
+      script,
+      `${win ? "" : "#!/usr/bin/env node\n"}process.stdout.write(${JSON.stringify(body)});\nprocess.exitCode = ${code};\n`,
+    );
+    if (!win) {
+      await chmod(script, 0o755);
+      return script;
+    }
+    const shim = join(dir, `${name}.cmd`);
+    await writeFile(shim, `@node "%~dp0\\${name}.mjs" %*\r\n`);
+    return shim;
+  };
+  try {
+    assert.equal(
+      await systemScanDeps.claudeAuth(await fake("out", signedOut, 255)),
+      false,
+    );
+    assert.equal(
+      await systemScanDeps.claudeAuth(await fake("in", '{"loggedIn":true}', 0)),
+      true,
+    );
+    // No parseable status at all is still a genuine failure.
+    await assert.rejects(
+      systemScanDeps.claudeAuth(await fake("broken", "boom", 1)),
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 });

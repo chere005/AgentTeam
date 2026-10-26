@@ -15,7 +15,8 @@ import {
   SquareTerminal,
   X,
 } from "lucide-react";
-import type { Snapshot } from "../api";
+import { api, type Snapshot } from "../api";
+import { middleClickProps } from "../middle-click";
 import {
   SEARCH_DECORATIONS,
   TERMINAL_CANVAS,
@@ -28,10 +29,20 @@ import {
   fitSession,
   listSessions,
   openSession,
+  sendInput,
   setActive,
   snapshotVersion,
   subscribe,
+  waitForOutput,
 } from "../terminal-sessions";
+import {
+  peekSignIn,
+  signInVersion,
+  subscribeSignIn,
+  takeSignIn,
+} from "../sign-in";
+import { clearSignIn } from "../use-runtimes";
+import { runtimeLabel } from "../readiness";
 import "./terminal.css";
 
 /**
@@ -47,6 +58,7 @@ export function TerminalView({
   currentProject?: Snapshot["workflows"][number] | null;
 }) {
   useSyncExternalStore(subscribe, snapshotVersion);
+  const signInRequests = useSyncExternalStore(subscribeSignIn, signInVersion);
   const sessions = listSessions();
   const current = activeSession();
   const stage = useRef<HTMLDivElement>(null);
@@ -72,6 +84,11 @@ export function TerminalView({
   }, [searchFocus]);
   const available = !!window.agentteam?.terminal;
 
+  const cleanError = (e: unknown) =>
+    String(e instanceof Error ? e.message : e).replace(
+      /^Error invoking remote method '[^']+': (Error: )?/,
+      "",
+    );
   const start = async () => {
     if (!stage.current || busy) return;
     setBusy(true);
@@ -81,24 +98,58 @@ export function TerminalView({
       const s = await openSession(stage.current, chosen || null);
       s.term.focus();
     } catch (e) {
-      setError(
-        String(e instanceof Error ? e.message : e).replace(
-          /^Error invoking remote method '[^']+': (Error: )?/,
-          "",
-        ),
-      );
+      setError(cleanError(e));
     } finally {
       setBusy(false);
     }
   };
 
-  // First visit: open one shell in the current project's folder (or home).
+  // First visit: open one shell in the current project's folder (or home), unless a sign-in
+  // request opens its own below.
   const opened = useRef(false);
   useEffect(() => {
     if (opened.current || !available) return;
     opened.current = true;
-    if (!listSessions().length) void start();
+    if (!listSessions().length && !peekSignIn()) void start();
   }, []);
+
+  // Sign in (ui/sign-in.ts): a NEW shell in the home folder, then the backend's command line for
+  // that shell typed into it. Without the desktop bridge, the command is shown to copy instead.
+  useEffect(() => {
+    const runtime = takeSignIn();
+    if (!runtime) return;
+    const name = runtimeLabel(runtime);
+    void (async () => {
+      setError("");
+      if (!available || !stage.current) {
+        try {
+          const command = await api(`/runtimes/${runtime}/sign-in`, "POST", {});
+          setError(
+            `To sign in to ${name}, run this in a terminal: ${command.commandLine}`,
+          );
+        } catch (e) {
+          clearSignIn(runtime);
+          setError(`${name} sign-in could not start: ${cleanError(e)}`);
+        }
+        return;
+      }
+      setBusy(true);
+      try {
+        const s = await openSession(stage.current, null);
+        const command = await api(`/runtimes/${runtime}/sign-in`, "POST", {
+          shell: s.shell,
+        });
+        await waitForOutput(s);
+        sendInput(s, command.commandLine + "\r");
+        s.term.focus();
+      } catch (e) {
+        clearSignIn(runtime);
+        setError(`${name} sign-in could not start: ${cleanError(e)}`);
+      } finally {
+        setBusy(false);
+      }
+    })();
+  }, [signInRequests]);
 
   // Re-attach the live sessions' DOM to this view; only the active one is visible.
   useLayoutEffect(() => {
@@ -196,6 +247,7 @@ export function TerminalView({
             <div
               key={s.id}
               className={"terminal-tab" + (s === current ? " active" : "")}
+              {...middleClickProps(() => void closeSession(s.id))}
             >
               <button
                 role="tab"
@@ -210,7 +262,7 @@ export function TerminalView({
               <button
                 className="terminal-tab-close"
                 aria-label={`Close terminal ${s.title}`}
-                title="Close (ends the shell)"
+                title="Close (ends the shell; or middle-click)"
                 onClick={() => void closeSession(s.id)}
               >
                 <X size={12} />

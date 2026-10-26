@@ -147,13 +147,20 @@ test("runtime diagnostics, validated model/effort choices, invocation limits and
       "not switched",
     );
     await expect(model).toHaveValue("gpt-retired");
-    await expect(model.locator("option")).toContainText([
+    await expect(model.locator("option")).toHaveText([
       "Codex default",
       "GPT Fixture",
       "GPT Mini",
       "gpt-retired (unavailable in this installation)",
       "Custom model ID (not validated)…",
     ]);
+    // Always a dropdown: the unavailable saved model stays selected but grayed out (disabled).
+    await expect(model.locator("option:disabled")).toHaveText([
+      "gpt-retired (unavailable in this installation)",
+    ]);
+    await expect(model.locator("option:checked")).toHaveText(
+      "gpt-retired (unavailable in this installation)",
+    );
     await expect(dialog.getByTestId("effort-warning")).toContainText("high");
 
     // Picking an advertised model validates effort choices; default model has choices too.

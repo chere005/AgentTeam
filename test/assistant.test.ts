@@ -1102,6 +1102,7 @@ test("Team Assistant prompt: generated schema, every op, examples, active team a
       "edge.update",
       "rule.create",
       "workflow.create",
+      "project.start",
       "workflow.limits",
       "resource.assign",
     ])
@@ -1117,7 +1118,7 @@ test("Team Assistant prompt: generated schema, every op, examples, active team a
     assert.match(protocol, /Exactly ONE fenced block/);
     assert.match(protocol, /clarifying question/);
     // Every worked example is a valid proposal; one adds skills to several agents.
-    assert.ok(PROTOCOL_EXAMPLES.length >= 2 && PROTOCOL_EXAMPLES.length <= 3);
+    assert.ok(PROTOCOL_EXAMPLES.length >= 2 && PROTOCOL_EXAMPLES.length <= 4);
     for (const e of PROTOCOL_EXAMPLES) {
       proposalInputSchema.parse(e.proposal);
       assert.ok(protocol.includes(JSON.stringify(e.proposal)));

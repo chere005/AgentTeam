@@ -29,6 +29,8 @@ export type TerminalSession = {
   host: HTMLDivElement;
   renderer: "webgl" | "dom";
   exited: { exitCode: number; signal: number | null } | null;
+  /** The shell printed something (it is reading input). */
+  sawOutput: boolean;
 };
 type Bridge = NonNullable<Window["agentteam"]["terminal"]>;
 
@@ -75,8 +77,10 @@ function bridge(): Bridge {
     wired = true;
     b.onData(({ id, data }) => {
       const s = sessions.find((x) => x.id === id);
-      if (s) s.term.write(data);
-      else early.set(id, [...(early.get(id) ?? []), data]);
+      if (s) {
+        s.term.write(data);
+        s.sawOutput = true;
+      } else early.set(id, [...(early.get(id) ?? []), data]);
     });
     b.onExit(({ id, exitCode, signal }) => {
       const s = sessions.find((x) => x.id === id);
@@ -174,10 +178,14 @@ export async function openSession(
     host,
     renderer,
     exited: null,
+    sawOutput: false,
   };
   sessions.push(session);
   active = session.id;
-  for (const chunk of early.get(info.id) ?? []) term.write(chunk);
+  for (const chunk of early.get(info.id) ?? []) {
+    term.write(chunk);
+    session.sawOutput = true;
+  }
   early.delete(info.id);
   term.onData((data) => {
     if (!session.exited) b.write(session.id, data);
@@ -216,6 +224,25 @@ export async function openSession(
   });
   changed();
   return session;
+}
+
+/**
+ * Types `data` into the session's shell, as if from the keyboard (the sign-in command line from
+ * the backend). Nothing else is sent; the renderer never chooses an executable.
+ */
+export function sendInput(session: TerminalSession, data: string) {
+  if (!session.exited) bridge().write(session.id, data);
+}
+/** Resolves once the shell printed something (plus `settle` ms for its prompt), or after `timeout` ms. */
+export async function waitForOutput(
+  session: TerminalSession,
+  timeout = 4000,
+  settle = 300,
+) {
+  const end = Date.now() + timeout;
+  while (!session.sawOutput && !session.exited && Date.now() < end)
+    await new Promise((r) => setTimeout(r, 50));
+  await new Promise((r) => setTimeout(r, settle));
 }
 
 /** Ends the shell (if still running) and forgets the session. */

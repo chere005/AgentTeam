@@ -106,8 +106,8 @@ export function ProjectLifecycle({
       </div>
       {v && v.state === "stale" && (
         <p className="bad" data-testid="needs-reverify">
-          Needs re-verify: {v.reasons.join("; ")}. Run “Prepare and verify”
-          again before resuming.
+          Needs re-verify: {v.reasons.join("; ")}. Resume runs the checks again
+          first (or use Prepare and verify).
         </p>
       )}
       {view.detach.offer && (
