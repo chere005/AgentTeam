@@ -1,5 +1,17 @@
 # AgentTeam handoff — October 26, 2026
 
+## Current status: 0.5.0 released and deployed (October 26, 2026)
+
+The accumulated work is merged to `main` at `0f7c234`, tagged `v0.5.0`, and published as [AgentTeam 0.5.0](https://github.com/chere005/AgentTeam/releases/tag/v0.5.0). Continue on `main`; the branch and installation details below are historical.
+
+Installer preflight [40298835956](https://github.com/chere005/AgentTeam/actions/runs/40298835956) and the actual release [40300633343](https://github.com/chere005/AgentTeam/actions/runs/40300633343) passed every required job and step. All seven installers and `SHA256SUMS.txt` are published. Preflight backend results: macOS/Linux **588 passed, 1 skipped**; Windows **581 passed, 8 skipped**. Both Mac jobs passed all **81 desktop workflows**. Windows/Linux desktop UI and the Windows 10 installed-app duty-file workflow remain outside that evidence.
+
+Installed the official arm64 release at `/Applications/AgentTeam.app`, opened it with the existing profile, and verified **Workspace connected**, version **0.5.0**, zero running/queued tasks, unchanged agent configuration/task/message/effect history, and the existing 21 completed plus one failed task. Automatic discovery refreshed one project's generated model-readiness metadata. No provider work was started. A hidden packaged startup/native-terminal check and an isolated copy of the existing profile also passed.
+
+The downloaded Mac ZIP/DMG match both GitHub's asset digests and the published manifest; all seven manifest entries match their asset digests. Installed `app.asar` SHA256: `85dd7837682f814607b5974bd69bba62cf6470c7ed80d59333b337043fc8d022`. Downloads are in `/Users/s/Downloads/AgentTeam-0.5.0`; the original 0.4.0 app, pre-launch profile, and deployment record are backed up under `/Users/s/AgentTeam Backups/2026-10-26-before-0.5.0`. Rollback means gracefully quitting AgentTeam and restoring the saved app; restore the saved profile as well only if reverting profile changes is intended.
+
+The release helper currently runs Desktop checks only despite the release documentation's broader description. This release's installer preflight was dispatched and checked separately; automate that gate in a follow-up. Unsupported native Windows scopes remain unavailable, and old failed attempts have not been replayed or relabelled.
+
 ## macOS continuation (October 26, 2026)
 
 Continued this branch in `/Users/s/GIT/AgentTeam-handoff` from `b15cbc8`. The effective-instructions preview omitted shared runtime guidance that `TeamService.launchPlan` appended to every provider launch, so the preview did not match the actual prompt. Moved that guidance to `src/runtime-instructions.ts` and included it in both paths; updated `test/capabilities.test.ts` to assert the guidance. Verification: `npm run typecheck` passed; `npm test` passed **588**, failed **0**, skipped **1** (opt-in Wolfram smoke); `npm run build` passed with the existing large-chunk advisory; release audit, focused capabilities suite (**13/13**), Prettier and `git diff --check` passed. No live provider run was performed.
@@ -8,7 +20,7 @@ Preflight [40293308193](https://github.com/chere005/AgentTeam/actions/runs/40293
 
 The Windows-only installed-app check below cannot be completed from this macOS host. No live app profile was opened or modified, and no provider calls were made.
 
-Branch: `fix/team-task-execution-and-diff`
+Original work branch (merged to `main`): `fix/team-task-execution-and-diff`
 
 Base: `694cace` on `main`
 
@@ -58,7 +70,7 @@ Backups from the previous installed update are in `C:\CLAUDIO\agentteam-local-up
 - Final full typecheck/build passed. All **3 distinct desktop Diff workflows passed**: incomplete legacy baseline with automatic external edits, ordinary folder diffs, and Git comparison/keyboard/narrow layout. The last needed a portable Git executable-bit fixture correction on Windows. Additional details are in [docs/CONTINUATION.md](docs/CONTINUATION.md).
 - Earlier full backend run was **not green**: 529 passed, 3 failed, 13 skipped out of 545. Known Windows failures involved a file-symlink fixture, simulated macOS path separators, and an intermittent knowledge-filter test. That result predates subsequent tests; do not present it as a current full-suite pass. Full details remain in the continuation log.
 
-## Where to continue
+## Historical Windows follow-up
 
 1. Read `AGENTS.md`, `TODO.md` and the latest continuation entry. Check branch/status before editing.
 2. Deploy/restart the latest build only after checking active and queued work and preserving the user profile. Open Diff on the planner's `C:\GIT` folder. Confirm the top-level duty files appear, an unknown original is labelled honestly, and an external edit refreshes the view without clicking Refresh.
