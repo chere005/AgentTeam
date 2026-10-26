@@ -572,7 +572,10 @@ export function Chat(p: PaneProps) {
                       messageId={m.id}
                       events={p.events}
                       send={(text) => sendText(text, false)}
-                      openTasks={(id) => {
+                      openTasks={async (id) => {
+                        // Refresh the snapshot before selecting a newly created
+                        // project, so the stale-project cleanup cannot clear it.
+                        await p.act(async () => undefined);
                         p.setCurrentProject?.(id);
                         p.openFeature?.("projects");
                       }}

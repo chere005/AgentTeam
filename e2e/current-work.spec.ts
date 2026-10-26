@@ -86,7 +86,7 @@ test("Projects can resolve a failed attempt against verified work and undo it", 
     const card = page
       .locator(".project-card")
       .filter({ has: page.getByRole("heading", { name: "Supersede demo" }) });
-    await card.getByText("needs attention", { exact: true }).waitFor();
+    await card.getByText("Needs attention", { exact: true }).waitFor();
     await card
       .locator(".task > summary")
       .filter({ hasText: "First attempt" })
@@ -112,7 +112,7 @@ test("Projects can resolve a failed attempt against verified work and undo it", 
     );
     await card.getByRole("button", { name: "Undo" }).click();
     await expect(card.locator(".project-heading .badge")).toHaveText(
-      "needs attention",
+      "Needs attention",
     );
   });
 });

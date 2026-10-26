@@ -344,7 +344,11 @@ test("ACP settings, permissions and conversation delivery", async () => {
       .getByRole("button", { name: "Allow once", exact: true })
       .click();
     await expect(approval).toHaveCount(0);
-    await expect(page.getByText("approved", { exact: true })).toBeVisible();
+    await expect(
+      page
+        .locator(".message-text:not(.partial) p")
+        .filter({ hasText: /^approved$/ }),
+    ).toBeVisible();
     const ids = await page.evaluate(async () =>
       (await window.agentteam.request("GET", "/sessions")).map(
         (s: any) => s.providerSessionId,

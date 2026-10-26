@@ -1,5 +1,5 @@
 import { lstat, readFile, readdir } from "node:fs/promises";
-import { basename, join, win32 } from "node:path";
+import { basename, join, posix, win32 } from "node:path";
 import { homedir } from "node:os";
 
 const MAX_PREFERENCES_BYTES = 256 * 1024;
@@ -46,7 +46,7 @@ export function sublimePreferencesPath(
     );
   }
   if (platform === "darwin")
-    return join(
+    return posix.join(
       home,
       "Library",
       "Application Support",
@@ -58,8 +58,8 @@ export function sublimePreferencesPath(
   const config =
     env.XDG_CONFIG_HOME && env.XDG_CONFIG_HOME.startsWith("/")
       ? env.XDG_CONFIG_HOME
-      : join(home, ".config");
-  return join(
+      : posix.join(home, ".config");
+  return posix.join(
     config,
     "sublime-text",
     "Packages",
