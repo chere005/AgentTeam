@@ -21,11 +21,16 @@ export type CheckDraft = {
     | "output-matches"
     | "artifact-exists"
     | "artifact-matches"
+    | "execution-verified"
     | "validation-gate";
   fields: string;
   pattern: string;
   flags: string;
   path: string;
+  verification?: Extract<
+    NonNullable<Task["completionChecks"]>[number],
+    { type: "execution-verified" }
+  >;
 };
 export const CHECK_TYPES: {
   type: CheckDraft["type"];
@@ -57,6 +62,11 @@ export const CHECK_TYPES: {
     label: "Validation gate passed",
     help: "A real Wolfram kernel validation must have passed for the task's current inputs. Needs the validation requirement below.",
   },
+  {
+    type: "execution-verified",
+    label: "Program execution verified",
+    help: "AgentTeam runs an immutable source snapshot in confinement and checks its complete output against the confirmed reference. Configure it on the prepared execution project.",
+  },
 ];
 export const emptyCheck = (
   type: CheckDraft["type"] = "output-fields",
@@ -72,6 +82,7 @@ export function draftsFromChecks(
 ): CheckDraft[] {
   return (checks ?? []).map((c) => ({
     ...emptyCheck(c.type),
+    ...(c.type === "execution-verified" ? { verification: c } : {}),
     ...(c.type === "output-fields" ? { fields: c.fields.join(", ") } : {}),
     ...(c.type === "output-matches" || c.type === "artifact-matches"
       ? { pattern: c.pattern, flags: c.flags ?? "" }
@@ -86,6 +97,13 @@ export function checksFromDrafts(drafts: CheckDraft[]) {
   if (drafts.length > 20) throw new Error("At most 20 checks per task");
   return drafts.map((d, i) => {
     const n = `Check ${i + 1}`;
+    if (d.type === "execution-verified") {
+      if (!d.verification)
+        throw new Error(
+          `${n}: configure program verification on the prepared execution project`,
+        );
+      return d.verification;
+    }
     if (d.type === "output-fields") {
       const fields = [
         ...new Set(
@@ -108,8 +126,8 @@ export function checksFromDrafts(drafts: CheckDraft[]) {
     }
     if (d.type === "output-matches" || d.type === "artifact-matches") {
       if (!d.pattern) throw new Error(`${n}: enter a pattern`);
-      if (d.pattern.length > 500)
-        throw new Error(`${n}: the pattern may have at most 500 characters`);
+      if (d.pattern.length > 4096)
+        throw new Error(`${n}: the pattern may have at most 4096 characters`);
       try {
         new RegExp(d.pattern, d.flags);
       } catch (e) {

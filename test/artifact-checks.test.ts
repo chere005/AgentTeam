@@ -33,6 +33,9 @@ async function setup() {
   const agent = await service.saveAgent({
     name: "Writer",
     environment: "codex",
+    tools: ["read", "write"],
+    instructions:
+      "Roll call uses this identity: I am Writer, reporting for duty.",
     workspaces: [{ path: workspace, access: "write", active: true }],
   });
   const workflow = service.workflow({

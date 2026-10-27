@@ -38,6 +38,9 @@ export async function world(
   const runs = new RunManager(service, true, base);
   // A supported, sandboxed host: no native process ever runs here.
   runs.runtimePlatform = options.platform ?? "linux";
+  // These fixtures explicitly exercise provider/delegation policy; app-owned pre-provider
+  // preparation is covered separately with prepareExecutableChats enabled.
+  runs.prepareExecutableChats = false;
   runs.readiness = () => ({ state: "ready" });
   // The fixture calls the policy service directly; nothing is listening.
   runs.teammateToolsUrl = () => "http://127.0.0.1:1/mcp";

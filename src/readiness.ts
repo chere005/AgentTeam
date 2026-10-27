@@ -428,7 +428,8 @@ export class ReadinessService {
       // steps; the evaluator below re-checks them against the current configuration.
       if (
         wait.reason === "capability-missing" ||
-        wait.reason === "check-unconfirmed"
+        wait.reason === "check-unconfirmed" ||
+        wait.reason === "assignment-preparation"
       )
         continue;
       const age = now - Date.parse(wait.at);

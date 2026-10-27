@@ -27,6 +27,8 @@ import { GroupChats } from "./group-chat.ts";
 import { ensureWorkspaceBaseline } from "./workspace-changes.ts";
 import { codexTaskPermissions } from "./provider-filesystem.ts";
 import { assertProviderCapabilities } from "./provider-capabilities.ts";
+import { noteRuntimeWait } from "./runtime-waits.ts";
+import { classifyRequest } from "./execution-contract.ts";
 import { launchManifest } from "./capability-context.ts";
 import {
   claudeFileTools,
@@ -204,7 +206,7 @@ export function commandFor(
         ]),
     "-c",
     'approval_policy="never"',
-    ...(plan.executionMode === "file-only"
+    ...(plan.executionMode === "file-only" || !plan.tools.includes("shell")
       ? ["-c", "features.shell_tool=false"]
       : []),
   ];
@@ -614,6 +616,8 @@ export class RunManager {
   readiness?: (environment: string) => Readiness;
   /** Installed version of a runtime for the launch manifest (wired like `readiness`). */
   runtimeVersion?: (environment: string) => string | null | undefined;
+  /** Internal dependency seam for provider/delegation fixtures; production always prepares code assignments. */
+  prepareExecutableChats = true;
   /** Provider executor for chat runs; replaceable so sandboxes (playground) never reach real CLIs. */
   execute: typeof executeCommand = executeCommand;
   /** Actual provider host; fixture executors can explicitly select their simulated platform. */
@@ -699,7 +703,7 @@ export class RunManager {
       store.emit("session.run_queued", sessionId, { agentId: agent.id });
       return { sessionId, status: "queued" };
     }
-    const plan = await this.service.launchPlan(agent.id);
+    let plan = await this.service.launchPlan(agent.id);
     this.assertRuntimeReady(plan);
     await Promise.all(
       plan.workspaces
@@ -781,28 +785,33 @@ export class RunManager {
     });
     let conversationTask: Task | undefined;
     const toolsUrl = this.teammateToolsUrl?.();
+    const canDelegate = this.service.store
+      .list<Agent>("agent")
+      .some(
+        (other) =>
+          other.id !== agent.id &&
+          this.service.permitted(agent.id, other.id, "delegate"),
+      );
+    const prepared = store
+      .list<{ id: string; workflowId: string }>("prepared-chat")
+      .find((r) => r.id === sessionId);
     if (
-      toolsUrl &&
-      plan.connection?.transport !== "acp" &&
-      (plan.environment === "claude" || plan.environment === "codex") &&
-      this.service.store
-        .list<Agent>("agent")
-        .some(
-          (other) =>
-            other.id !== agent.id &&
-            this.service.permitted(agent.id, other.id, "delegate"),
-        )
+      canDelegate ||
+      prepared ||
+      classifyRequest(request).workKind !== "response-only"
     ) {
       try {
         const title = request.trim().slice(0, 300) || "Agent conversation";
-        const workflow = this.service.workflow({
-          kind: "conversation",
-          name: `Chat: ${title}`.slice(0, 300),
-          goal: request.slice(0, 5000) || "Respond to the user's message",
-          ownerId: agent.id,
-          completionCriteria:
-            "Respond to the user and return any delegated results.",
-        });
+        const workflow = prepared
+          ? store.get<{ id: string }>("workflow", prepared.workflowId)
+          : this.service.workflow({
+              kind: "conversation",
+              name: `Chat: ${title}`.slice(0, 300),
+              goal: request.slice(0, 5000) || "Respond to the user's message",
+              ownerId: agent.id,
+              completionCriteria:
+                "Respond to the user and return any delegated results.",
+            });
         conversationTask = this.service.task({
           workflowId: workflow.id,
           agentId: agent.id,
@@ -815,13 +824,131 @@ export class RunManager {
         // here, before any child can start, and the readiness of the workers it can reach is
         // recorded as one setup state. A model that omits or misclassifies the contract later
         // cannot lower what was established from the user's own words.
-        this.service.contracts.prepareConversation({
-          workflowId: workflow.id,
-          agent,
-          text: request,
-          origin: { sessionId, messageId: message.id },
-        });
+        if (!prepared)
+          this.service.contracts.prepareConversation({
+            workflowId: workflow.id,
+            agent,
+            text: request,
+            origin: { sessionId, messageId: message.id },
+          });
+        if (!canDelegate)
+          this.service.contracts.seedTask({
+            task: conversationTask,
+            text: request,
+            source: "request",
+          });
         this.service.setups.prepareConversation(workflow.id);
+        if (
+          this.prepareExecutableChats &&
+          this.service.executionProjects.canStart(workflow.id)
+        ) {
+          const message =
+            "Review the project folder, languages and independent verification plan in the assignment setup, then choose Start. No provider or implementation run has started.";
+          this.service.setups.requirePreparation(workflow.id);
+          noteRuntimeWait(store, {
+            kind: "task",
+            targetId: conversationTask.id,
+            environment: agent.environment,
+            reason: "assignment-preparation",
+            capability: "prepared-project",
+            message,
+            attempt: this.service.recovery.state(conversationTask.id).attempt,
+            issues: [
+              {
+                code: "project-preparation",
+                capability: null,
+                agentId: agent.id,
+                agentName: agent.name,
+                taskId: conversationTask.id,
+                message,
+                fix: {
+                  kind: "choose-project-folder",
+                  label: "Review assignment setup",
+                  agentId: agent.id,
+                },
+              },
+            ],
+          });
+          this.service.transitionTask(conversationTask.id, {
+            status: "blocked",
+            result: message,
+          });
+          store.transaction(() => {
+            const current = store.get<Session>("session", sessionId);
+            current.state = "idle";
+            delete current.startedAt;
+            delete current.timeoutMs;
+            store.put("session", current);
+            this.service.resources.release(sessionId);
+            for (const pendingMessage of pending) {
+              pendingMessage.status = "delivered";
+              store.put("message", pendingMessage);
+            }
+            const reply = {
+              id: randomUUID(),
+              sessionId,
+              role: "assistant" as const,
+              text: message,
+              status: "delivered" as const,
+              createdAt: new Date().toISOString(),
+            };
+            store.put("message", reply);
+            store.emit("message.delivered", reply.id, {
+              sessionId,
+              source: "project-preparation",
+              workflowId: workflow.id,
+            });
+            store.emit("session.idle", sessionId, { agentId: agent.id });
+          });
+          store.remove("prepared-chat", sessionId);
+          return {
+            sessionId,
+            messageId: pending[pending.length - 1].id,
+            status: "setup-required",
+            workflowId: workflow.id,
+          };
+        }
+        if (prepared) {
+          plan = await this.service.launchPlan(agent.id, conversationTask.id);
+          command = commandFor(plan, null, prompt, this.cwd);
+        }
+        const decision = this.service.launchReadiness.evaluatePlan(
+          agent,
+          plan,
+          { task: conversationTask },
+        );
+        if (!canDelegate && !decision.ready) {
+          this.service.launchReadiness.blockTask(conversationTask, decision);
+          store.transaction(() => {
+            const current = store.get<Session>("session", sessionId);
+            current.state = "idle";
+            delete current.startedAt;
+            delete current.timeoutMs;
+            store.put("session", current);
+            this.service.resources.release(sessionId);
+            for (const pendingMessage of pending) {
+              pendingMessage.status = "delivered";
+              store.put("message", pendingMessage);
+            }
+            store.put<Message>("message", {
+              id: randomUUID(),
+              sessionId,
+              role: "assistant",
+              text: decision.message ?? "Setup required.",
+              status: "delivered",
+              createdAt: new Date().toISOString(),
+            });
+            store.emit("session.idle", sessionId, { agentId: agent.id });
+          });
+          store.remove("prepared-chat", sessionId);
+          return {
+            sessionId,
+            messageId: message.id,
+            status: "setup-required",
+            workflowId: workflow.id,
+          };
+        }
+        store.remove("prepared-chat", sessionId);
         const host = { platform: this.runtimePlatform };
         this.service.startConversationTask(conversationTask.id, sessionId, {
           launchManifest: launchManifest(this.service, {
@@ -837,18 +964,34 @@ export class RunManager {
             teammateTools: true,
           }),
         });
-        const toolToken = this.toolSessions.issue({
-          agentId: agent.id,
-          taskId: conversationTask.id,
-        });
-        command.teammateTools = { url: toolsUrl, token: toolToken };
+        if (
+          toolsUrl &&
+          plan.connection?.transport !== "acp" &&
+          ["claude", "codex"].includes(plan.environment)
+        ) {
+          const toolToken = this.toolSessions.issue({
+            agentId: agent.id,
+            taskId: conversationTask.id,
+          });
+          command.teammateTools = { url: toolsUrl, token: toolToken };
+        }
       } catch (error) {
         if (conversationTask?.status === "queued")
           this.service.transitionTask(conversationTask.id, {
             status: "cancelled",
           });
         conversationTask = undefined;
-        console.warn("Could not create a delegated chat context:", error);
+        const current = store.get<Session>("session", sessionId);
+        current.state = "idle";
+        delete current.startedAt;
+        delete current.timeoutMs;
+        store.put("session", current);
+        this.service.resources.release(sessionId);
+        for (const pendingMessage of pending) {
+          pendingMessage.status = "queued";
+          store.put("message", pendingMessage);
+        }
+        throw error;
       }
     }
     const controller = new AbortController();

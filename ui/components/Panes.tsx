@@ -22,6 +22,12 @@ import {
 } from "./Projects";
 import { ProjectLifecycle } from "./ProjectLifecycle";
 import { ProjectResume } from "./ProjectResume";
+import type { SetupAction } from "../../src/launch-readiness";
+import {
+  AgentSetupCards,
+  DelegationSetupNotice,
+  ProjectSetupCard,
+} from "./ProjectSetup";
 import { WorkflowRecovery } from "./Recovery";
 import { WorkflowSharedState } from "./SharedState";
 import { WorkflowStateEditor } from "./StateEditor";
@@ -195,6 +201,17 @@ export type PaneProps = {
   /** Open (or focus) a feature tab. */
   openFeature?: (id: FeatureId) => void;
 };
+function openSetupRepair(p: PaneProps, action: SetupAction) {
+  const agent = p.data.agents.find((a) => a.id === action.agentId);
+  if (
+    agent &&
+    action.kind !== "sign-in" &&
+    action.kind !== "change-runtime" &&
+    action.kind !== "fix-sandbox"
+  )
+    p.edit(agent);
+  else p.openFeature?.("settings");
+}
 function AgentPicker(p: PaneProps & { unread?: Record<string, number> }) {
   const current = p.data.agents.find((agent) => agent.id === p.selected);
   return (
@@ -436,6 +453,12 @@ export function Chat(p: PaneProps) {
         ref={mode === "cli" ? undefined : box}
         onScroll={mode === "cli" ? undefined : scroll.onScroll}
       >
+        <AgentSetupCards
+          agentId={agent.id}
+          data={p.data}
+          act={p.act}
+          repair={(action) => openSetupRepair(p, action)}
+        />
         <InvocationPanel
           agent={agent}
           limit={agent.maxConcurrentInvocations}
@@ -611,6 +634,20 @@ export function Chat(p: PaneProps) {
       </div>
       {mode !== "cli" && (
         <div className="composer-wrap">
+          <DelegationSetupNotice
+            agentId={agent.id}
+            open={() => {
+              const card = box.current?.querySelector<HTMLElement>(
+                "[data-testid='project-setup-card']",
+              );
+              if (card)
+                card.scrollIntoView({ block: "start", behavior: "smooth" });
+              else {
+                openAssignProject({ goal: draft });
+                p.openFeature?.("projects");
+              }
+            }}
+          />
           {session?.state === "running" && (
             <RunProgress
               key={session.id}
@@ -1077,6 +1114,11 @@ export function Workflows(p: PaneProps) {
                   />
                 </div>
               )}
+              <ProjectSetupCard
+                workflowId={w.id}
+                act={p.act}
+                repair={(action) => openSetupRepair(p, action)}
+              />
               <section className="project-tasks">
                 <header className="project-tasks-heading">
                   <b>Tasks</b>
@@ -2897,7 +2939,11 @@ export function ProjectPanels(p: PaneProps & { kind: "recovery" | "shared" }) {
             </span>
           </div>
           {p.kind === "recovery" && (
-            <WorkflowRecovery workflowId={w.id} act={p.act} />
+            <WorkflowRecovery
+              workflowId={w.id}
+              act={p.act}
+              repair={(action) => openSetupRepair(p, action)}
+            />
           )}
           {p.kind === "shared" && (
             <>

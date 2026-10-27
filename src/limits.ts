@@ -845,6 +845,9 @@ export class LimitsService {
               .join("; ")
           : ""),
     );
+    for (const check of task.completionChecks)
+      if (check.type === "execution-verified")
+        this.service.verification.requireCurrent(task, check);
   }
   failedChecksText(ev: CheckEvidence) {
     return (
@@ -940,6 +943,13 @@ export class LimitsService {
       detail,
     });
     try {
+      if (check.type === "execution-verified") {
+        const { type: _type, ...spec } = check;
+        const record = await this.service.verification.verify(task.id, spec);
+        if (record.passed)
+          this.service.verification.requireCurrent(task, check);
+        return done(record.passed, record.reason);
+      }
       if (check.type === "output-fields") {
         const complete = contractObjects(result, check.fields);
         if (complete.length === 1)

@@ -304,20 +304,52 @@ export function assistantContext(
       CONTEXT_CAPS.proposals,
     ),
   };
-  const json = JSON.stringify(body);
   const preamble =
     "You are the Team Assistant. Below is a read-only inspection of the active team. You cannot apply changes. To change the team, write a proposal as described next; the user reviews the diff and applies it. Never claim a proposal was applied.\n" +
     proposalProtocol() +
     "\n" +
     UNTRUSTED_NOTICE;
-  const text = hardClip(
-    preamble + "\n" + untrusted("team-state", { schema: "2" }, json),
-    maxChars,
-  );
+  const render = () =>
+    preamble +
+    "\n" +
+    untrusted("team-state", { schema: "2" }, JSON.stringify(body));
+  let text = render();
+  let clipped = false;
+  // Trim whole rows before serializing. A large installed catalog must not turn the promised
+  // JSON document into a partial string. Catalog rows go first; current failures and work stay
+  // ahead of a large roster of idle agents.
+  for (const list of [
+    body.skills,
+    body.tools,
+    body.otherTeams,
+    body.pendingProposals,
+    body.agents,
+    body.edges,
+    body.rules,
+    body.leases,
+    body.chatQueue,
+    body.queue,
+    body.waiting,
+    body.failures,
+    body.workflows,
+  ]) {
+    while (text.length > maxChars && list.items.length) {
+      list.items.pop();
+      list.omitted++;
+      clipped = true;
+      text = render();
+    }
+  }
+  if (text.length > maxChars) {
+    // Tiny diagnostic budgets may not even hold the application protocol and an empty document.
+    // Omit the data element entirely in that case, rather than emitting malformed JSON.
+    text = hardClip(preamble, maxChars).text;
+    clipped = true;
+  }
   return {
-    text: text.text,
-    clipped: text.clipped,
-    chars: text.text.length,
+    text,
+    clipped,
+    chars: text.length,
     body,
   };
 }

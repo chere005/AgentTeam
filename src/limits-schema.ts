@@ -31,6 +31,25 @@ export const limitsPatchSchema = z
   })
   .strict();
 export const DEFAULT_LIMITS: Limits = limitsSchema.parse({});
+/** Reference identity is resolved by the backend; model-reported stdout is never a reference. */
+export const executionVerificationSpecSchema = z
+  .object({
+    entry: z.string().min(1).max(1000),
+    language: z.enum(["python", "javascript", "typescript", "cpp"]),
+    referenceId: z.string().min(1).max(200),
+    sourceFiles: z.array(z.string().min(1).max(1000)).max(100).default([]),
+    args: z.array(z.string().max(4000)).max(50).default([]),
+    stdin: z.string().max(100_000).default(""),
+    standardLibraryOnly: z.boolean().default(true),
+    timeoutMs: z.number().int().min(100).max(60_000).default(20_000),
+  })
+  .strict();
+export type ExecutionVerificationSpec = z.infer<
+  typeof executionVerificationSpecSchema
+>;
+export const executionVerifiedCheckSchema = executionVerificationSpecSchema
+  .extend({ type: z.literal("execution-verified") })
+  .strict();
 export const completionCheckSchema = z.discriminatedUnion("type", [
   z
     .object({
@@ -42,7 +61,7 @@ export const completionCheckSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("output-matches"),
-      pattern: z.string().min(1).max(500),
+      pattern: z.string().min(1).max(4096),
       flags: z
         .string()
         .regex(/^[imsu]*$/)
@@ -73,7 +92,7 @@ export const completionCheckSchema = z.discriminatedUnion("type", [
       type: z.literal("artifact-matches"),
       /** UTF-8 file relative to the task working directory, subject to the same access policy as artifact-exists. */
       path: z.string().min(1).max(1000),
-      pattern: z.string().min(1).max(500),
+      pattern: z.string().min(1).max(4096),
       flags: z
         .string()
         .regex(/^[imsu]*$/)
@@ -92,5 +111,6 @@ export const completionCheckSchema = z.discriminatedUnion("type", [
       }
     }),
   z.object({ type: z.literal("validation-gate") }).strict(),
+  executionVerifiedCheckSchema,
 ]);
 export type CompletionCheck = z.infer<typeof completionCheckSchema>;

@@ -5,6 +5,7 @@ import { errorKindOf } from "./provider-errors.ts";
 import { assert, type Agent, type Message, type Task } from "./model.ts";
 import type { ApprovalRecord } from "./approvals.ts";
 import { isCapabilityWait, type RuntimeWait } from "./runtime-waits.ts";
+import { capabilityScopeHash } from "./launch-capability.ts";
 import type { RecoveryDecision } from "./recovery-decision.ts";
 
 /**
@@ -94,6 +95,7 @@ export type TaskRecovery = {
   attempt: number;
   resumes: number;
   providerSessionId: string | null;
+  launchScopeHash?: string;
   /** Session id the next provider run should resume (set by an explicit resume/retry). */
   useSession: string | null;
   resume?: { fromCheckpointId: string | null; sessionId: string | null };
@@ -486,7 +488,13 @@ export class RecoveryService {
       case "running": {
         s.useSession = s.resume?.sessionId ?? null;
         const resumed = s.resume ?? null;
-        if (resumed) s.resumes++;
+        if (
+          resumed &&
+          this.ledger
+            .list(task.id)
+            .some((effect) => effect.kind === "provider-run")
+        )
+          s.resumes++;
         s.resume = undefined;
         s.toolCheckpoints = 0;
         s.notBefore = null;
@@ -511,7 +519,10 @@ export class RecoveryService {
       case "completed":
       case "failed":
       case "cancelled": {
-        if (task.status !== "failed") this.service.approvals.expireFor(task.id);
+        if (task.status !== "failed") {
+          this.service.approvals.expireFor(task.id);
+          this.store.remove("runtime-wait", `task:${task.id}`);
+        }
         if (task.status === "failed") {
           s.notBefore = new Date(
             Date.now() + backoffDelay(s.policy, s.attempt),
@@ -835,23 +846,12 @@ export class RecoveryService {
     const decision = this.decide(task)!;
     if (decision.kind === "delegation-continuation")
       return { task: this.continueDelegation(taskId), decision };
-    // A provider call needs the role to be able to do the work NOW: a folder detached or a grant
-    // revoked since the task stopped is refused here with its real cause, before any attempt is
-    // used (the scheduler repeats the check against the actual launch plan). Finalizing saved
-    // output makes no provider call and needs no capability.
-    if (decision.allowed && decision.providerCall) {
-      const agent = this.store.get<Agent>("agent", task.agentId);
-      const readiness = this.service.launchReadiness.evaluateProspective(
-        agent,
-        { task },
-      );
-      if (!readiness.ready)
-        throw this.service.launchReadiness.refusal(
-          readiness,
-          task.workflowId,
-          "resume",
-        );
-    }
+    assert(
+      decision.allowed,
+      decision.blocker?.code ?? "not_resumable",
+      decision.blocker?.message ?? decision.summary,
+      409,
+    );
     const s = this.state(taskId);
     const last = this.latest(taskId);
     this.store.transaction(() => {
@@ -874,7 +874,7 @@ export class RecoveryService {
     }
   }
   /** Gate for a retry: attempts left and when the automatic backoff expires. */
-  retryGate(task: Task) {
+  private baseRetryGate(task: Task) {
     const s = this.state(task.id);
     const left = s.policy.maxAttempts - s.attempt;
     const runtimeBlocker = this.runtimeBlocker(task);
@@ -956,11 +956,11 @@ export class RecoveryService {
    * when the ledger holds it), a delegating parent's continuation is a new run key in the same
    * attempt.
    */
-  decide(task: Task): RecoveryDecision | null {
+  private computeDecision(task: Task): RecoveryDecision | null {
     if (!["failed", "interrupted", "blocked"].includes(task.status))
       return null;
     const s = this.state(task.id);
-    const gate = this.retryGate(task);
+    const gate = this.baseRetryGate(task);
     const uncertain = this.ledger.uncertainFor(task.id);
     const approvals = this.service.approvals.pendingFor(task.id);
     const runtimeBlocker = this.runtimeBlocker(task);
@@ -970,7 +970,22 @@ export class RecoveryService {
       task.status === "blocked" &&
       !!delegation &&
       delegation.state !== "continuing";
-    const resumable = !!s.providerSessionId && !task.resourcePaths?.length;
+    let currentScope: string | null = null;
+    try {
+      currentScope = capabilityScopeHash(
+        this.service.launchReadiness.prospectivePlan(
+          this.store.get<Agent>("agent", task.agentId),
+          task,
+        ),
+        this.service.launchReadiness.host(),
+      );
+    } catch {
+      /* an invalid scope is not resumable; the decision below explains its repair */
+    }
+    const resumable =
+      !!s.providerSessionId &&
+      !task.resourcePaths?.length &&
+      s.launchScopeHash === currentScope;
     const max = s.policy.maxAttempts;
     // The cascade existing cancellation applies (src/limits.ts): live delegated descendants.
     const cascades: RecoveryDecision["cancel"]["cascades"] = [];
@@ -1056,6 +1071,7 @@ export class RecoveryService {
         ],
       };
     if (runtimeBlocker) {
+      const requiresStart = runtimeBlocker.reason === "assignment-preparation";
       const then = this.afterRepair(task);
       const message =
         runtimeBlocker.message ??
@@ -1073,18 +1089,22 @@ export class RecoveryService {
         run: null,
         session: "none",
         resumesSessionId: null,
-        summary: `${message} Nothing runs and no attempt is used until the setup is repaired; the task then continues by itself.`,
+        summary: requiresStart
+          ? message
+          : `${message} Nothing runs and no attempt is used until the setup is repaired; the task then continues by itself.`,
         steps: [...approvalSteps, message],
         setup: {
           reason: runtimeBlocker.reason ?? "sandbox-unavailable",
           message,
           issues: runtimeBlocker.issues ?? [],
           action: runtimeBlocker.issues?.[0]?.fix ?? null,
-          then: {
-            kind: then.kind,
-            providerCall: then.providerCall,
-            summary: then.summary,
-          },
+          then: requiresStart
+            ? null
+            : {
+                kind: then.kind,
+                providerCall: then.providerCall,
+                summary: then.summary,
+              },
         },
       };
     }
@@ -1207,6 +1227,98 @@ export class RecoveryService {
           ],
     };
   }
+  recordLaunchScope(taskId: string, hash: string) {
+    const state = this.state(taskId);
+    state.launchScopeHash = hash;
+    this.saveState(state);
+  }
+  decide(task: Task): RecoveryDecision | null {
+    let decision = this.computeDecision(task);
+    if (!decision) return null;
+    const approvalWait = this.service.pipelines.completionBlocker(task);
+    if (approvalWait && decision.kind !== "uncertain-effect-resolution")
+      decision = {
+        ...decision,
+        kind: "approval-wait",
+        allowed: false,
+        action: "wait",
+        providerCall: false,
+        blocker: { code: "pipeline_approval_required", message: approvalWait },
+        consumesAttempt: false,
+        attempt: { ...decision.attempt, after: decision.attempt.current },
+        run: null,
+        session: "none",
+        resumesSessionId: null,
+        summary: approvalWait,
+        steps: [approvalWait],
+      };
+    if (decision.allowed && decision.providerCall) {
+      const readiness = this.service.launchReadiness.evaluateProspective(
+        this.store.get<Agent>("agent", task.agentId),
+        { task },
+      );
+      if (!readiness.ready)
+        decision = {
+          ...decision,
+          kind: "setup-repair",
+          allowed: false,
+          action: "repair-setup",
+          blocker: {
+            code: "capability_missing",
+            message: `${readiness.message} Nothing was started and no attempt was used; repeat the action once setup is done.`,
+          },
+          providerCall: false,
+          consumesAttempt: false,
+          attempt: { ...decision.attempt, after: decision.attempt.current },
+          run: null,
+          session: "none",
+          resumesSessionId: null,
+          summary: readiness.message!,
+          steps: [readiness.message!],
+          setup: {
+            reason: "capability-missing",
+            message: readiness.message!,
+            issues: readiness.issues,
+            action: readiness.issues[0]?.fix ?? null,
+            then: {
+              kind: decision.kind,
+              providerCall: decision.providerCall,
+              summary: decision.summary,
+            },
+          },
+        };
+    }
+    return {
+      ...decision,
+      label:
+        decision.kind === "approval-wait"
+          ? "Wait for required approvals"
+          : decision.kind === "setup-repair"
+            ? "Fix setup"
+            : decision.kind === "new-attempt"
+              ? `Start attempt ${decision.attempt.after}`
+              : decision.kind === "completion-only-replay"
+                ? "Check saved output"
+                : decision.kind === "delegation-continuation"
+                  ? "Continue with delegated results"
+                  : decision.kind === "uncertain-effect-resolution"
+                    ? "Resolve uncertain effect"
+                    : "Resume execution",
+    };
+  }
+  retryGate(task: Task) {
+    const base = this.baseRetryGate(task);
+    const decision = this.decide(task);
+    if (!decision) return base;
+    return {
+      ...base,
+      allowed: decision.allowed,
+      reason: decision.blocker?.message ?? decision.summary,
+      ...(decision.kind === "setup-repair"
+        ? { blocker: "runtime-capability" as const }
+        : {}),
+    };
+  }
   /** What a setup-blocked task does once its blocker is gone (the same attempt, nothing consumed). */
   private afterRepair(task: Task) {
     const s = this.state(task.id);
@@ -1280,18 +1392,26 @@ export class RecoveryService {
   /** The failing leaf behind a delegating parent, as a setup problem or a failure. */
   private rootCause(task: Task) {
     const delegation = this.service.delegations.view(task.id);
-    const leafId = delegation?.blockers?.[0]?.taskId;
-    if (!leafId) return null;
+    const leafId = delegation?.blockers?.[0]?.taskId ?? task.id;
     const leaf = this.store.get<Task>("task", leafId);
     const wait = this.runtimeBlocker(leaf);
+    const decision = this.decide(leaf);
     const agent = this.store.get<{ name: string }>("agent", leaf.agentId);
     return {
       taskId: leaf.id,
       title: leaf.title,
       agentName: agent.name,
-      kind: wait ? ("setup" as const) : ("failure" as const),
-      message: wait?.message ?? delegation!.blockers![0].reason,
-      action: wait?.issues?.[0]?.fix ?? null,
+      kind:
+        wait || decision?.kind === "setup-repair"
+          ? ("setup" as const)
+          : ("failure" as const),
+      message:
+        decision?.setup?.message ??
+        wait?.message ??
+        delegation?.blockers?.[0]?.reason ??
+        leaf.result ??
+        "Task needs attention",
+      action: decision?.setup?.action ?? wait?.issues?.[0]?.fix ?? null,
     };
   }
   overview() {

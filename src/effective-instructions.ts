@@ -90,7 +90,13 @@ export async function effectiveInstructions(
     });
     facts = service.launchReadiness.prospectivePlan(agent);
   }
-  const capabilities = capabilityContext(service, agent, facts);
+  const capabilities = capabilityContext(
+    service,
+    agent,
+    facts,
+    undefined,
+    task?.id,
+  );
   const previewAgent = {
     ...agent,
     instructions:

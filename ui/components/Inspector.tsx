@@ -3,6 +3,7 @@ import { api, type Agent, type Snapshot, type TeamEvent } from "../api";
 import "./inspector.css";
 import { ConversationLink } from "./ConversationExtras";
 import { agentSelectorLabel } from "../agent-identity";
+import type { LaunchManifest } from "../../src/capability-context";
 
 /** Encodes every character the desktop IPC path filter rejects (".", "_") as well as reserved ones. */
 const enc = (v: string) =>
@@ -315,10 +316,57 @@ function Timeline(p: Props) {
                 />
               )}
             </div>
-            {open === e.seq && <pre>{JSON.stringify(e.data, null, 2)}</pre>}
+            {open === e.seq &&
+              (e.type === "task.launch_manifest" ? (
+                <LaunchManifestView data={e.data} />
+              ) : (
+                <pre>{JSON.stringify(e.data, null, 2)}</pre>
+              ))}
           </li>
         ))}
       </ol>
+    </section>
+  );
+}
+
+function LaunchManifestView({ data }: { data: unknown }) {
+  if (
+    !data ||
+    typeof data !== "object" ||
+    !("toolNames" in data) ||
+    !Array.isArray(data.toolNames)
+  )
+    return <pre>{JSON.stringify(data, null, 2)}</pre>;
+  const manifest = data as LaunchManifest;
+  return (
+    <section
+      className="project-setup-card"
+      aria-label="Recorded run capabilities"
+      data-testid="launch-manifest"
+    >
+      <h4>Recorded run capabilities</h4>
+      <dl>
+        <dt>Runtime</dt>
+        <dd>
+          {manifest.adapter.environment} · {manifest.adapter.transport}
+          {manifest.adapter.version ? ` · ${manifest.adapter.version}` : ""}
+        </dd>
+        <dt>Task folder</dt>
+        <dd>{manifest.taskRoot ?? "None"}</dd>
+        <dt>Tools</dt>
+        <dd>{manifest.toolNames.join(", ") || "None"}</dd>
+        <dt>Sandbox</dt>
+        <dd>{manifest.sandbox}</dd>
+        <dt>Readiness</dt>
+        <dd>{manifest.readiness.ready ? "Ready" : "Setup required"}</dd>
+      </dl>
+      <ul>
+        {manifest.allowedRoots.map((folder) => (
+          <li key={folder.path}>
+            {folder.path} ({folder.access})
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

@@ -1,5 +1,17 @@
 # AgentTeam continuation handoff
 
+## Reliable execution implementation — 0.6.0 release candidate (October 26, 2026)
+
+Current work is on `fix/reliable-execution-contract`. The user authorized finishing backend/UI milestones A, B and C, a real installed-app prompt test, then merge and deployment. Historical pause/no-live instructions below are superseded by that request.
+
+A now preserves root requirements and exact user-confirmed check provenance, evaluates role-specific effective launch capabilities, prepares program chat before any planner call, applies one approved folder setup, and uses the same typed Recovery decision for preview and action. Required read-only reviewers cannot acquire write/shell/delegation tools through this workflow. Start refuses replacement work while uncertain effects or pending approvals remain.
+
+B adds immutable source snapshots, whole-output independent references, actual compiler/runtime command evidence, mandatory macOS Seatbelt/Linux bubblewrap confinement, resource leases, cancellation and a current-source `execution-verified` completion gate. See [verification API and platform evidence](reliable-execution-verification.md). Pi defaults to 500 significant digits when the prompt says “500 digits”; the setup explicitly displays that the leading 3 counts. “500 decimal places” is a separate contract. macOS Python, JavaScript, TypeScript and C++ native execution is tested; Linux runtime confinement remains untested on this Mac and Windows returns a typed refusal.
+
+C coordinates role-correct implementation and distinct reviewer tasks, binds approval to exact verified source/evidence IDs and actual reviewer provider-run output, persists bounded correction rounds, invalidates stale source/permissions/approvals, and preserves restart/cancel history. Legacy seven-stage pipelines also require every current integrator execution check before final approval/reporting; generic projects with no executable verification specification fail closed.
+
+Validation in progress: the full backend run passed 682 tests with one opt-in skip; real macOS verifier fixtures passed 9/9. Desktop testing initially passed 79/83 and exposed trusted user-form check demotion plus truncated assistant JSON; both have targeted fixes. New setup/Recovery, layout and shortcuts passed. Installed-provider acceptance, final full desktop run, preflight, merge and deployment have not yet been recorded. Do not treat this candidate as released until the record below is updated.
+
 ## Reliable execution, Milestone A backend (October 26, 2026)
 
 Branch `fix/reliable-execution-contract` (from `30fd2d5`). Backend half of Milestone A (plan items 1, 2 and 6; findings 1, 2, 3, 7, 8): A1 contract, A2 readiness evaluator, A3 setup state and action, A4 capability context, A6 recovery decision. **Not done (UI half, later task):** the setup card, the composer notice (A5), Recovery rendering and the Cancel/Dismiss button for failed tasks, and the hidden desktop test for the setup-card path. No Playwright spec was added. Overview in `docs/durable-execution.md` ("Execution contract, readiness gate and the typed recovery decision") and `CLAUDE.md`.

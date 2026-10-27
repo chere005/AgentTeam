@@ -171,6 +171,8 @@ export type Proposal = {
   title: string;
   rationale: string;
   source: ProposalSource;
+  /** Human request captured before applying; assistant-authored operation text is never grounding. */
+  trustedRequest?: string;
   createdAt: string;
   expiresAt: string;
   status: ProposalStatus;
@@ -309,6 +311,7 @@ export async function executeOps(
   afterOp?: (index: number) => void,
   /** Filled as operations complete, so a caller can roll back exactly what was written. */
   results: { index: number; op: Op["op"]; id: string }[] = [],
+  provenance: { confirmedChecks?: boolean; trustedRequest?: string } = {},
 ) {
   const store = service.store;
   const refs: Refs = new Map();
@@ -324,11 +327,19 @@ export async function executeOps(
         );
         const { op: _op, teamId, ...assignment } = op;
         id = (
-          await assignProject(service, teamId, {
-            ...assignment,
-            mode: "simple",
-            sequential: false,
-          })
+          await assignProject(
+            service,
+            teamId,
+            {
+              ...assignment,
+              mode: "simple",
+              sequential: false,
+            },
+            {
+              confirmedChecks: provenance.confirmedChecks ?? false,
+              trustedRequest: provenance.trustedRequest ?? "",
+            },
+          )
         ).id;
         break;
       }
@@ -989,6 +1000,25 @@ export class AssistantProposals {
       .list<AuditEntry>("assistant-audit")
       .filter((a) => !proposalId || a.proposalId === proposalId);
   }
+  /** Only a delivered human message preceding this assistant reply can ground proposed checks. */
+  private originalRequest(source: ProposalSource): string {
+    if (source.type !== "assistant" || !source.messageId) return "";
+    try {
+      const reply = this.store.get<Message>("message", source.messageId);
+      if (reply.role !== "assistant") return "";
+      const messages = this.store
+        .list<Message>("message")
+        .filter((m) => m.sessionId === reply.sessionId);
+      const index = messages.findIndex((m) => m.id === reply.id);
+      const request = messages
+        .slice(0, index)
+        .reverse()
+        .find((m) => m.role === "user" && m.status === "delivered");
+      return request?.text.slice(0, 5000) ?? "";
+    } catch {
+      return "";
+    }
+  }
   /** Validates and stores a proposal. Nothing is changed in the team configuration. */
   async create(input: unknown, source: ProposalSource): Promise<Proposal> {
     const data = proposalInputSchema.parse(input);
@@ -1011,6 +1041,7 @@ export class AssistantProposals {
       title: data.title,
       rationale: data.rationale,
       source,
+      trustedRequest: this.originalRequest(source),
       createdAt: new Date(now).toISOString(),
       expiresAt: new Date(now + this.opts.ttlMs).toISOString(),
       status: "pending",
@@ -1362,7 +1393,12 @@ export class AssistantProposals {
         snapshot.set(kind, this.store.list<{ id: string }>(kind));
       const results: { index: number; op: Op["op"]; id: string }[] = [];
       try {
-        await executeOps(this.service, p.ops, this.opts.afterOp, results);
+        await executeOps(this.service, p.ops, this.opts.afterOp, results, {
+          confirmedChecks:
+            p.source.type === "user" ||
+            (p.status === "approved" && p.approval?.opsHash === p.opsHash),
+          trustedRequest: p.trustedRequest ?? "",
+        });
       } catch (e) {
         this.rollback(snapshot, results);
         const failed: Proposal = {

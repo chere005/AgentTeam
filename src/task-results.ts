@@ -39,10 +39,17 @@ export function explicitlyReportsNoWork(value: string | null | undefined) {
  * the requested build/run while leaving ordinary implementation tasks unaffected.
  */
 export function explicitlyReportsIncompleteExecution(
-  task: Pick<Task, "title" | "instructions" | "completionCriteria">,
+  task: Pick<Task, "title" | "instructions" | "completionCriteria"> &
+    Partial<Pick<Task, "completionChecks">>,
   value: string | null | undefined,
 ) {
   if (!value) return false;
+  // This task's execution is decided by the application-owned verifier. A worker may truthfully
+  // report it wrote source without running it; completion still requires current observed evidence.
+  if (
+    task.completionChecks?.some((check) => check.type === "execution-verified")
+  )
+    return false;
   const request = `${task.title}\n${task.instructions}\n${task.completionCriteria}`;
   const coordinationOnly =
     /\b(?:plan|coordinate|delegate)\b/i.test(task.title) &&
@@ -93,6 +100,7 @@ export function explicitlyReportsUnapprovedReview(
 export function taskCompletionProblem(
   task: Pick<Task, "title" | "instructions" | "completionCriteria"> & {
     result?: string | null;
+    completionChecks?: Task["completionChecks"];
   },
 ) {
   if (explicitlyReportsNoWork(task.result)) return "didn’t complete";

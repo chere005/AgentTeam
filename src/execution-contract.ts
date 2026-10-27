@@ -17,6 +17,8 @@
 // Existing projects have no contract entity; they keep running on the grant-based predicate in
 // src/launch-readiness.ts and are never given inferred requirements (migration rule).
 import { createHash } from "node:crypto";
+import { canonicalPolicyPath } from "./filesystem-policy.ts";
+import { roleClassOf } from "./launch-readiness.ts";
 import { z } from "zod";
 import { assert, type Agent, type Task } from "./model.ts";
 import {
@@ -65,59 +67,50 @@ export const WORK_KIND_SOURCES = [
 // ---- request classification ---------------------------------------------------------------------
 
 export type Classification = { workKind: WorkKind; signals: string[] };
-const VERBS =
-  /\b(write|create|make|build|implement|develop|code|program|generate|compile|run|execute|test|debug|fix|refactor|port|translate|install|deploy|script|compute|calculate|produce)\b/g;
-const CODE_NOUNS =
-  /\b(program|programs|script|scripts|code|function|functions|class|classes|module|library|app|application|cli|binary|executable|compiler|algorithm|implementation|unit tests?|test suite|python|c\+\+|cpp|typescript|javascript|node\.?js|java|rust|golang|ruby|swift|kotlin|bash|sql)\b/g;
-const EXECUTION_CUES =
-  /\b(compile|run it|runs it|execute it|exit code|stdout|passes the tests|make test|runs? (?:the|your) (?:program|code|script))\b/g;
-const FILE_VERBS =
-  /\b(write|create|save|edit|update|modify|append|rename|delete|generate|add|put|make)\b/g;
-// A file name needs a real extension: "3.5", "v2.0", "e.g." and "p.m." are not file names.
 const FILE_EXTENSIONS =
   "txt|md|markdown|rst|py|pyi|ipynb|js|jsx|mjs|cjs|ts|tsx|json|jsonc|ndjson|csv|tsv|ya?ml|toml|ini|cfg|conf|html?|css|scss|less|xml|svg|c|h|cc|cpp|cxx|hpp|cs|java|kt|kts|swift|rs|go|rb|php|pl|lua|sh|bash|zsh|ps1|bat|sql|graphql|proto|lock|log|pdf|docx?|xlsx?|pptx?|png|jpe?g|gif|webp|zip";
-const FILE_NOUNS = new RegExp(
-  String.raw`\b(?:files?|documents?|readme|markdown|json|csv|yaml|toml|configs?|folders?|directory|directories)\b|\b[\w-]+\.(?:${FILE_EXTENSIONS})\b|\.(?:gitignore|env)\b`,
-  "g",
+const FILE_NAMES = new RegExp(
+  String.raw`(?:[\w.-]+[/\\])*[\w-]+\.(?:${FILE_EXTENSIONS})\b|\.(?:gitignore|env)\b|\bREADME\b`,
+  "gi",
 );
-const DISCUSSION =
-  /^\s*(?:what|why|how (?:do|does|can|would|should|is|are)|can you explain|could you explain|explain|describe|summari[sz]e|compare|tell me|is it|are there|should i|what's|whats)\b/i;
-const THEN_ACTION =
-  /\b(?:and then|then|after that|afterwards)\s+(?:write|create|build|make|implement|run|execute|compile|generate|save)\b/i;
-
-const matches = (re: RegExp, text: string) => [
-  ...new Set((text.toLowerCase().match(re) ?? []).map((m) => m.trim())),
+export const requestFiles = (text: string) => [
+  ...new Set((text.match(FILE_NAMES) ?? []).map(normalizeRel)),
 ];
-
-/**
- * The application's own, conservative reading of a request: what would have to exist for the
- * request to be done. It is a floor, never a ceiling: a model's proposal can raise it, only the
- * user can lower it, and every signal is recorded so the reading can be explained and corrected.
- */
+const DISCUSSION =
+  /^\s*(?:what|why|how (?:do|does|can|would|should|is|are)|can you explain|could you explain|explain|describe|summari[sz]e|compare|tell me|is it|are there|should i|what's|whats|(?:please\s+)?review)\b/i;
+const IMPLEMENT =
+  /\b(?:implement|build|develop|refactor|port|debug|fix|write|create|make|generate|produce|save|edit|update|modify|append|rename|delete|add|put)\b/i;
+const CODE_ARTIFACT =
+  /\b(?:programs?|scripts?|code|functions?|modules?|apps?|clients?|servers?|cli|binary|executable|unit tests?|test suite)\b|\b(?:in\s+(?:python|c\+\+|cpp|typescript|javascript|java|rust|go|ruby|swift|kotlin|bash|sql))\b/i;
+const EXECUTE =
+  /\b(?:run|execute|compile|exit code|stdout|tests? (?:pass|passed)|verify (?:the )?(?:output|result)|test (?:the|this|your) (?:program|code|script))\b/i;
+const OUTPUT =
+  /\b(?:poem|story|list|email|notes|summary|essay|explanation|outline|plan|schedule|job application|swift reply)\b/i;
+/** Precise preparation hint; capability requirements remain enforced independently at launch. */
 export function classifyRequest(text: string): Classification {
   const body = text.slice(0, 8000);
-  if (DISCUSSION.test(body) && !THEN_ACTION.test(body))
+  const files = requestFiles(body);
+  const action = IMPLEMENT.test(body);
+  const mixed =
+    /\b(?:then|and|afterwards|after that)\s+(?:write|create|build|implement|run|execute|compile|save|fix)\b/i.test(
+      body,
+    );
+  if (DISCUSSION.test(body) && !mixed)
     return { workKind: "response-only", signals: ["discussion"] };
-  const verbs = matches(VERBS, body);
-  const nouns = matches(CODE_NOUNS, body);
-  const cues = matches(EXECUTION_CUES, body);
-  if ((verbs.length && nouns.length) || (cues.length && verbs.length))
+  if (!files.length && OUTPUT.test(body))
+    return { workKind: "response-only", signals: ["discussion"] };
+  const artifact = files.length > 0 || CODE_ARTIFACT.test(body);
+  if (artifact && EXECUTE.test(body))
     return {
       workKind: "executable-implementation",
-      signals: [
-        ...verbs.slice(0, 3).map((v) => `verb:${v}`),
-        ...nouns.slice(0, 3).map((n) => `noun:${n}`),
-        ...cues.slice(0, 2).map((c) => `cue:${c}`),
-      ],
+      signals: ["verb:execution", ...files.slice(0, 3).map((f) => `file:${f}`)],
     };
-  const fileVerbs = matches(FILE_VERBS, body);
-  const fileNouns = matches(FILE_NOUNS, body);
-  if (fileVerbs.length && fileNouns.length)
+  if (artifact && action)
     return {
       workKind: "file-edit",
       signals: [
-        ...fileVerbs.slice(0, 3).map((v) => `verb:${v}`),
-        ...fileNouns.slice(0, 3).map((n) => `noun:${n}`),
+        "verb:implementation",
+        ...files.slice(0, 3).map((f) => `file:${f}`),
       ],
     };
   return { workKind: "response-only", signals: [] };
@@ -137,24 +130,21 @@ const canonical = (value: unknown): string =>
         )
       : v,
   );
-/** One slot per kind and target: a retry cannot pile up duplicates or step around a slot. */
-export function checkSlot(check: CompletionCheck): string {
-  switch (check.type) {
-    case "artifact-exists":
-    case "artifact-matches":
-      return `${check.type}:${normalizeRel(check.path)}`;
-    case "output-fields":
-      return `output-fields:${[...check.fields].sort().join(",")}`;
-    default:
-      return check.type;
-  }
+/** Content identity: independent checks of the same kind coexist; exact retries deduplicate. */
+export function checkSlot(
+  check: z.input<typeof completionCheckSchema>,
+): string {
+  const parsed = completionCheckSchema.parse(check);
+  const normalized =
+    "path" in parsed ? { ...parsed, path: normalizeRel(parsed.path) } : parsed;
+  return `${check.type}:${createHash("sha256").update(canonical(normalized)).digest("hex").slice(0, 24)}`;
 }
 /** Literal runs (6+ characters) an `output-matches` / `artifact-matches` pattern insists on. */
 export function literalRuns(pattern: string): string[] {
   const runs: string[] = [];
   let current = "";
   const flush = () => {
-    if (current.trim().length >= 6) runs.push(current.trim());
+    if (current.trim().length) runs.push(current.trim());
     current = "";
   };
   for (let i = 0; i < pattern.length; i++) {
@@ -199,9 +189,14 @@ const tokens = (text: string) =>
  * ("Agent 1"); a long digit string, a hash or a made-up expected value is not.
  */
 export function groundedLiteral(pattern: string, corpus: string): boolean {
+  // Character classes/lookarounds/backreferences may encode literals the conservative extractor
+  // cannot establish. Never certify them as user-authored expectations.
+  if (/\[(?!\^?\d-\d\])|\(\?|\\[1-9]/.test(pattern)) return false;
   const known = new Set(tokens(corpus));
+  for (const match of pattern.matchAll(/\{(\d+)(?:,(\d*))?\}/g))
+    if ([match[1], match[2]].some((n) => n && !known.has(n))) return false;
   return literalRuns(pattern).every((run) =>
-    tokens(run).every((t) => /^\d{1,3}$/.test(t) || known.has(t)),
+    tokens(run).every((t) => known.has(t)),
   );
 }
 
@@ -265,6 +260,7 @@ export const executionContractSchema = z
   .object({
     id: z.string().min(1).max(300),
     scope: z.enum(["project", "task"]),
+    inheritedFrom: z.string().max(300).optional(),
     workflowId: z.string().min(1).max(200),
     taskId: z.string().min(1).max(200).optional(),
     /** The contract this one inherits from (children narrow it, never drop from it). */
@@ -275,6 +271,8 @@ export const executionContractSchema = z
     signals: z.array(z.string().max(80)).max(20).default([]),
     /** The original request, retained so later steps cannot reinterpret it. */
     userIntent: z.string().max(5000).default(""),
+    /** Trusted human request used for grounding; an empty string excludes model-authored prose. */
+    trustedRequest: z.string().max(5000).optional(),
     /** A chat request: the conversation and message it came from, so "Start" can send it again once ready. */
     origin: z
       .object({
@@ -303,6 +301,9 @@ export const executionContractSchema = z
             expectedFiles: z.array(relativeFile).max(30),
             workKind: z.enum(WORK_KINDS),
             at: z.string().max(40),
+            parentTaskId: z.string().max(200).optional(),
+            recipientId: z.string().max(200).optional(),
+            resourcePaths: z.array(z.string().max(4096)).max(50).optional(),
           })
           .strict(),
       )
@@ -327,7 +328,7 @@ export const executionContractSchema = z
       });
     if (
       c.workKind === "response-only" &&
-      c.roles.some((r) => r.capabilities.length)
+      c.roles.some((r) => r.capabilities.some((cap) => cap !== "read"))
     )
       ctx.addIssue({
         code: "custom",
@@ -393,6 +394,8 @@ export const contractHash = (c: ExecutionContract) =>
 export type ChildPlan = {
   /** False when no contract governs the delegation: the legacy grant-based predicate applies. */
   governed: boolean;
+  resourcePaths: string[];
+  retainedKeys: string[];
   workKind: WorkKind | null;
   /** Checks the child must satisfy: the model's structural and grounded checks plus the contract's enforced ones. */
   completionChecks: CompletionCheck[];
@@ -470,13 +473,17 @@ export class ContractService {
 
   /**
    * Create or raise the project contract for a request or an assignment. Response-only requests
-   * persist nothing (ordinary discussion needs no contract). The work kind only rises, except
+   * persist nothing unless a proposed literal needs a confirmation gate. The work kind only rises, except
    * when the user chose it.
    */
   seedProject(input: {
     workflowId: string;
     text: string;
     source: "request" | "assignment";
+    /** Separate from model-authored classification text; omitted only for direct user requests. */
+    trustedRequest?: string;
+    /** Persist response-only work when a proposed literal still needs a confirmation gate. */
+    trackChecks?: boolean;
     workKind?: WorkKind;
     projectFolder?: string;
     owner?: Agent;
@@ -490,7 +497,8 @@ export class ContractService {
       input.workKind ?? "response-only",
     );
     const existing = this.project(input.workflowId);
-    if (!existing && kind === "response-only") return null;
+    if (!existing && kind === "response-only" && !input.trackChecks)
+      return null;
     if (existing) {
       if (
         existing.workKindSource === "user" ||
@@ -515,6 +523,7 @@ export class ContractService {
       workKindSource: input.source,
       signals: classified.signals,
       userIntent: input.text.slice(0, 5000),
+      trustedRequest: (input.trustedRequest ?? input.text).slice(0, 5000),
       ...(input.origin ? { origin: input.origin } : {}),
       ...(input.projectFolder ? { projectFolder: input.projectFolder } : {}),
       scopes: [],
@@ -581,6 +590,14 @@ export class ContractService {
       workKindSource: "user",
       roles: defaultRoles(kind),
     });
+    for (const child of this.contractsOf(workflowId))
+      if (child.scope === "task")
+        this.save({
+          ...child,
+          workKind: kind,
+          workKindSource: "user",
+          roles: kind === "response-only" ? [] : child.roles,
+        });
     this.store.emit("contract.updated", saved.id, {
       workflowId,
       workKind: kind,
@@ -657,11 +674,23 @@ export class ContractService {
   }
 
   private corpusOf(contract: ExecutionContract | null) {
-    const names = this.store
+    const workflow = contract
+      ? this.store.get<{ ownerId: string }>("workflow", contract.workflowId)
+      : null;
+    const owner = workflow
+      ? this.store.get<Agent>("agent", workflow.ownerId)
+      : undefined;
+    const teamId = owner
+      ? this.service.teamSpaces.teamOfAgent(owner)
+      : undefined;
+    const members = this.store
       .list<Agent>("agent")
-      .map((a) => `${a.name} ${a.nickname}`)
-      .join(" ");
-    return `${contract?.userIntent ?? ""} ${names}`;
+      .filter((a) => this.service.teamSpaces.teamOfAgent(a) === teamId);
+    const profile = teamId ? teamProfile(this.store, teamId) : null;
+    const team = this.store
+      .list<{ id: string; name: string; description?: string }>("team-space")
+      .find((t) => t.id === teamId);
+    return `${contract?.trustedRequest ?? contract?.userIntent ?? ""} ${members.map((a) => `${a.name} ${a.nickname} ${a.instructions}`).join(" ")} ${team?.name ?? ""} ${team?.description ?? ""} ${profile ? JSON.stringify({ settings: profile.settings, source: profile.source, intendedLead: profile.intendedLead }) : ""}`;
   }
 
   /**
@@ -743,199 +772,233 @@ export class ContractService {
     recipient: Agent;
     title: string;
     instructions: string;
+    /** Human text only; absent when the original request cannot be established. */
+    trustedRequest?: string;
     proposal?: ContractProposal;
     completionChecks: CompletionCheck[];
     resourcePaths: string[];
   }): ChildPlan {
-    const ungoverned: ChildPlan = {
-      governed: false,
-      workKind: null,
-      completionChecks: input.completionChecks,
-      advisory: [],
-      draft: null,
-      parent: null,
-    };
     const inherited = this.effective(input.parent);
-    const own = classifyRequest(`${input.title}\n${input.instructions}`);
+    const text = `${input.title}\n${input.instructions}`;
+    const own = classifyRequest(text);
     const proposedKind = input.proposal?.workKind ?? "response-only";
-    const askedKind = stricterKind(own.workKind, proposedKind);
-    if (!inherited && (!input.proposal || askedKind === "response-only"))
-      return ungoverned;
-    // A model's proposal can make an unclassified conversation actionable: the contract is then
-    // created from the user's retained words, so it can only rise from here on.
-    const holder: ExecutionContract =
+    const asked = stricterKind(own.workKind, proposedKind);
+    const role = roleClassOf(this.service, input.recipient);
+    const readonly = ["reviewer", "adjudicator", "reporter"].includes(role);
+    const literalProposed = input.completionChecks.some(isLiteralCheck);
+    if (!inherited && asked === "response-only" && !literalProposed)
+      return {
+        governed: false,
+        workKind: null,
+        completionChecks: input.completionChecks,
+        advisory: [],
+        draft: null,
+        parent: null,
+        resourcePaths: input.resourcePaths,
+        retainedKeys: [],
+      };
+    const holder =
       inherited ??
       this.seedProject({
         workflowId: input.parent.workflowId,
         text: `${input.parent.title}\n${input.parent.instructions}`,
         source: "request",
-        workKind: askedKind,
+        trustedRequest: input.trustedRequest ?? "",
+        trackChecks: literalProposed,
+        workKind: asked,
         owner: input.caller,
       })!;
-    // What this recipient was already asked for cannot be lowered by rewording the next call; only
-    // an explicit analysis request (the application's own reading of the child's words, agreed by
-    // the proposal) is a response-only subtask next to an executable parent.
-    const retainedKind =
-      holder.retained[input.recipient.id]?.workKind ?? "response-only";
+    const userResponse =
+      holder.workKindSource === "user" && holder.workKind === "response-only";
+    const named = [
+      ...new Set([
+        ...requestFiles(text),
+        ...(input.proposal?.expectedFiles ?? []),
+        ...input.completionChecks.flatMap((c) =>
+          "path" in c ? [normalizeRel(c.path)] : [],
+        ),
+      ]),
+    ];
     const analysis =
-      own.signals.includes("discussion") && proposedKind === "response-only";
-    const kind = analysis ? askedKind : stricterKind(askedKind, retainedKind);
-    const source: ExecutionContract["workKindSource"] =
-      rankOf(proposedKind) > rankOf(own.workKind) ? "proposal" : "request";
-    const folder = holder.projectFolder;
-    if (folder)
-      for (const scope of input.resourcePaths)
+      own.signals.includes("discussion") &&
+      named.length === 0 &&
+      own.workKind === "response-only" &&
+      proposedKind === "response-only" &&
+      (readonly ||
+        !input.recipient.tools.some((t) =>
+          ["write", "edit", "shell"].includes(t),
+        ));
+    const pending = Object.entries(holder.retained).filter(([, r]) => {
+      if (r.parentTaskId && r.parentTaskId !== input.parent.id) return false;
+      if (named.length)
+        return (
+          r.expectedFiles.some((f) => named.includes(f)) ||
+          r.checks.some((c) =>
+            input.completionChecks.some((p) => checkSlot(p) === c.slot),
+          )
+        );
+      return (
+        r.recipientId === input.recipient.id ||
+        Object.values(holder.retained).filter(
+          (x) => !x.parentTaskId || x.parentTaskId === input.parent.id,
+        ).length === 1
+      );
+    });
+    const retainedKind = pending.reduce(
+      (k, [, r]) => stricterKind(k, r.workKind),
+      "response-only" as WorkKind,
+    );
+    const kind =
+      userResponse || readonly || analysis
+        ? "response-only"
+        : stricterKind(stricterKind(asked, holder.workKind), retainedKind);
+    const deliverable = kind !== "response-only";
+    const scopes = input.resourcePaths.length
+      ? input.resourcePaths
+      : pending.flatMap(([, r]) => r.resourcePaths ?? []).length
+        ? pending.flatMap(([, r]) => r.resourcePaths ?? [])
+        : holder.scopes.length
+          ? holder.scopes
+          : holder.projectFolder
+            ? [holder.projectFolder]
+            : [];
+    if (holder.projectFolder) {
+      const root = canonicalPolicyPath(holder.projectFolder);
+      for (const scope of scopes)
         assert(
-          contains(folder, scope),
+          contains(root, canonicalPolicyPath(scope)),
           "scope_outside_contract",
-          `The task folder ${scope} is outside the authorized project folder ${folder}. A delegated task may narrow its folder but not leave it.`,
+          `The task folder ${scope} is outside the authorized project folder ${holder.projectFolder}.`,
           403,
         );
-    const retained = holder.retained[input.recipient.id];
-    // What the user wrote for the project is not the model's to re-propose or replace.
-    const fixed = holder.requiredChecks.filter(
-      (c) => c.enforcement === "enforced",
-    );
-    const fixedSlots = new Set(fixed.map((c) => c.slot));
+    }
+    const fixed = deliverable ? holder.requiredChecks : [];
     const slots = this.mergeChecks(
-      (retained?.checks ?? []).filter((c) => !fixedSlots.has(c.slot)),
-      input.completionChecks.filter((c) => !fixedSlots.has(checkSlot(c))),
-      {
-        corpus: this.corpusOf(holder),
-        proposedBy: input.caller.id,
-      },
+      pending.flatMap(([, r]) => r.checks),
+      input.completionChecks,
+      { corpus: this.corpusOf(holder), proposedBy: input.caller.id },
     );
+    const all = new Map([...fixed, ...slots].map((c) => [c.slot, c]));
     assert(
-      slots.length <= 30 && fixed.length + slots.length <= 60,
+      all.size <= 20,
       "too_many_requirements",
-      "This recipient already has the most required checks a task can carry; confirm or remove some before adding more.",
+      "A task can carry at most 20 required checks; split the assignment.",
       400,
     );
-    // Only plain relative paths are retained; the delegation itself validates and normalizes the
-    // paths it was given (an absolute path inside the task folder is converted there).
-    const files = [
-      ...new Set(
-        [
-          ...holder.expectedFiles,
-          ...(retained?.expectedFiles ?? []),
-          ...(input.proposal?.expectedFiles ?? []),
-          ...input.completionChecks.flatMap((c) =>
-            c.type === "artifact-exists" ? [normalizeRel(c.path)] : [],
+    const files = deliverable
+      ? [
+          ...new Set(
+            [
+              ...holder.expectedFiles,
+              ...pending.flatMap(([, r]) => r.expectedFiles),
+              ...(input.proposal?.expectedFiles ?? []),
+              ...input.completionChecks.flatMap((c) =>
+                "path" in c ? [normalizeRel(c.path)] : [],
+              ),
+            ].filter(isRelativeFile),
           ),
-        ].filter(isRelativeFile),
-      ),
-    ];
+        ]
+      : [];
     assert(
-      files.length <= 30,
+      files.length <= 20,
       "too_many_requirements",
-      "This recipient already has 30 expected files; remove some before adding more.",
+      "A task can require at most 20 files; split the assignment into explicit scopes.",
       400,
     );
-    // Retain before anything can refuse the call. Repeating the same call changes nothing.
-    const sameAsHeld = (a: typeof retained, b: typeof retained) =>
-      canonical({
-        ...a,
-        at: undefined,
-        checks: a?.checks.map((c) => ({ ...c, at: undefined })),
-      }) ===
-      canonical({
-        ...b,
-        at: undefined,
-        checks: b?.checks.map((c) => ({ ...c, at: undefined })),
-      });
-    const next = {
-      checks: slots,
-      expectedFiles: files,
-      workKind: stricterKind(kind, retainedKind),
-      at: now(),
-    };
-    const entries = Object.entries({
-      ...holder.retained,
-      [input.recipient.id]: next,
-    });
-    const keep = Object.fromEntries(
-      entries.sort((a, b) => (a[1].at < b[1].at ? 1 : -1)).slice(0, 40),
+    const effective = [...all.values()]
+      .filter((c) => c.enforcement === "enforced")
+      .map((c) => c.check);
+    for (const file of files)
+      if (
+        !effective.some(
+          (c) =>
+            (c.type === "artifact-exists" || c.type === "artifact-matches") &&
+            normalizeRel(c.path) === file,
+        )
+      )
+        effective.push({ type: "artifact-exists", path: file });
+    assert(
+      effective.length <= 20,
+      "too_many_requirements",
+      "A task can carry at most 20 completion checks; split the assignment into explicit scopes.",
+      400,
     );
-    const raise = rankOf(kind) > rankOf(holder.workKind);
-    if (
-      !sameAsHeld(next, retained) ||
-      (raise && holder.workKindSource !== "user")
-    )
-      this.save({
-        ...holder,
-        retained: keep,
-        ...(raise && holder.workKindSource !== "user"
-          ? {
-              workKind: kind,
-              workKindSource: source,
-              roles: defaultRoles(kind),
-            }
-          : {}),
-      });
-    const deliverable = kind !== "response-only";
-    const effective = new Map<string, CompletionCheck>();
-    for (const check of input.completionChecks) {
-      const slot = checkSlot(check);
-      const held = slots.find((c) => c.slot === slot);
-      // A literal held back as unverified is not enforced; everything else the model sent stays.
-      if (held?.enforcement === "advisory") continue;
-      effective.set(slot, held?.check ?? check);
-    }
-    if (deliverable) {
-      for (const c of [
-        ...fixed,
-        ...slots.filter((x) => x.enforcement === "enforced"),
-      ])
-        effective.set(c.slot, c.check);
-      for (const file of files) {
-        const slot = `artifact-exists:${file}`;
-        if (!effective.has(slot))
-          effective.set(slot, { type: "artifact-exists", path: file });
-      }
-    }
-    const advisory = deliverable
-      ? slots.filter((c) => c.enforcement === "advisory")
-      : [];
-    const draft = deliverable
-      ? {
-          scope: "task" as const,
-          workflowId: input.parent.workflowId,
-          parent: holder.id,
-          workKind: kind,
-          workKindSource: source,
-          signals: own.signals,
-          userIntent: holder.userIntent,
-          ...(folder ? { projectFolder: folder } : {}),
-          scopes: input.resourcePaths,
-          roles: [],
-          expectedFiles: files,
-          requiredChecks: [...fixed, ...slots],
-          designatedReviewers: holder.designatedReviewers,
-          retained: {},
-          ...(holder.approval ? { approval: holder.approval } : {}),
-          maxCorrectionRounds:
-            input.proposal?.maxCorrectionRounds ?? holder.maxCorrectionRounds,
-          createdAt: now(),
-          updatedAt: now(),
-        }
-      : null;
+    const key = `${input.parent.id}:${createHash("sha256")
+      .update(
+        canonical(named.length ? [...named].sort() : [input.recipient.id]),
+      )
+      .digest("hex")
+      .slice(0, 20)}`;
+    const retained = { ...holder.retained };
+    for (const [k] of pending) delete retained[k];
+    if (deliverable)
+      retained[key] = {
+        checks: [...all.values()],
+        expectedFiles: files,
+        workKind: kind,
+        parentTaskId: input.parent.id,
+        recipientId: input.recipient.id,
+        resourcePaths: scopes,
+        at: now(),
+      };
+    assert(
+      Object.keys(retained).length <= 40,
+      "too_many_requirements",
+      "Resolve pending assignments before adding more work.",
+      400,
+    );
+    const updated = this.save({ ...holder, retained });
+    const source =
+      userResponse || analysis ? ("user" as const) : ("inherited" as const);
+    const draft = {
+      scope: "task" as const,
+      workflowId: input.parent.workflowId,
+      parent: holder.id,
+      workKind: kind,
+      workKindSource: source,
+      signals: own.signals,
+      userIntent: holder.userIntent,
+      trustedRequest: holder.trustedRequest ?? holder.userIntent,
+      ...(holder.projectFolder ? { projectFolder: holder.projectFolder } : {}),
+      scopes,
+      roles:
+        readonly && !userResponse
+          ? [{ role, capabilities: ["read" as const] }]
+          : [],
+      expectedFiles: files,
+      requiredChecks: [...all.values()],
+      designatedReviewers: holder.designatedReviewers,
+      retained: {},
+      ...(holder.approval ? { approval: holder.approval } : {}),
+      maxCorrectionRounds: holder.maxCorrectionRounds,
+      createdAt: now(),
+      updatedAt: now(),
+    };
     return {
       governed: true,
       workKind: kind,
-      completionChecks: [...effective.values()],
-      advisory,
+      completionChecks: effective,
+      advisory: [...all.values()].filter((c) => c.enforcement === "advisory"),
       draft,
-      parent: holder,
+      parent: updated,
+      resourcePaths: scopes,
+      retainedKeys: deliverable ? [key] : [],
     };
   }
-  /** Persist the child's contract once the task exists. */
   commitChild(plan: ChildPlan, child: Task) {
     if (!plan.draft) return null;
-    return this.save({
+    const saved = this.save({
       ...plan.draft,
       id: `task:${child.id}`,
       taskId: child.id,
     });
+    if (plan.parent && plan.retainedKeys.length) {
+      const holder = this.get(plan.parent.id)!;
+      const retained = { ...holder.retained };
+      for (const key of plan.retainedKeys) delete retained[key];
+      this.save({ ...holder, retained });
+    }
+    return saved;
   }
   /** Contract for a task created directly (task API, assignment): the app's reading plus any proposal. */
   seedTask(input: {
@@ -943,47 +1006,73 @@ export class ContractService {
     text: string;
     source: "request" | "assignment";
     proposal?: ContractProposal;
+    /** Only the user form/API or an explicitly approved proposal may confirm supplied literals. */
+    confirmedChecks?: boolean;
+    trustedRequest?: string;
   }): ExecutionContract | null {
-    const classified = classifyRequest(input.text);
-    const kind = stricterKind(
-      classified.workKind,
-      input.proposal?.workKind ?? "response-only",
-    );
-    if (kind === "response-only") return null;
-    const parent = this.effective(input.task);
-    const created = now();
-    return this.save({
-      id: `task:${input.task.id}`,
-      scope: "task",
-      taskId: input.task.id,
-      workflowId: input.task.workflowId,
-      ...(parent ? { parent: parent.id } : {}),
-      workKind: kind,
-      workKindSource: input.source,
-      signals: classified.signals,
-      userIntent: input.text.slice(0, 5000),
-      ...(parent?.projectFolder ? { projectFolder: parent.projectFolder } : {}),
-      scopes: input.task.resourcePaths ?? [],
-      roles: [],
-      // Only plain relative paths are kept (an absolute artifact path the task API accepts is
-      // checked by the task itself, not recorded as a project-relative expectation).
-      expectedFiles: [
-        ...new Set(
-          [
-            ...(input.proposal?.expectedFiles ?? []),
-            ...(input.task.completionChecks ?? []).flatMap((c) =>
-              c.type === "artifact-exists" ? [normalizeRel(c.path)] : [],
-            ),
-          ].filter(isRelativeFile),
-        ),
-      ].slice(0, 50),
-      requiredChecks: [],
-      designatedReviewers: parent?.designatedReviewers ?? [],
-      retained: {},
-      maxCorrectionRounds: input.proposal?.maxCorrectionRounds ?? 2,
-      createdAt: created,
-      updatedAt: created,
+    const agent = this.store.get<Agent>("agent", input.task.agentId);
+    const parent = input.task.parentTaskId
+      ? this.store.get<Task>("task", input.task.parentTaskId)
+      : input.task;
+    const plan = this.planChild({
+      parent,
+      caller: agent,
+      recipient: agent,
+      title: input.task.title,
+      instructions: input.text,
+      trustedRequest:
+        input.trustedRequest ?? (input.source === "request" ? input.text : ""),
+      proposal: input.proposal,
+      completionChecks: input.task.completionChecks ?? [],
+      resourcePaths: input.task.resourcePaths ?? [],
     });
+    if (!plan.draft) return null;
+    if (input.confirmedChecks) {
+      const userChecks = input.task.completionChecks ?? [];
+      const slots = new Set(userChecks.map(checkSlot));
+      plan.draft.requiredChecks = plan.draft.requiredChecks.map((check) =>
+        slots.has(check.slot)
+          ? {
+              ...check,
+              origin: "user",
+              confirmation: "confirmed",
+              enforcement: "enforced",
+              label: undefined,
+              note: undefined,
+              proposedBy: undefined,
+            }
+          : check,
+      );
+      const effective = new Map(
+        plan.completionChecks.map((check) => [checkSlot(check), check]),
+      );
+      for (const check of userChecks) effective.set(checkSlot(check), check);
+      // A content check already proves existence; retain a separate existence check only when
+      // the user actually requested it, rather than adding a redundant generated one.
+      for (const check of userChecks)
+        if (
+          check.type === "artifact-matches" &&
+          !userChecks.some(
+            (other) =>
+              other.type === "artifact-exists" &&
+              normalizeRel(other.path) === normalizeRel(check.path),
+          )
+        ) {
+          effective.delete(
+            checkSlot({ type: "artifact-exists", path: check.path }),
+          );
+        }
+      plan.completionChecks = [...effective.values()];
+    }
+    const task = {
+      ...input.task,
+      completionChecks: plan.completionChecks,
+      ...(plan.resourcePaths.length
+        ? { resourcePaths: plan.resourcePaths }
+        : {}),
+    };
+    this.store.put("task", task);
+    return this.commitChild(plan, task);
   }
 
   /** Required checks on this task that are still unverified: completion stays blocked until resolved. */
@@ -1019,7 +1108,12 @@ export class ContractService {
   confirmCheck(
     contractId: string,
     slot: string,
-    input: { pattern?: string; flags?: string; note?: string } = {},
+    input: {
+      pattern?: string;
+      flags?: string;
+      note?: string;
+      withdraw?: boolean;
+    } = {},
   ) {
     const contract = this.get(contractId);
     assert(contract, "contract_not_found", "No such contract", 404);
@@ -1058,7 +1152,9 @@ export class ContractService {
     const same = (c: ContractCheck) =>
       pending(c) && canonical(c.check) === canonical(held.check);
     const swap = (list: ContractCheck[]) =>
-      list.map((c) => (same(c) ? confirmed : c));
+      list
+        .filter((c) => !(input.withdraw && same(c)))
+        .map((c) => (same(c) ? confirmed : c));
     const carriers = this.contractsOf(contract.workflowId).filter(
       (c) =>
         c.requiredChecks.some(same) ||
@@ -1093,7 +1189,7 @@ export class ContractService {
               ...(task.completionChecks ?? []).filter(
                 (c) => checkSlot(c) !== slot,
               ),
-              next,
+              ...(input.withdraw ? [] : [next]),
             ]);
         }
       }

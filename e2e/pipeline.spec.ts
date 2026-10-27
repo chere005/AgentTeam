@@ -260,15 +260,22 @@ test("pipeline team then project: configure the team, assign a project, verify b
     await done(f2, "fix two");
     const hist = await request("GET", `/pipelines/${second}/history`);
     await done(hist.stage2.integrationTaskId, "integrated fixes");
-    await done(fc, review("approve"));
-    await done(ff, review("approve"));
-    await done(report, "concise report");
+    // This history fixture deliberately supplies neither executable verification nor provider-run
+    // review records. It may exercise handoff/history, but cannot manufacture project approval.
+    for (const id of [fc, ff])
+      expect((await status(id, { status: "running" })).__error).toContain(
+        "no confined execution evidence",
+      );
+    expect((await status(report, { status: "running" })).__error).toBeTruthy();
+    expect(
+      (await request("GET", `/pipelines/${second}/history`)).approval.approved,
+    ).toBe(false);
 
     const log = pipeline2.getByRole("log", { name: "Workflow history" });
     await expect(log.getByTestId("handoff-note")).toHaveCount(
       // plan + 2 workers (3 attempts) + integration + 2 reviews + adjudication + 2 fixes +
-      // integration + 2 final reviews + report
-      1 + 3 + 1 + 2 + 1 + 2 + 1 + 2 + 1,
+      // integration. Missing observed execution evidence keeps final review/report unstarted.
+      1 + 3 + 1 + 2 + 1 + 2 + 1,
     );
     const notes = log.getByTestId("handoff-note");
     await expect(notes.filter({ hasText: "attempt 1: failed" })).toHaveCount(1);

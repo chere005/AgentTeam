@@ -1,3 +1,4 @@
+import { capabilityScopeHash } from "../src/launch-capability.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { world } from "./fixtures/execution-world.ts";
@@ -153,6 +154,16 @@ test("an interrupted attempt without saved output is a provider call that uses n
     resourcePaths: [folder],
   });
   for (const task of [open, scoped]) {
+    w.service.recovery.recordLaunchScope(
+      task.id,
+      capabilityScopeHash(
+        w.service.launchReadiness.prospectivePlan(
+          w.store.get<Agent>("agent", task.agentId),
+          task,
+        ),
+        w.service.launchReadiness.host(),
+      ),
+    );
     w.service.transitionTask(task.id, { status: "running" });
     w.service.recovery.observe(w.store.get<Task>("task", task.id), {
       type: "session",

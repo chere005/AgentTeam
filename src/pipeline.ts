@@ -26,7 +26,7 @@ import {
   type Workflow,
 } from "./model.ts";
 import { contains, overlaps, type Coordination } from "./resources.ts";
-import { PARALLEL_MARK } from "./parallel.ts";
+import { PARALLEL_MARK, type ParallelConflict } from "./parallel.ts";
 import {
   projectName,
   verifySampleModels,
@@ -46,11 +46,18 @@ import {
   type TeamProfile,
 } from "./team-profiles.ts";
 import type { DetectedRuntime } from "./discovery.ts";
-import { canonical, sha256 } from "./shared-common.ts";
+import {
+  canonical,
+  sha256,
+  untrusted,
+  UNTRUSTED_NOTICE,
+} from "./shared-common.ts";
 import type { TeamService } from "./service.ts";
 import type { WorktreeService } from "./worktrees.ts";
 import { addWorktreeFolder, restoreSourceWrite } from "./project-worktrees.ts";
 import { randomUUID } from "node:crypto";
+import { parseVerdict } from "./orchestration.ts";
+import type { ExecutionVerificationRecord } from "./execution-verification.ts";
 
 const exec = promisify(execFile);
 
@@ -126,6 +133,7 @@ export type StageKey =
   | "adjudicate"
   | "fix"
   | "final-review"
+  | "integration"
   | "report";
 export type StageInfo = {
   stage: StageKey;
@@ -179,7 +187,45 @@ export type PipelineRecord = {
     at?: string;
   };
 };
-export type PreflightCheck = { name: string; ok: boolean; detail: string };
+export type PreflightCheck = {
+  name: string;
+  ok: boolean;
+  detail: string;
+  /** False when an earlier prerequisite prevented this check from running. */
+  evaluated?: boolean;
+};
+export type PipelineReviewInput = {
+  hash: string;
+  verificationIds: string[];
+  snapshotHashes: string[];
+};
+type ReviewRound = {
+  number: number;
+  adjudicationId: string;
+  fixes: string[];
+  integrationId: string | null;
+  reviews: string[];
+  input: PipelineReviewInput | null;
+  previousReviews: string[][];
+};
+type PipelineReviewLoop = {
+  id: string;
+  state:
+    "waiting" | "correcting" | "reviewing" | "approved" | "needs-attention";
+  reason: string;
+  rounds: ReviewRound[];
+  /** App-created task definitions; excluded from configuration drift only while intact. */
+  owned: Record<string, string>;
+};
+type PipelineReviewBinding = {
+  id: string;
+  workflowId: string;
+  round: number;
+  agentId: string;
+  input: PipelineReviewInput;
+};
+const LOOP = "pipeline-review-loop";
+const REVIEW_INPUT = "pipeline-review-input";
 export type PreflightParts = {
   agents: Record<
     string,
@@ -1059,6 +1105,11 @@ export class PipelineService {
   private inflight = new Set<string>();
   constructor(service: TeamService) {
     this.service = service;
+    service.store.db.exec(`
+      CREATE TRIGGER IF NOT EXISTS pipeline_review_input_no_update BEFORE UPDATE ON entities
+        WHEN OLD.kind='pipeline-review-input' BEGIN SELECT RAISE(ABORT,'review inputs are immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS pipeline_review_input_no_delete BEFORE DELETE ON entities
+        WHEN OLD.kind='pipeline-review-input' BEGIN SELECT RAISE(ABORT,'review inputs are immutable'); END;`);
   }
   private get store() {
     return this.service.store;
@@ -1078,6 +1129,371 @@ export class PipelineService {
   }
   private agent(id: string) {
     return this.store.get<Agent>("agent", id);
+  }
+  private loop(rec: PipelineRecord): PipelineReviewLoop {
+    return (
+      this.store
+        .list<PipelineReviewLoop>(LOOP)
+        .find((r) => r.id === rec.id) ?? {
+        id: rec.id,
+        state: "waiting",
+        reason:
+          "The integrated result and its execution evidence must be ready before final review.",
+        rounds: [
+          {
+            number: 1,
+            adjudicationId: rec.tasks.adjudicate,
+            fixes: rec.tasks.fix,
+            integrationId: rec.stage2.integrationTaskId ?? null,
+            reviews: [rec.tasks.finalCodex, rec.tasks.finalFable],
+            input: null,
+            previousReviews: [],
+          },
+        ],
+        owned: {},
+      }
+    );
+  }
+  private saveLoop(loop: PipelineReviewLoop) {
+    this.store.put(LOOP, loop);
+    this.store.emit("pipeline.review_round", loop.id, {
+      state: loop.state,
+      round: loop.rounds.at(-1)?.number,
+      reason: loop.reason,
+    });
+  }
+  private definition(task: Task) {
+    const conflictTasks = new Set(
+      this.store
+        .list<ParallelConflict>("parallel-conflict")
+        .filter((c) => c.workflowId === task.workflowId)
+        .map((c) => c.coordinatorTaskId),
+    );
+    return sha256(
+      canonical({
+        agentId: task.agentId,
+        title: task.title,
+        instructions: task.instructions.split(`\n\n${PARALLEL_MARK}`)[0],
+        completionCriteria: task.completionCriteria,
+        completionChecks: task.completionChecks ?? [],
+        dependsOn: task.dependsOn.filter((id) => !conflictTasks.has(id)).sort(),
+        requiresValidation: !!task.requiresValidation,
+      }),
+    );
+  }
+  /** Every identity comes from successful backend execution of current, integrated sources. */
+  private verifiedInput(rec: PipelineRecord): PipelineReviewInput {
+    const round = this.loop(rec).rounds.at(-1)!;
+    const integrationId = round.integrationId ?? rec.stage2.integrationTaskId;
+    const integration = integrationId ? this.task(integrationId) : null;
+    const checks =
+      integration?.completionChecks?.filter(
+        (check) => check.type === "execution-verified",
+      ) ?? [];
+    assert(
+      integration &&
+        integration.agentId === rec.agents.integrator &&
+        checks.length,
+      "pipeline_verification_required",
+      "The integrated result has no confined execution evidence. Add its required execution checks and verify the current integrated source before final review.",
+      409,
+    );
+    const records = checks
+      .map((check) =>
+        this.service.verification.requireCurrent(integration, check),
+      )
+      .sort((a, b) => a.id.localeCompare(b.id));
+    return {
+      hash: sha256(
+        canonical(
+          records.map((record) => ({
+            id: record.id,
+            snapshotHash: record.snapshotHash,
+            referenceHash: record.referenceHash,
+            sourceFiles: record.sourceFiles,
+          })),
+        ),
+      ),
+      verificationIds: records.map((record) => record.id),
+      snapshotHashes: records.map((record) => record.snapshotHash),
+    };
+  }
+  private binding(taskId: string) {
+    return this.store
+      .list<PipelineReviewBinding>(REVIEW_INPUT)
+      .find((r) => r.id === taskId);
+  }
+  private providerResult(task: Task) {
+    return this.service.recovery.ledger
+      .list(task.id)
+      .some(
+        (effect) =>
+          effect.kind === "provider-run" &&
+          effect.state === "completed" &&
+          !effect.decision &&
+          effect.result === task.result,
+      );
+  }
+  private assertReviewer(rec: PipelineRecord, agentId: string) {
+    const reviewer = this.agent(agentId);
+    assert(
+      reviewer.roleType === "reviewer" &&
+        !hasWrite(reviewer) &&
+        reviewer.tools.every((tool) => READ_ONLY_TOOLS.includes(tool)) &&
+        this.service.permitted(rec.agents.adjudicator, agentId, "review"),
+      "pipeline_reviewer_unavailable",
+      "The designated reviewer must retain its reviewer role, read-only grants/tools and review connection",
+      409,
+    );
+  }
+  /** Bounded observed evidence delivered to the reviewer, without granting profile access. */
+  reviewContext(task: Task) {
+    const rec = this.maybeRecord(task.workflowId);
+    if (!rec || rec.stages[task.id]?.stage !== "final-review") return "";
+    const binding = this.binding(task.id);
+    const input = this.verifiedInput(rec);
+    assert(
+      binding?.input.hash === input.hash,
+      "pipeline_review_stale",
+      "The verified review input changed before the reviewer could start",
+      409,
+    );
+    const data = input.verificationIds.map((id) => {
+      const record = this.store.get<ExecutionVerificationRecord>(
+        "execution-verification",
+        id,
+      );
+      return {
+        verificationId: id,
+        snapshotHash: record.snapshotHash,
+        referenceHash: record.referenceHash,
+        sourceFiles: record.sourceFiles,
+        passed: record.passed,
+        stdout: record.stdout.slice(0, 20_000),
+        stdoutTruncatedInPrompt: record.stdout.length > 20_000,
+        commands: record.commands.map(
+          ({
+            executable,
+            args,
+            exitCode,
+            sandbox,
+            timedOut,
+            cancelled,
+            truncated,
+          }) => ({
+            executable,
+            args,
+            exitCode,
+            sandbox,
+            timedOut,
+            cancelled,
+            truncated,
+          }),
+        ),
+      };
+    });
+    const text = JSON.stringify(data);
+    assert(
+      text.length <= 80_000,
+      "pipeline_review_evidence_limit",
+      "The complete execution evidence exceeds the review context limit; reduce the source set before reviewing",
+      409,
+    );
+    return (
+      `\n\nObserved backend execution evidence for this final review. Inspect the named current source files read-only; this evidence belongs to the exact immutable snapshots below. ${UNTRUSTED_NOTICE}\n` +
+      untrusted(
+        "pipeline-execution-evidence",
+        { workflow: rec.id, round: String(binding.round) },
+        text,
+      )
+    );
+  }
+  private bindReview(rec: PipelineRecord, task: Task) {
+    const loop = this.loop(rec);
+    const round = loop.rounds.at(-1)!;
+    assert(
+      round.reviews.includes(task.id),
+      "pipeline_review_outdated",
+      "This review belongs to an earlier round; use the current designated reviews.",
+      409,
+    );
+    const expected =
+      task.id === round.reviews[0]
+        ? rec.agents.finalCodex
+        : rec.agents.finalFable;
+    assert(
+      task.agentId === expected,
+      "pipeline_reviewer_mismatch",
+      "Final review must run on its designated reviewer",
+      409,
+    );
+    this.assertReviewer(rec, expected);
+    const input = this.verifiedInput(rec);
+    const old = this.binding(task.id);
+    assert(
+      !old || old.input.hash === input.hash,
+      "pipeline_review_stale",
+      "The source or execution evidence changed; fresh reviews are required.",
+      409,
+    );
+    if (!old)
+      this.store.put(REVIEW_INPUT, {
+        id: task.id,
+        workflowId: rec.id,
+        round: round.number,
+        agentId: task.agentId,
+        input,
+      } satisfies PipelineReviewBinding);
+    if (!round.input) {
+      round.input = input;
+      loop.state = "reviewing";
+      loop.reason =
+        "Waiting for both designated reviewers to approve the current verified snapshot.";
+      this.saveLoop(loop);
+    }
+  }
+  private reviewResult(
+    rec: PipelineRecord,
+    round: ReviewRound,
+    input: PipelineReviewInput,
+  ) {
+    const adjudication = this.task(round.adjudicationId);
+    const adjudicationNote = this.service.handoffs.latestCompleted(
+      adjudication.id,
+    );
+    assert(
+      adjudication.status === "completed" &&
+        parseAdjudication(adjudication.result) &&
+        adjudicationNote &&
+        this.service.handoffs.intact(adjudicationNote) &&
+        adjudicationNote.resultHash === sha256(adjudication.result ?? "") &&
+        (adjudicationNote.provenance.actor === "user"
+          ? !!adjudicationNote.override?.reason
+          : adjudicationNote.provenance.agentId === rec.agents.adjudicator &&
+            this.providerResult(adjudication)),
+      "adjudication_required",
+      "The current correction round's adjudication evidence is missing or stale",
+      409,
+    );
+    assert(
+      round.reviews.length === 2 &&
+        round.integrationId &&
+        this.task(round.integrationId).status === "completed",
+      "pipeline_review_pending",
+      "The current integration and both designated reviews must finish before approval",
+      409,
+    );
+    const verdicts: string[] = [];
+    for (const [index, id] of round.reviews.entries()) {
+      const task = this.task(id);
+      const expected =
+        index === 0 ? rec.agents.finalCodex : rec.agents.finalFable;
+      assert(
+        task.agentId === expected,
+        "pipeline_reviewer_mismatch",
+        "A final review was assigned to a different agent",
+        409,
+      );
+      this.assertReviewer(rec, expected);
+      assert(
+        task.status === "completed",
+        ["queued", "running"].includes(task.status)
+          ? "pipeline_review_pending"
+          : "pipeline_review_failed",
+        `Final review is ${task.status}`,
+        409,
+      );
+      this.service.limits.assertCompletion(task, task.result);
+      assert(
+        this.providerResult(task),
+        "pipeline_review_provenance",
+        "The required reviewer has no completed provider-run result for this review",
+        409,
+      );
+      const binding = this.binding(id);
+      const note = this.service.handoffs.latestCompleted(id);
+      assert(
+        binding?.agentId === expected &&
+          binding.round === round.number &&
+          binding.input.hash === input.hash &&
+          note &&
+          note.provenance.actor === "agent" &&
+          note.provenance.agentId === expected &&
+          note.resultHash === sha256(task.result ?? "") &&
+          this.service.handoffs.intact(note),
+        "pipeline_review_stale",
+        "The reviewer identity, execution snapshot or saved review evidence is missing or stale",
+        409,
+      );
+      const verdict = parseVerdict(task.result);
+      assert(
+        verdict,
+        "pipeline_review_inconclusive",
+        "The final review has no unambiguous supported verdict",
+        409,
+      );
+      verdicts.push(verdict);
+    }
+    return verdicts;
+  }
+  /** Read-only approval facts. A completed failure report is never goal approval. */
+  reviewStatus(workflowId: string) {
+    const rec = this.record(workflowId);
+    const loop = this.loop(rec);
+    const round = loop.rounds.at(-1)!;
+    let approved = false;
+    let state = loop.state;
+    let reason = loop.reason;
+    try {
+      const input = this.verifiedInput(rec);
+      approved = this.reviewResult(rec, round, input).every(
+        (v) => v === "approve",
+      );
+      if (approved)
+        reason =
+          "Both designated reviewers approved the current verified source snapshot.";
+    } catch (e) {
+      reason = e instanceof Error ? e.message : String(e);
+      if (
+        round.integrationId &&
+        this.task(round.integrationId).status === "completed" &&
+        (e as { code?: string }).code !== "pipeline_review_pending"
+      )
+        state = "needs-attention";
+    }
+    return {
+      approved,
+      state: approved ? ("approved" as const) : state,
+      reason,
+      round: round.number,
+      maxCorrectionRounds:
+        this.service.contracts.project(rec.id)?.maxCorrectionRounds ?? 1,
+      rounds: loop.rounds,
+      evidence: round.input,
+    };
+  }
+  private holdReport(rec: PipelineRecord, reason: string) {
+    const task = this.task(rec.tasks.report);
+    if (task.status === "queued")
+      this.service.transitionTask(task.id, {
+        status: "blocked",
+        result: reason,
+      });
+  }
+  assertCompletion(task: Task) {
+    const blocker = this.completionBlocker(task);
+    assert(
+      !blocker,
+      "pipeline_approval_required",
+      blocker ?? "Current approval is required",
+      409,
+    );
+  }
+  completionBlocker(task: Task) {
+    const rec = this.maybeRecord(task.workflowId);
+    if (!rec || rec.tasks.report !== task.id) return null;
+    const approval = this.reviewStatus(rec.id);
+    return approval.approved ? null : approval.reason;
   }
 
   /** Agents of the pipeline by role id (planner, reviewers, adjudicator, reporter, workers...). */
@@ -1128,6 +1544,7 @@ export class PipelineService {
    */
   private fingerprintParts(workflowId: string) {
     const rec = this.record(workflowId);
+    const owned = new Set(Object.keys(this.loop(rec).owned));
     const writers = new Set([
       rec.agents.integrator,
       ...rec.agents.implement,
@@ -1149,6 +1566,8 @@ export class PipelineService {
         environment: a.environment,
         model: a.model,
         effort: a.effort,
+        roleType: a.roleType,
+        role: a.role,
         workspaces: writers.has(id)
           ? {
               writes: hasWrite(a),
@@ -1172,6 +1591,7 @@ export class PipelineService {
       ),
     );
     const tasks = Object.keys(rec.stages)
+      .filter((id) => !owned.has(id))
       .sort()
       .map((id) => {
         const t = this.task(id);
@@ -1183,7 +1603,9 @@ export class PipelineService {
           completionCriteria: t.completionCriteria,
           requiresValidation: !!t.requiresValidation,
           checks: t.completionChecks ?? [],
-          dependsOn: t.dependsOn.filter((d) => !integrations.has(d)).sort(),
+          dependsOn: t.dependsOn
+            .filter((d) => !integrations.has(d) && !owned.has(d))
+            .sort(),
         };
       });
     return { agents, tasks, config: rec.config, resource: rec.resourceId };
@@ -1204,7 +1626,7 @@ export class PipelineService {
             model: h([a.environment, a.model, a.effort]),
             folders: h(a.workspaces),
             tools: h([a.tools, a.skills, a.maxConcurrentInvocations]),
-            instructions: h(a.instructions),
+            instructions: h([a.roleType, a.role, a.instructions]),
           },
         ]),
       ),
@@ -1282,6 +1704,31 @@ export class PipelineService {
   /** Structural invariants that must hold at resume and at every task start. */
   structureIssues(rec: PipelineRecord) {
     const issues: string[] = [];
+    for (const [id, expected] of Object.entries(this.loop(rec).owned)) {
+      try {
+        if (this.definition(this.task(id)) !== expected)
+          issues.push(`Application-created review round task ${id} was edited`);
+      } catch {
+        issues.push(
+          `Application-created review round task ${id} no longer exists`,
+        );
+      }
+    }
+    for (const round of this.loop(rec).rounds) {
+      if (!round.integrationId) continue;
+      const integration = this.task(round.integrationId);
+      for (const conflict of this.store.list<ParallelConflict>(
+        "parallel-conflict",
+      ))
+        if (
+          conflict.workflowId === rec.id &&
+          conflict.taskIds.some((id) => round.fixes.includes(id)) &&
+          !integration.dependsOn.includes(conflict.coordinatorTaskId)
+        )
+          issues.push(
+            `Integration lost its required conflict resolution ${conflict.coordinatorTaskId}`,
+          );
+    }
     const t = rec.tasks;
     if (
       rec.config.implementationWorkers > MAX_WORKERS ||
@@ -1312,6 +1759,16 @@ export class PipelineService {
         issues.push(`Agent ${id} no longer exists`);
         continue;
       }
+      if (
+        [
+          rec.agents.codexReview,
+          rec.agents.fableReview,
+          rec.agents.finalCodex,
+          rec.agents.finalFable,
+        ].includes(id) &&
+        a.roleType !== "reviewer"
+      )
+        issues.push(`${a.name} must keep its designated reviewer role`);
       if (!writers.has(id)) {
         if (hasWrite(a))
           issues.push(`${a.name} must be read-only but has a writable folder`);
@@ -1417,7 +1874,12 @@ export class PipelineService {
   isAdjudication(taskId: string) {
     try {
       const t = this.task(taskId);
-      return this.maybeRecord(t.workflowId)?.tasks.adjudicate === taskId;
+      const rec = this.maybeRecord(t.workflowId);
+      return (
+        !!rec &&
+        (rec.tasks.adjudicate === taskId ||
+          this.loop(rec).rounds.some((r) => r.adjudicationId === taskId))
+      );
     } catch {
       return false;
     }
@@ -1432,17 +1894,55 @@ export class PipelineService {
     const rec = this.maybeRecord(wf.id);
     const info = rec?.stages[task.id];
     if (!rec || !info) return;
+    assert(
+      this.task(rec.tasks.report).status !== "cancelled",
+      "pipeline_cancelled",
+      "The pipeline's delivery was cancelled; no further stages will start",
+      409,
+    );
     this.assertReady(wf);
+    if (info.stage === "report") {
+      const approval = this.reviewStatus(rec.id);
+      assert(
+        approval.approved,
+        "pipeline_approval_required",
+        approval.reason,
+        409,
+      );
+    }
     const plan = this.service.parallel.plan(wf.id);
     if (info.stage === "implement" || info.stage === "fix")
       assert(
-        plan?.assignments.some((a) => a.taskId === task.id) &&
+        plan?.assignments.some(
+          (a) =>
+            a.taskId === task.id &&
+            canonical(a.paths) === canonical(task.resourcePaths ?? []),
+        ) &&
           (info.stage === "implement" || rec.stage2.state === "assigned"),
         "assignment_required",
         "This worker has no guided parallel assignment yet (disjoint path or worktree); prepare the pipeline first",
       );
-    if (["fix", "final-review", "report"].includes(info.stage)) {
-      const adj = this.task(rec.tasks.adjudicate);
+    if (info.stage === "fix")
+      assert(
+        (this.service.contracts.project(rec.id)?.maxCorrectionRounds ?? 1) >=
+          (this.loop(rec).rounds.find((r) => r.fixes.includes(task.id))
+            ?.number ?? 1),
+        "pipeline_correction_limit",
+        "The configured correction-round limit does not allow this repair",
+        409,
+      );
+    if (["fix", "final-review", "report", "integration"].includes(info.stage)) {
+      const currentLoop = this.loop(rec);
+      const round =
+        task.id === rec.tasks.report
+          ? currentLoop.rounds.at(-1)
+          : currentLoop.rounds.find(
+              (r) =>
+                r.fixes.includes(task.id) ||
+                r.reviews.includes(task.id) ||
+                r.integrationId === task.id,
+            );
+      const adj = this.task(round?.adjudicationId ?? rec.tasks.adjudicate);
       const note = this.service.handoffs.latestCompleted(adj.id);
       // The decision must come from the adjudicator's own run, or from an explicit, attributed
       // human override recorded in the immutable note (POST /tasks/:id/status humanOverride).
@@ -1450,7 +1950,8 @@ export class PipelineService {
         !!note &&
         (note.provenance.actor === "user"
           ? !!note.override?.reason
-          : note.provenance.agentId === rec.agents.adjudicator);
+          : note.provenance.agentId === rec.agents.adjudicator &&
+            this.providerResult(adj));
       assert(
         adj.status === "completed" &&
           !!parseAdjudication(adj.result) &&
@@ -1462,18 +1963,26 @@ export class PipelineService {
         "The separate adjudication must complete with a valid decision (and handoff note) before this stage can run",
       );
     }
+    if (info.stage === "final-review") this.bindReview(rec, task);
   }
 
   // ---- preflight ---------------------------------------------------------------------------
   /**
-   * The shared readiness evaluator over the stages (src/launch-readiness.ts). The fix workers are
-   * assigned only after the first integration, so their stage is judged when it is assigned.
+   * Check every stage and app-created integration task. Fix workers are assessed against their
+   * existing project grant before their narrower assignment is created, and again at dispatch.
    */
   private readinessIssues(rec: PipelineRecord) {
     const contract = this.service.contracts.project(rec.workflowId);
     const issues: string[] = [];
-    for (const [taskId, info] of Object.entries(rec.stages)) {
-      if (info.stage === "fix") continue;
+    const taskIds = new Set(
+      [
+        ...Object.keys(rec.stages),
+        rec.integration1TaskId,
+        rec.stage2.integrationTaskId,
+        this.service.parallel.plan(rec.workflowId)?.integrationTaskId,
+      ].filter((id): id is string => !!id),
+    );
+    for (const taskId of taskIds) {
       const task = this.task(taskId);
       const decision = this.service.launchReadiness.evaluateProspective(
         this.agent(task.agentId),
@@ -1602,14 +2111,17 @@ export class PipelineService {
       }
     });
   }
-  private addDependency(taskIds: string[], dependency: string) {
+  private addDependency(taskIds: string[], ...dependencies: string[]) {
     this.store.transaction(() => {
       for (const id of taskIds) {
         const t = this.task(id);
-        if (t.status === "queued" && !t.dependsOn.includes(dependency))
+        if (
+          ["queued", "blocked"].includes(t.status) &&
+          dependencies.some((dependency) => !t.dependsOn.includes(dependency))
+        )
           this.store.put("task", {
             ...t,
-            dependsOn: [...t.dependsOn, dependency],
+            dependsOn: [...new Set([...t.dependsOn, ...dependencies])],
           });
       }
     });
@@ -1768,11 +2280,20 @@ export class PipelineService {
       "stage-2 workers hold disjoint declared paths and can lease concurrently",
     );
     // Every stage must be able to do its work with the tools and folders it really gets.
-    add(
-      "Execution readiness (the tools and folders each stage needs)",
-      checks.every((c) => c.ok) ? this.readinessIssues(rec) : [],
-      "every stage can do its work",
-    );
+    if (checks.every((c) => c.ok))
+      add(
+        "Execution readiness (the tools and folders each stage needs)",
+        this.readinessIssues(this.record(workflowId)),
+        "every stage can do its work",
+      );
+    else
+      checks.push({
+        name: "Execution readiness (the tools and folders each stage needs)",
+        ok: false,
+        evaluated: false,
+        detail:
+          "Not evaluated: earlier project preparation checks did not pass",
+      });
     const issues = checks
       .filter((c) => !c.ok)
       .map((c) => `${c.name}: ${c.detail}`);
@@ -1800,6 +2321,313 @@ export class PipelineService {
   }
 
   // ---- stage 5 assignment (after the first integration completed) --------------------------
+  private createFreshReviews(
+    rec: PipelineRecord,
+    loop: PipelineReviewLoop,
+    round: ReviewRound,
+  ) {
+    const maximum =
+      this.service.contracts.project(rec.id)?.maxCorrectionRounds ?? 1;
+    assert(
+      !round.reviews.length ||
+        round.previousReviews.length < Math.max(1, maximum),
+      "pipeline_review_refresh_limit",
+      "The source changed too often during review; review refresh limit reached",
+      409,
+    );
+    const generation = round.previousReviews.length + 1;
+    if (round.reviews.length) round.previousReviews.push(round.reviews);
+    round.input = null;
+    round.reviews = [rec.agents.finalCodex, rec.agents.finalFable].map(
+      (agentId, index) => {
+        const task = this.service.task({
+          workflowId: rec.id,
+          agentId,
+          title: `Round ${round.number}: ${index === 0 ? "Codex" : "Fable"} final review (${generation})`,
+          resourcePaths: [rec.config.workspace],
+          dependsOn: [round.integrationId!, round.adjudicationId],
+          completionChecks: [
+            {
+              type: "output-fields",
+              fields: ["verdict", "findings", "evidence"],
+            },
+          ],
+          completionCriteria:
+            "Return one unambiguous verdict with findings and inspection evidence for the current verified source",
+          instructions: `Review the integrated source in your project folder read-only. Approve only if all requested corrections are complete. Return one JSON object with verdict (approve, request-changes or inconclusive), findings and evidence. ${DATA_NOTE}`,
+        });
+        rec.stages[task.id] = {
+          stage: "final-review",
+          label: task.title,
+          index,
+          readOnly: true,
+        };
+        loop.owned[task.id] = this.definition(task);
+        return task.id;
+      },
+    );
+    // Preserve old attempts as superseded evidence; a never-started stale review must not remain
+    // executable. Flatten prior generations onto the current designated replacement.
+    for (const previous of round.previousReviews)
+      previous.forEach((id, index) => {
+        const task = this.task(id);
+        this.store.put("task", { ...task, supersededBy: round.reviews[index] });
+        this.store.emit("pipeline.review_superseded", id, {
+          supersededBy: round.reviews[index],
+        });
+      });
+    this.store.put("pipeline", rec);
+    this.addDependency([rec.tasks.report], ...round.reviews);
+  }
+  private async createCorrection(
+    rec: PipelineRecord,
+    loop: PipelineReviewLoop,
+    previous: ReviewRound,
+  ) {
+    const number = previous.number + 1;
+    let round = loop.rounds.find((r) => r.number === number);
+    if (!round)
+      this.store.transaction(() => {
+        const adjudication = this.service.task({
+          workflowId: rec.id,
+          agentId: rec.agents.adjudicator,
+          title: `Round ${number}: adjudicate final review findings`,
+          dependsOn: previous.reviews,
+          resourcePaths: [rec.config.workspace],
+          completionChecks: [
+            { type: "output-fields", fields: ADJUDICATION_FIELDS },
+          ],
+          completionCriteria:
+            "A structured adjudication identifying accepted findings and their correction slices",
+          instructions: `Compare the current final reviews against the actual source, read-only. Assign accepted findings to correction slices 1..${rec.agents.fix.length}; return one JSON object with decision, rationale, considered, accepted and rejected. ${DATA_NOTE}`,
+        });
+        rec.stages[adjudication.id] = {
+          stage: "adjudicate",
+          label: adjudication.title,
+          index: 0,
+          readOnly: true,
+        };
+        loop.owned[adjudication.id] = this.definition(adjudication);
+        const fixes = rec.agents.fix.map((agentId, index) => {
+          const task = this.service.task({
+            workflowId: rec.id,
+            agentId,
+            title: `Round ${number}: correction worker ${index + 1}`,
+            dependsOn: [adjudication.id],
+            completionCriteria:
+              "Accepted findings corrected within the assigned scope, with current source and run evidence",
+            instructions: `Apply only the current adjudication's accepted findings for slice ${index + 1}. Stay inside your guided assignment. Report changedFiles and actual tests. ${DATA_NOTE}`,
+          });
+          rec.stages[task.id] = {
+            stage: "fix",
+            label: task.title,
+            index,
+            readOnly: false,
+          };
+          loop.owned[task.id] = this.definition(task);
+          return task.id;
+        });
+        round = {
+          number,
+          adjudicationId: adjudication.id,
+          fixes,
+          integrationId: null,
+          reviews: [],
+          input: null,
+          previousReviews: [],
+        };
+        loop.rounds.push(round);
+        loop.state = "correcting";
+        loop.reason = `Final review requested changes; correction round ${number} is being prepared.`;
+        this.store.put("pipeline", rec);
+        this.saveLoop(loop);
+      });
+    const current = round!;
+    if (current.integrationId) return;
+    const key = `pipeline-correction:${rec.id}:${number}:assignment`;
+    const started = this.service.recovery.ledger.begin({
+      taskId: rec.tasks.report,
+      key,
+      kind: "pipeline-assignment",
+      description: `Prepare correction round ${number} paths/worktrees`,
+      mutating: true,
+    });
+    try {
+      if (started.action === "replay") {
+        const saved = JSON.parse(started.effect.result ?? "null") as {
+          integrationId?: string;
+        } | null;
+        assert(
+          saved?.integrationId,
+          "pipeline_assignment_uncertain",
+          "The saved correction assignment has no integration identity; review its effects before continuing",
+          409,
+        );
+        current.integrationId = saved.integrationId;
+      } else {
+        this.ensureWorkspace(rec, rec.agents.fix);
+        await this.service.parallel.assign(
+          rec.id,
+          this.assignmentInput(
+            rec,
+            current.fixes,
+            `Integrate correction round ${number}`,
+          ),
+          this.assignDeps(),
+        );
+        this.declareWorkspace(this.record(rec.id));
+        current.integrationId = this.service.parallel.plan(
+          rec.id,
+        )!.integrationTaskId!;
+        const integration = this.task(current.integrationId);
+        const specs = (previous.input?.verificationIds ?? [])
+          .map((id) =>
+            this.store.get<ExecutionVerificationRecord>(
+              "execution-verification",
+              id,
+            ),
+          )
+          .filter((record) => record.sourceRoot === rec.config.workspace)
+          .map((record) => ({
+            type: "execution-verified" as const,
+            ...record.spec,
+          }));
+        if (specs.length) this.service.limits.setChecks(integration.id, specs);
+        this.service.recovery.ledger.complete(
+          started.effect.id,
+          JSON.stringify({ integrationId: integration.id }),
+        );
+      }
+      this.store.transaction(() => {
+        const integration = this.task(current.integrationId!);
+        rec.stages[integration.id] = {
+          stage: "integration",
+          label: integration.title,
+          index: 0,
+          readOnly: false,
+        };
+        loop.owned[integration.id] = this.definition(integration);
+        this.createFreshReviews(rec, loop, current);
+        this.saveLoop(loop);
+      });
+    } catch (e) {
+      if (started.action === "run")
+        this.service.recovery.failEffect(started.effect.id, e);
+      throw e;
+    }
+  }
+  /** Advance only from persisted identities; provider tasks and uncertain writes are never replayed. */
+  async advanceReviewRounds(workflowId: string) {
+    if (this.inflight.has(workflowId)) return;
+    const rec = this.record(workflowId);
+    const workflow = this.store.get<
+      Workflow & { lifecycle?: { state: string } }
+    >("workflow", workflowId);
+    if (workflow.paused || workflow.lifecycle?.state === "archived") return;
+    this.inflight.add(workflowId);
+    const loop = this.loop(rec);
+    try {
+      assert(
+        this.task(rec.tasks.report).status !== "cancelled",
+        "pipeline_cancelled",
+        "The pipeline's delivery was cancelled; no new correction round will start",
+        409,
+      );
+      this.assertReady(workflow);
+      const round = loop.rounds.at(-1)!;
+      if (round.number === 1)
+        round.integrationId = rec.stage2.integrationTaskId ?? null;
+      const max =
+        this.service.contracts.project(workflowId)?.maxCorrectionRounds ?? 1;
+      assert(
+        round.number <= max,
+        "pipeline_correction_limit",
+        `Correction round limit reached (${max})`,
+        409,
+      );
+      if (!round.integrationId) {
+        if (round.number > 1)
+          await this.createCorrection(rec, loop, loop.rounds.at(-2)!);
+        return;
+      }
+      const integration = this.task(round.integrationId);
+      assert(
+        !["failed", "cancelled", "interrupted", "blocked"].includes(
+          integration.status,
+        ),
+        "pipeline_integration_failed",
+        `Integration is ${integration.status}; its verified result is unavailable`,
+        409,
+      );
+      if (integration.status !== "completed") return;
+      const input = this.verifiedInput(rec);
+      const reviews = round.reviews.map((id) => this.task(id));
+      assert(
+        !reviews.some((task) =>
+          ["failed", "cancelled", "interrupted", "blocked"].includes(
+            task.status,
+          ),
+        ),
+        "pipeline_review_failed",
+        "A required final review stopped without approval",
+        409,
+      );
+      if (reviews.some((task) => task.status === "running")) return;
+      const stale = round.input && round.input.hash !== input.hash;
+      if (stale) {
+        this.store.transaction(() => {
+          this.createFreshReviews(rec, loop, round);
+          loop.state = "reviewing";
+          loop.reason =
+            "Source or execution evidence changed; both designated reviews must run again.";
+          this.saveLoop(loop);
+        });
+        this.holdReport(rec, loop.reason);
+        return;
+      }
+      if (reviews.some((task) => task.status !== "completed")) return;
+      const verdicts = this.reviewResult(rec, round, input);
+      if (verdicts.every((verdict) => verdict === "approve")) {
+        if (loop.state !== "approved") {
+          loop.state = "approved";
+          loop.reason =
+            "Both designated reviewers approved the current verified source snapshot.";
+          this.saveLoop(loop);
+        }
+        if (this.task(rec.tasks.report).status === "blocked")
+          this.service.transitionTask(rec.tasks.report, { status: "queued" });
+        return;
+      }
+      assert(
+        !verdicts.includes("inconclusive"),
+        "pipeline_review_inconclusive",
+        "A required final review is inconclusive; resolve its blocker before approval",
+        409,
+      );
+      assert(
+        round.number < max,
+        "pipeline_correction_limit",
+        `Final review still requests changes; correction round limit reached (${max})`,
+        409,
+      );
+      this.holdReport(
+        rec,
+        "Final review requested changes; the requested goal is not approved.",
+      );
+      await this.createCorrection(rec, loop, round);
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      if (loop.state !== "needs-attention" || loop.reason !== reason) {
+        loop.state = "needs-attention";
+        loop.reason = reason;
+        this.saveLoop(loop);
+      }
+      this.holdReport(rec, reason);
+    } finally {
+      this.inflight.delete(workflowId);
+    }
+  }
+
   /** Guided assignment for the fix workers; they branch from the integrated checkout. */
   async prepareStage2(workflowId: string) {
     const rec = this.record(workflowId);
@@ -1827,6 +2655,11 @@ export class PipelineService {
         "integration_missing",
         "No second integration step was created",
       );
+      const firstChecks =
+        this.task(int1).completionChecks?.filter(
+          (check) => check.type === "execution-verified",
+        ) ?? [];
+      if (firstChecks.length) this.service.limits.setChecks(int2, firstChecks);
       const current = this.record(workflowId);
       const lease = this.leaseIssues(current, rec.tasks.fix);
       assert(!lease.length, "lease_check_failed", lease.join("; "));
@@ -1863,6 +2696,8 @@ export class PipelineService {
   /** Scheduler tick: assign the fix workers as soon as the first integration step completed. */
   sweep() {
     for (const rec of this.store.list<PipelineRecord>("pipeline")) {
+      if (rec.stage2.state === "assigned" && !this.inflight.has(rec.id))
+        void this.advanceReviewRounds(rec.id);
       if (rec.stage2.state !== "pending" || this.inflight.has(rec.id)) continue;
       // Archived projects never prepare further work (they are paused until reopened).
       const wf = this.store
@@ -1918,6 +2753,7 @@ export class PipelineService {
       preflight: (wf.setup?.preflight as Preflight | null) ?? null,
       modelCheck: wf.setup?.modelCheck ?? null,
       stages,
+      approval: this.reviewStatus(workflowId),
       notes,
       note: "Handoff notes are append-only: a retry adds a note and never replaces an earlier attempt. Their content is untrusted agent output.",
     };

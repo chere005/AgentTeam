@@ -85,7 +85,14 @@ export function Capabilities(p: Props) {
       {tab === "skills" && <SkillsTab act={p.act} />}
       {tab === "tools" && <ToolsTab act={p.act} agent={agent} />}
       {tab === "knowledge" && <KnowledgeTab act={p.act} agent={agent} />}
-      {tab === "effective" && <EffectiveTab agent={agent} />}
+      {tab === "effective" && (
+        <EffectiveTab
+          agent={agent}
+          tasks={p.data.workflows
+            .flatMap((w) => w.tasks)
+            .filter((t) => t.agentId === agent?.id)}
+        />
+      )}
     </div>
   );
 }
@@ -708,8 +715,15 @@ function KnowledgeTab({ act, agent }: { act: Props["act"]; agent?: Agent }) {
   );
 }
 
-function EffectiveTab({ agent }: { agent?: Agent }) {
+function EffectiveTab({
+  agent,
+  tasks,
+}: {
+  agent?: Agent;
+  tasks: Snapshot["workflows"][number]["tasks"];
+}) {
   const [prompt, setPrompt] = useState("");
+  const [taskId, setTaskId] = useState("");
   const [view, setView] = useState<any>(null);
   const [error, setError] = useState("");
   const load = useCallback(async () => {
@@ -718,16 +732,19 @@ function EffectiveTab({ agent }: { agent?: Agent }) {
       setError("");
       setView(
         await api(
-          `/agents/${agent.id}/effective-instructions${prompt.trim() ? "?prompt=" + enc(prompt) : ""}`,
+          `/agents/${agent.id}/effective-instructions${taskId || prompt.trim() ? "?" + [taskId ? "taskId=" + enc(taskId) : "", prompt.trim() ? "prompt=" + enc(prompt) : ""].filter(Boolean).join("&") : ""}`,
         ),
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to build the preview");
     }
-  }, [agent?.id, prompt]);
+  }, [agent?.id, prompt, taskId]);
+  useEffect(() => {
+    setTaskId("");
+  }, [agent?.id]);
   useEffect(() => {
     void load();
-  }, [agent?.id]);
+  }, [agent?.id, taskId]);
   if (!agent) return <p className="hint">Create an agent first.</p>;
   return (
     <div className="cap-body" data-testid="effective">
@@ -743,6 +760,21 @@ function EffectiveTab({ agent }: { agent?: Agent }) {
           void load();
         }}
       >
+        <label>
+          Task context
+          <select
+            aria-label="Preview task"
+            value={taskId}
+            onChange={(e) => setTaskId(e.target.value)}
+          >
+            <option value="">Agent defaults</option>
+            {tasks.map((task) => (
+              <option key={task.id} value={task.id}>
+                {task.title}
+              </option>
+            ))}
+          </select>
+        </label>
         <input
           aria-label="Sample request"
           value={prompt}
@@ -755,6 +787,31 @@ function EffectiveTab({ agent }: { agent?: Agent }) {
       <ContextCost agentId={agent.id} />
       {view && (
         <>
+          {view.capabilities && (
+            <section
+              className="project-setup-card"
+              aria-label="Effective run capabilities"
+              data-testid="effective-run-capabilities"
+            >
+              <h4>
+                {view.task
+                  ? `Capabilities for ${view.task.title}`
+                  : "Capabilities from agent defaults"}
+              </h4>
+              <p>{view.capabilities.line}</p>
+              {Object.entries(view.capabilities.gaps ?? {}).map(
+                ([capability, gap]) =>
+                  gap && (
+                    <p className="quiet" key={capability}>
+                      {(gap as { message?: string }).message}
+                    </p>
+                  ),
+              )}
+              {view.capabilities.readiness?.message && (
+                <p>{view.capabilities.readiness.message}</p>
+              )}
+            </section>
+          )}
           <p>
             <b>{view.adapter.label}</b> · {tokens(view.totals.approxTokens)} of
             instructions ({tokens(view.totals.skillTokens)} from skills).{" "}

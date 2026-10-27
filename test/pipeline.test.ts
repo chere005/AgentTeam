@@ -4,6 +4,11 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readFileSync } from "node:fs";
+import { sha256 } from "../src/shared-common.ts";
+import { executionVerifiedCheckSchema } from "../src/limits-schema.ts";
+import type { ExecutionVerificationRecord } from "../src/execution-verification.ts";
+import { AppError } from "../src/model.ts";
 import { Store } from "../src/store.ts";
 import { SkillCatalog } from "../src/skills.ts";
 import { TeamService } from "../src/service.ts";
@@ -15,7 +20,9 @@ import {
   MAX_WORKERS,
   createPipelineSample,
   parseAdjudication,
+  PipelineService,
   type PipelineRecord,
+  type PipelineReviewInput,
 } from "../src/pipeline.ts";
 import type { Agent, Task } from "../src/model.ts";
 import { createDirectoryAlias } from "./fixtures/filesystem-links.ts";
@@ -28,7 +35,11 @@ const code = (p: Promise<unknown> | (() => unknown)) =>
     (e) => (e as { code?: string }).code,
   );
 
-async function world(t: any, over: Record<string, unknown> = {}) {
+async function world(
+  t: any,
+  over: Record<string, unknown> = {},
+  fixtureExecutionEvidence = true,
+) {
   const base = await realpath(await mkdtemp(join(tmpdir(), "agentteam-pipe-")));
   const store = new Store(":memory:");
   const service = new TeamService(store, new SkillCatalog([]));
@@ -62,6 +73,17 @@ async function world(t: any, over: Record<string, unknown> = {}) {
   });
   const rec = () => store.get<PipelineRecord>("pipeline", wf.id);
   const task = (id: string) => store.get<Task>("task", id);
+  // These tests drive orchestration states, not programs or the verifier. Supply an explicit
+  // controlled B identity; real snapshot/confinement/output acceptance is tested independently.
+  if (fixtureExecutionEvidence)
+    (
+      service.pipelines as unknown as {
+        verifiedInput: () => PipelineReviewInput;
+      }
+    ).verifiedInput = () => {
+      const digest = sha256(readFileSync(join(root, "a", "x.txt")).toString());
+      return { hash: digest, snapshotHashes: [digest], verificationIds: [] };
+    };
   return { base, root, git, store, service, wf, rec, task, wt };
 }
 const JSON_REVIEW = (v = "approve") =>
@@ -75,6 +97,10 @@ const JSON_ADJ = JSON.stringify({
 });
 /** Completes like the scheduler: completion checks are evaluated for the result first (hard gate). */
 async function complete(w: any, id: string, result: string) {
+  // A controlled provider turn crosses the same durable boundaries as Scheduler.execute.
+  // No CLI/provider is called; omitting these boundaries must fail approval provenance tests.
+  const run = w.service.recovery.startRun(w.task(id), false);
+  w.service.recovery.finishRun(w.task(id), run.effectId, result);
   await w.service.limits.evaluate(w.task(id), result, w.root);
   w.service.transitionTask(id, { status: "completed", result });
 }
@@ -90,6 +116,340 @@ async function toIntegrated(w: any) {
   for (const id of r.tasks.implement) await finish(w, id, "worker result");
   await finish(w, plan.integrationTaskId, "integrated");
 }
+async function toFinalReview(w: Awaited<ReturnType<typeof world>>) {
+  const checked = await w.service.pipelines.prepare(w.wf.id, installed());
+  assert.equal(checked.verified, true, checked.issues.join("; "));
+  w.service.pauseWorkflow(w.wf.id, false);
+  const r = w.rec();
+  await toIntegrated(w);
+  await finish(w, r.tasks.codexReview, JSON_REVIEW("request-changes"));
+  await finish(w, r.tasks.fableReview, JSON_REVIEW());
+  await finish(w, r.tasks.adjudicate, JSON_ADJ);
+  await w.service.pipelines.prepareStage2(w.wf.id);
+  for (const id of r.tasks.fix) await finish(w, id, "fixed");
+  await finish(w, w.rec().stage2.integrationTaskId!, "integrated");
+}
+
+test("final changes trigger bounded correction, fresh designated reviews and current approval", async (t) => {
+  const w = await world(t);
+  w.service.contracts.setRequirements(w.wf.id, { maxCorrectionRounds: 2 });
+  await toFinalReview(w);
+  const r = w.rec();
+  await finish(w, r.tasks.finalCodex, JSON_REVIEW("request-changes"));
+  await finish(w, r.tasks.finalFable, JSON_REVIEW());
+  await w.service.pipelines.advanceReviewRounds(w.wf.id);
+  const second = w.service.pipelines.reviewStatus(w.wf.id).rounds[1];
+  assert.equal(second.number, 2);
+  assert.equal(second.fixes.length, 2);
+  assert.equal(w.task(r.tasks.report).status, "blocked");
+  assert.equal(
+    w.service.pipelines.verification(w.wf.id).state,
+    "verified",
+    "application-owned correction tasks do not masquerade as user edits",
+  );
+  await finish(w, second.adjudicationId, JSON_ADJ);
+  for (const id of second.fixes) await finish(w, id, "corrected");
+  await writeFile(join(w.root, "a", "x.txt"), "corrected source");
+  await finish(w, second.integrationId!, "integrated correction");
+  for (const id of second.reviews) await finish(w, id, JSON_REVIEW());
+  await w.service.pipelines.advanceReviewRounds(w.wf.id);
+  assert.equal(w.service.pipelines.reviewStatus(w.wf.id).approved, true);
+  assert.equal(w.task(r.tasks.report).status, "queued");
+  await finish(
+    w,
+    r.tasks.report,
+    "The current verified source and both reviews passed.",
+  );
+  assert.equal(w.service.workflowStatus(w.wf.id).status, "completed");
+});
+
+test("source edits supersede stale approvals and require both fresh reviews", async (t) => {
+  const w = await world(t);
+  await toFinalReview(w);
+  const r = w.rec();
+  await finish(w, r.tasks.finalCodex, JSON_REVIEW());
+  await writeFile(join(w.root, "a", "x.txt"), "changed after one approval");
+  await w.service.pipelines.advanceReviewRounds(w.wf.id);
+  let state = w.service.pipelines.reviewStatus(w.wf.id);
+  assert.equal(state.approved, false);
+  const fresh = state.rounds[0].reviews;
+  assert.equal(fresh.includes(r.tasks.finalCodex), false);
+  assert.equal(
+    await code(() =>
+      w.service.transitionTask(r.tasks.finalFable, { status: "running" }),
+    ),
+    "pipeline_review_outdated",
+  );
+  for (const id of fresh) await finish(w, id, JSON_REVIEW());
+  await w.service.pipelines.advanceReviewRounds(w.wf.id);
+  state = w.service.pipelines.reviewStatus(w.wf.id);
+  assert.equal(state.approved, true);
+  assert.equal(w.service.taskOutcome(w.task(r.tasks.finalFable)), "superseded");
+});
+
+test("round state survives a pipeline service restart without duplicating corrections; exhaustion needs attention", async (t) => {
+  const w = await world(t);
+  w.service.contracts.setRequirements(w.wf.id, { maxCorrectionRounds: 2 });
+  await toFinalReview(w);
+  const r = w.rec();
+  await finish(w, r.tasks.finalCodex, JSON_REVIEW("request-changes"));
+  await finish(w, r.tasks.finalFable, JSON_REVIEW());
+  await w.service.pipelines.advanceReviewRounds(w.wf.id);
+  const tasks = w.store.list("task").length;
+  const controlledIdentity = (
+    w.service.pipelines as unknown as {
+      verifiedInput: () => PipelineReviewInput;
+    }
+  ).verifiedInput;
+  w.service.pipelines = new PipelineService(w.service);
+  // Keep the explicit B fixture when reconstructing this service; the durable round rows stay real.
+  (
+    w.service.pipelines as unknown as {
+      verifiedInput: () => PipelineReviewInput;
+    }
+  ).verifiedInput = controlledIdentity;
+  w.service.pipelines.worktrees = w.wt;
+  await w.service.pipelines.advanceReviewRounds(w.wf.id);
+  assert.equal(w.store.list("task").length, tasks);
+  const second = w.service.pipelines.reviewStatus(w.wf.id).rounds[1];
+  await finish(w, second.adjudicationId, JSON_ADJ);
+  for (const id of second.fixes) await finish(w, id, "corrected");
+  await finish(w, second.integrationId!, "integrated");
+  for (const id of second.reviews)
+    await finish(w, id, JSON_REVIEW("request-changes"));
+  await w.service.pipelines.advanceReviewRounds(w.wf.id);
+  const state = w.service.pipelines.reviewStatus(w.wf.id);
+  assert.equal(state.state, "needs-attention");
+  assert.match(state.reason, /limit reached/);
+  assert.equal(state.approved, false);
+  assert.equal(state.rounds.length, 2);
+  assert.equal(w.service.workflowStatus(w.wf.id).status, "needs-attention");
+});
+
+test("final review identity, inconclusive outcomes and missing real execution evidence fail closed", async (t) => {
+  const w = await world(t);
+  await toFinalReview(w);
+  const r = w.rec();
+  const reviewer = w.task(r.tasks.finalCodex);
+  w.store.put("task", { ...reviewer, agentId: r.agents.reporter });
+  assert.equal(w.service.pipelines.reviewStatus(w.wf.id).approved, false);
+  assert.match(
+    w.service.pipelines.reviewStatus(w.wf.id).reason,
+    /different agent/,
+  );
+  w.store.put("task", reviewer);
+  await finish(w, r.tasks.finalCodex, JSON_REVIEW("inconclusive"));
+  await finish(w, r.tasks.finalFable, JSON_REVIEW());
+  await w.service.pipelines.advanceReviewRounds(w.wf.id);
+  assert.equal(
+    w.service.pipelines.reviewStatus(w.wf.id).state,
+    "needs-attention",
+  );
+  assert.match(
+    w.service.pipelines.reviewStatus(w.wf.id).reason,
+    /inconclusive/,
+  );
+  const unverified = await world(t, {}, false);
+  await toFinalReview(unverified);
+  await unverified.service.pipelines.advanceReviewRounds(unverified.wf.id);
+  assert.equal(
+    unverified.task(unverified.rec().tasks.report).status,
+    "blocked",
+  );
+  assert.match(
+    unverified.service.pipelines.reviewStatus(unverified.wf.id).reason,
+    /no confined execution evidence/,
+  );
+});
+
+test("readiness covers fix workers and created integrators and is not OK when prerequisites prevent evaluation", async (t) => {
+  const w = await world(t);
+  const unavailable = installed().map((runtime) => ({
+    ...runtime,
+    installed: false,
+  }));
+  const failed = await w.service.pipelines.prepare(w.wf.id, unavailable);
+  const readiness = failed.checks.find((check) =>
+    check.name.startsWith("Execution readiness"),
+  )!;
+  assert.equal(readiness.ok, false);
+  assert.equal(readiness.evaluated, false);
+  assert.match(readiness.detail, /Not evaluated/);
+  await w.service.pipelines.prepare(w.wf.id, installed());
+  for (const id of [w.rec().agents.fix[0], w.rec().agents.integrator]) {
+    const agent = w.store.get<Agent>("agent", id);
+    const { id: _id, createdAt: _created, control: _control, ...input } = agent;
+    await w.service.saveAgent(
+      { ...input, tools: ["read", "glob", "grep"] },
+      id,
+    );
+  }
+  const messages = (
+    w.service.pipelines as unknown as {
+      readinessIssues(rec: PipelineRecord): string[];
+    }
+  )
+    .readinessIssues(w.rec())
+    .join("\n");
+  assert.match(messages, /Fix Worker 1/);
+  assert.match(messages, /Pipeline Integrator/);
+});
+
+test("approval requires every current integration check and reviewers receive its observed evidence", async (t) => {
+  const w = await world(t, {}, false);
+  await toFinalReview(w);
+  const integration = w.task(w.rec().stage2.integrationTaskId!);
+  const reference = w.service.verification.ensurePiReference(500);
+  const checks = ["a/pi.py", "b/pi.py"].map((entry) =>
+    executionVerifiedCheckSchema.parse({
+      type: "execution-verified",
+      entry,
+      language: "python",
+      sourceFiles: [entry],
+      referenceId: reference.id,
+    }),
+  );
+  // Controlled B records test orchestration's subject selection; no program is executed here.
+  const records = checks.map((check, index): ExecutionVerificationRecord => {
+    const { type: _type, ...spec } = check;
+    return {
+      id: `fixture-verification-${index}`,
+      taskId: integration.id,
+      workflowId: w.wf.id,
+      spec,
+      requestHash: `request-${index}`,
+      sourceRoot: w.root,
+      sourceFiles: [{ path: check.entry, sha256: `source-${index}`, bytes: 1 }],
+      snapshotHash: `snapshot-${index}`,
+      snapshotDirectory: w.base,
+      referenceId: reference.id,
+      referenceHash: reference.hash,
+      passed: true,
+      status: "passed",
+      reason: "Controlled execution evidence",
+      stdout: reference.stdout,
+      stderr: "",
+      commands: [],
+      binaryHash: null,
+      toolchain: null,
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+    };
+  });
+  records.forEach((record) => w.store.put("execution-verification", record));
+  w.store.put("task", { ...integration, completionChecks: checks });
+  let missing = true;
+  const selected: string[] = [];
+  w.service.verification.requireCurrent = (task, check) => {
+    assert.equal(
+      task.id,
+      integration.id,
+      "worker-only evidence cannot replace integrated execution",
+    );
+    selected.push(check.entry);
+    if (missing && check.entry === "b/pi.py")
+      throw new AppError(
+        409,
+        "execution_not_verified",
+        "Second program lacks current evidence",
+      );
+    return records.find((record) => record.spec.entry === check.entry)!;
+  };
+  const readInput = () =>
+    (
+      w.service.pipelines as unknown as {
+        verifiedInput(rec: PipelineRecord): PipelineReviewInput;
+      }
+    ).verifiedInput(w.rec());
+  assert.equal(await code(readInput), "execution_not_verified");
+  assert.deepEqual(selected, ["a/pi.py", "b/pi.py"]);
+  missing = false;
+  w.service.verification.verify = async (_taskId, spec) =>
+    records.find(
+      (record) => record.spec.entry === (spec as { entry: string }).entry,
+    )!;
+  await w.service.limits.evaluate(
+    w.task(integration.id),
+    integration.result ?? "integrated",
+    w.root,
+  );
+  assert.equal(readInput().verificationIds.length, 2);
+  const review = w.task(w.rec().tasks.finalCodex);
+  w.service.transitionTask(review.id, { status: "running" });
+  const context = w.service.pipelines.reviewContext(w.task(review.id));
+  assert.match(context, /fixture-verification-0/);
+  assert.match(context, /fixture-verification-1/);
+  assert.match(context, /snapshot-0/);
+  assert.match(context, /sourceFiles/);
+  assert.match(context, /3\.14159265358979323846/);
+});
+
+test("cancelled reviews and edits during reporting cannot become approved delivery", async (t) => {
+  const cancelled = await world(t);
+  await toFinalReview(cancelled);
+  const review = cancelled.rec().tasks.finalCodex;
+  cancelled.service.transitionTask(review, { status: "cancelled" });
+  await cancelled.service.pipelines.advanceReviewRounds(cancelled.wf.id);
+  assert.equal(
+    cancelled.service.pipelines.reviewStatus(cancelled.wf.id).state,
+    "needs-attention",
+  );
+  assert.equal(cancelled.task(cancelled.rec().tasks.report).status, "blocked");
+  const w = await world(t);
+  await toFinalReview(w);
+  for (const id of [w.rec().tasks.finalCodex, w.rec().tasks.finalFable])
+    await finish(w, id, JSON_REVIEW());
+  const report = w.rec().tasks.report;
+  w.service.transitionTask(report, { status: "running" });
+  await writeFile(join(w.root, "a", "x.txt"), "changed while reporting");
+  assert.equal(
+    await code(() => w.service.pipelines.assertCompletion(w.task(report))),
+    "pipeline_approval_required",
+  );
+});
+
+test("manual-looking approval cannot forge provider provenance and readonly reviewer configuration is rechecked", async (t) => {
+  const forged = await world(t);
+  await toFinalReview(forged);
+  const review = forged.rec().tasks.finalCodex;
+  forged.service.transitionTask(review, { status: "running" });
+  const result = JSON_REVIEW();
+  await forged.service.limits.evaluate(
+    forged.task(review),
+    result,
+    forged.root,
+  );
+  forged.service.transitionTask(review, { status: "completed", result });
+  await finish(forged, forged.rec().tasks.finalFable, result);
+  assert.equal(
+    forged.service.pipelines.reviewStatus(forged.wf.id).approved,
+    false,
+  );
+  assert.match(
+    forged.service.pipelines.reviewStatus(forged.wf.id).reason,
+    /provider-run result/,
+  );
+  const w = await world(t);
+  await toFinalReview(w);
+  for (const id of [w.rec().tasks.finalCodex, w.rec().tasks.finalFable])
+    await finish(w, id, result);
+  assert.equal(w.service.pipelines.reviewStatus(w.wf.id).approved, true);
+  const reviewer = w.store.get<Agent>("agent", w.rec().agents.finalCodex);
+  w.store.put("agent", { ...reviewer, tools: [...reviewer.tools, "write"] });
+  assert.equal(w.service.pipelines.reviewStatus(w.wf.id).approved, false);
+  w.store.put("agent", { ...reviewer, roleType: "custom" });
+  assert.equal(w.service.pipelines.verification(w.wf.id).state, "stale");
+  assert.equal(w.service.pipelines.reviewStatus(w.wf.id).approved, false);
+  w.store.put("agent", reviewer);
+  const edge = w.store
+    .list<{ id: string; from: string; to: string }>("edge")
+    .find(
+      (edge) =>
+        edge.from === w.rec().agents.adjudicator && edge.to === reviewer.id,
+    )!;
+  w.store.remove("edge", edge.id);
+  assert.equal(w.service.pipelines.reviewStatus(w.wf.id).approved, false);
+});
 
 test("sample is created paused with the stage structure, caps and read-only roles; nothing runs", async (t) => {
   const w = await world(t);
@@ -490,16 +850,17 @@ test("the adjudication gate cannot be bypassed by editing dependencies, agents o
     "pipeline_unverified",
   );
   w.store.put("task", final);
-  // untouched, the final reviews run in parallel and the report follows both
+  // Both reviews can run; a change request does not approve the goal or open its success report.
   w.service.transitionTask(r.tasks.finalCodex, { status: "running" });
   w.service.transitionTask(r.tasks.finalFable, { status: "running" });
   await complete(w, r.tasks.finalCodex, JSON_REVIEW());
   await complete(w, r.tasks.finalFable, JSON_REVIEW("request-changes"));
-  assert.equal(w.service.taskState(r.tasks.report).waitReason, null);
-  await finish(w, r.tasks.report, "concise report");
+  await w.service.pipelines.advanceReviewRounds(w.wf.id);
+  assert.equal(w.service.pipelines.reviewStatus(w.wf.id).approved, false);
+  assert.equal(w.task(r.tasks.report).status, "blocked");
   assert.equal(
-    w.service.handoffs.latestCompleted(r.tasks.report)?.outcome,
-    "completed",
+    await code(() => w.service.pipelines.assertStart(w.task(r.tasks.report))),
+    "pipeline_approval_required",
   );
 });
 

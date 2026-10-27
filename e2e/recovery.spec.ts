@@ -85,6 +85,7 @@ test("recovery: interrupted task shows its checkpoint, pending approval survives
     const panel = wf.getByTestId("recovery-panel");
     await expect(panel).toContainText("Write notes");
     await expect(panel.locator(".badge")).toHaveText("interrupted");
+    await panel.getByText("Checkpoint and history", { exact: true }).click();
     await expect(panel.getByTestId("recovery-checkpoint")).toContainText(
       "task.interrupted",
     );
@@ -94,9 +95,7 @@ test("recovery: interrupted task shows its checkpoint, pending approval survives
     await expect(panel.getByTestId("recovery-next")).toContainText(
       "Answer pending approval: Write notes.txt",
     );
-    const resume = panel.getByRole("button", {
-      name: "Resume from checkpoint",
-    });
+    const resume = panel.getByTestId("recovery-resume");
     await expect(resume).toBeDisabled();
     // The approval is answerable after the restart and the decision is recorded.
     await panel.getByRole("button", { name: "Allow once" }).click();

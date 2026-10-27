@@ -234,9 +234,11 @@ test("delegated tasks can reserve disjoint workspace folders without sharing fil
   const { store, service, agent } = setup();
   const manager = await agent("Manager");
   const cpp = await agent("C++ Builder", {
+    tools: ["read", "write"],
     workspaces: [{ path: workspace, access: "write", active: true }],
   });
   const python = await agent("Python Builder", {
+    tools: ["read", "write"],
     workspaces: [{ path: workspace, access: "write", active: true }],
   });
   service.saveEdge({ from: manager.id, to: cpp.id, kind: "delegate" });

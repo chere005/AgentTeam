@@ -63,13 +63,19 @@ import {
   type RuntimeWait,
 } from "./runtime-waits.ts";
 import { ContractService } from "./execution-contract.ts";
-import { LaunchReadiness } from "./launch-readiness.ts";
+import { ExecutionVerification } from "./execution-verification.ts";
+import {
+  LaunchReadiness,
+  requiredFor,
+  roleClassOf,
+} from "./launch-readiness.ts";
 import { ProjectSetupService } from "./project-setup.ts";
 import { capabilityContext } from "./capability-context.ts";
 import type { PlanFacts } from "./launch-capability.ts";
 import type { Readiness } from "./runtime-scan.ts";
 import { simpleTaskSupport } from "./simple-task-capabilities.ts";
 import { runtimeGuidance } from "./runtime-instructions.ts";
+import { ExecutionProjects } from "./execution-projects.ts";
 export class TeamService {
   store: Store;
   skills: SkillCatalog;
@@ -98,10 +104,12 @@ export class TeamService {
   delegations: DelegatedWork;
   /** Persisted execution contracts of projects and tasks (src/execution-contract.ts). */
   contracts: ContractService;
+  verification: ExecutionVerification;
   /** The one readiness evaluator against the actual launch plan (src/launch-readiness.ts). */
   launchReadiness: LaunchReadiness;
   /** Project-folder setup state and the action that applies approved grants (src/project-setup.ts). */
   setups: ProjectSetupService;
+  executionProjects: ExecutionProjects;
   /**
    * Whether a provider runtime is installed and signed in, as the app currently knows it. Wired by
    * the RunManager; the setup and notice views report it, the launch has its own path for it.
@@ -130,8 +138,10 @@ export class TeamService {
     this.teamSpaces = new TeamSpaces(this);
     this.delegations = new DelegatedWork(this);
     this.contracts = new ContractService(this);
+    this.verification = new ExecutionVerification(this);
     this.launchReadiness = new LaunchReadiness(this);
     this.setups = new ProjectSetupService(this);
+    this.executionProjects = new ExecutionProjects(this);
   }
   /**
    * Create (no `id`) or replace an agent. `teamId` is accepted next to the agent fields: a new
@@ -551,25 +561,37 @@ export class TeamService {
     const workflow = this.store.get<Workflow>("workflow", id),
       tasks = this.store.list<Task>("task").filter((t) => t.workflowId === id);
     const effectiveStatus = (task: Task) => this.taskOutcome(task);
+    const executionStatus = this.executionProjects.status(id);
+    const pipelineApproval = this.store
+      .list<{ id: string; workflowId: string }>("pipeline")
+      .find((p) => p.workflowId === id);
+    const approval = pipelineApproval
+      ? this.pipelines.reviewStatus(pipelineApproval.id)
+      : null;
     return {
       ...workflow,
       tasks: tasks.map((task) => this.taskState(task.id)),
+      executionStatus,
+      approval,
       status: workflow.paused
         ? "paused"
-        : tasks.length &&
-            tasks.every((t) =>
-              ["completed", "superseded"].includes(effectiveStatus(t)),
-            )
-          ? "completed"
-          : tasks.some((t) =>
-                ["failed", "interrupted", "blocked"].includes(
-                  effectiveStatus(t),
-                ),
-              )
-            ? "needs-attention"
-            : tasks.some((t) => t.status === "running")
-              ? "running"
-              : "queued",
+        : (executionStatus ??
+          (tasks.length &&
+          tasks.every((t) =>
+            ["completed", "superseded"].includes(effectiveStatus(t)),
+          )
+            ? approval && !approval.approved
+              ? "needs-attention"
+              : "completed"
+            : tasks.some((t) =>
+                  ["failed", "interrupted", "blocked"].includes(
+                    effectiveStatus(t),
+                  ),
+                )
+              ? "needs-attention"
+              : tasks.some((t) => t.status === "running")
+                ? "running"
+                : "queued")),
     };
   }
   private isSuccessfulTask(task: Task) {
@@ -1026,6 +1048,10 @@ export class TeamService {
         this.pipelines.assertStart(task); // adjudication/assignment/read-only gates of the pipeline sample
         this.resources.acquire(task.id, task.agentId, task.workflowId);
         this.limits.recordTurn(task);
+        const scopeHash = (
+          context.launchManifest as { scopeHash?: string } | undefined
+        )?.scopeHash;
+        if (scopeHash) this.recovery.recordLaunchScope(task.id, scopeHash);
         // Run inspector: the settings this run actually started with (agent config may change later).
         this.store.emit("task.settings", task.id, {
           agentId: agent.id,
@@ -1054,6 +1080,7 @@ export class TeamService {
           400,
         );
         this.limits.assertCompletion(task, data.result);
+        this.pipelines.assertCompletion(task);
         // A required check a model invented stays a slot until the user confirms it: the
         // task cannot complete around it (src/execution-contract.ts).
         this.contracts.assertCompletable(task);
@@ -1158,6 +1185,10 @@ export class TeamService {
       current.status = "running";
       this.store.put("task", current);
       this.limits.recordTurn(current);
+      const scopeHash = (
+        context.launchManifest as { scopeHash?: string } | undefined
+      )?.scopeHash;
+      if (scopeHash) this.recovery.recordLaunchScope(current.id, scopeHash);
       this.store.emit("task.status", id, {
         agentId: agent.id,
         status: "running",
@@ -1458,7 +1489,7 @@ export class TeamService {
       "\n\n" +
       runtimeGuidance +
       "\n\n" +
-      capabilityContext(this, agent, facts).line
+      capabilityContext(this, agent, facts, undefined, task?.id).line
     );
   }
   /** `taskId`: the task about to run; its declared paths select the working folder. */
@@ -1528,7 +1559,25 @@ export class TeamService {
       persist: true,
     });
     const decisions = decideSkills(entries, undefined);
-    const filesystem = await taskFilesystem(this.store, agent, taskId);
+    const contract = task ? this.contracts.effective(task) : null;
+    const needsFolder =
+      requiredFor({
+        contract,
+        roleClass: roleClassOf(this, agent),
+        tools,
+        adapter:
+          connection.transport === "acp"
+            ? "acp"
+            : (agent.environment as "claude" | "codex" | "wolfram"),
+      }).required.length > 0;
+    const filesystem = await taskFilesystem(
+      this.store,
+      agent,
+      taskId,
+      needsFolder && contract?.projectFolder
+        ? [contract.projectFolder]
+        : undefined,
+    );
     const fsWorkspaces = filesystem?.workspaces ?? agent.workspaces;
     const fsCwd =
       filesystem?.cwd ?? agent.workspaces.find((w) => w.active)?.path ?? null;

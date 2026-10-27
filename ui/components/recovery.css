@@ -20,9 +20,27 @@
 .recovery-box {
   display: grid;
   gap: 6px;
-  background: #2f2a1c;
+  background: var(--panel);
   border-radius: 6px;
   padding: 6px 8px;
+}
+.recovery-decision p,
+.recovery-cause p {
+  margin: 0 0 4px;
+}
+.recovery-decision small,
+.recovery-history {
+  color: var(--muted);
+}
+.recovery-history summary {
+  cursor: pointer;
+}
+.recovery-cause {
+  border-left: 2px solid var(--line);
+  padding-left: 8px;
+}
+.recovery-task > .row {
+  flex-wrap: wrap;
 }
 .badge.recovery-interrupted,
 .badge.recovery-blocked {

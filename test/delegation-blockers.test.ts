@@ -1,5 +1,8 @@
 import "./fixtures/temp-data-dir.ts";
 import test from "node:test";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import assert from "node:assert/strict";
 import { Store } from "../src/store.ts";
 import { TeamService } from "../src/service.ts";
@@ -8,6 +11,9 @@ import { invocationTaskState } from "../src/invocation-view.ts";
 import { explainWaiting } from "../src/inspector.ts";
 
 async function fixture() {
+  const workspace = await realpath(
+    await mkdtemp(join(tmpdir(), "agentteam-blocker-fixture-")),
+  );
   const store = new Store(":memory:");
   const service = new TeamService(store, new SkillCatalog([]));
   const manager = await service.saveAgent({
@@ -21,6 +27,8 @@ async function fixture() {
   const worker = await service.saveAgent({
     name: "Worker",
     environment: "claude",
+    tools: ["read", "write"],
+    workspaces: [{ path: workspace, access: "write", active: true }],
   });
   const edge = (from: string, to: string) =>
     service.saveEdge({ from, to, kind: "delegate" });
@@ -56,6 +64,7 @@ async function fixture() {
   );
   return {
     store,
+    workspace,
     service,
     manager,
     integrator,
@@ -124,6 +133,7 @@ test("nested delegated waits report concrete leaf failure in API, inspector and 
     assert.match(ui.detail!, /Worker.*Artifact path must be relative/);
   } finally {
     f.store.close();
+    await rm(f.workspace, { recursive: true, force: true });
   }
 });
 
@@ -159,5 +169,6 @@ test("nested blocker diagnostics redact credentials and stop at revoked communic
     if (original === undefined) delete process.env[secretName];
     else process.env[secretName] = original;
     f.store.close();
+    await rm(f.workspace, { recursive: true, force: true });
   }
 });

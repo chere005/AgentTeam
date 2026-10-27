@@ -417,3 +417,152 @@ test("native Windows Codex limitations are shown before a simple project or chil
     "unsupported delegation never enters recovery",
   );
 });
+
+test("user-entered content checks remain authoritative while assistant-proposed literals need confirmation", async (t) => {
+  const w = await fixture(t);
+  const agent = await w.service.saveAgent({
+    name: "Simple Writer",
+    environment: "claude",
+    roleType: "implementer",
+    tools: ["read", "write"],
+    workspaces: [{ path: w.workspace, access: "write", active: true }],
+  });
+  const check = {
+    type: "artifact-matches" as const,
+    path: "Simple_ Writer.txt",
+    pattern: "^Reporting for duty\\.(?:\\r?\\n)?$",
+    flags: "",
+  };
+  const assignment = {
+    mode: "simple",
+    goal: "Write a text file",
+    workspace: w.workspace,
+    tasks: [
+      {
+        agentId: agent.id,
+        title: "Write Simple_ Writer.txt",
+        instructions: "Write your greeting to Simple_ Writer.txt.",
+        completionChecks: [check],
+      },
+    ],
+  };
+  const direct = await assignProject(w.service, "main", assignment);
+  const task = direct.tasks[0];
+  assert.deepEqual(task.completionChecks, [check]);
+  assert.deepEqual(w.service.contracts.unresolved(task), []);
+  const contractCheck = w.service.contracts
+    .task(task.id)!
+    .requiredChecks.find((c) => c.check.type === "artifact-matches")!;
+  assert.equal(contractCheck.origin, "user");
+  assert.equal(contractCheck.confirmation, "confirmed");
+  assert.equal(contractCheck.enforcement, "enforced");
+  assert.equal(contractCheck.note, undefined);
+  assert.equal(
+    (await w.service.limits.evaluate(task, "Created it", w.workspace))?.passed,
+    false,
+    "a user-supplied content check remains a real completion gate",
+  );
+
+  const proposed = await assignProject(w.service, "main", assignment, {
+    confirmedChecks: false,
+  });
+  const proposalTask = proposed.tasks[0];
+  assert.deepEqual(proposalTask.completionChecks, [
+    { type: "artifact-exists", path: check.path },
+  ]);
+  const unresolved = w.service.contracts.unresolved(proposalTask);
+  assert.equal(unresolved.length, 1);
+  assert.deepEqual(unresolved[0].check, check);
+  assert.equal(unresolved[0].origin, "model");
+  assert.equal(unresolved[0].confirmation, "unconfirmed");
+});
+
+test("model-authored assignment prose cannot ground its own literal checks", async (t) => {
+  const w = await fixture(t);
+  const agent = await w.service.saveAgent({
+    name: "Writer",
+    environment: "claude",
+    tools: ["read", "write"],
+    workspaces: [{ path: w.workspace, access: "write", active: true }],
+  });
+  const check = {
+    type: "artifact-matches" as const,
+    path: "notes.txt",
+    pattern: "^Arctic lantern\\.$",
+    flags: "",
+  };
+  const assignment = {
+    mode: "simple",
+    goal: "Write notes.txt",
+    workspace: w.workspace,
+    tasks: [
+      {
+        agentId: agent.id,
+        title: "Write notes.txt",
+        instructions: "Write notes.txt containing Arctic lantern.",
+        completionChecks: [check],
+      },
+    ],
+  };
+  const invented = await assignProject(w.service, "main", assignment, {
+    confirmedChecks: false,
+  });
+  assert.equal(w.service.contracts.project(invented.id)!.trustedRequest, "");
+  assert.equal(
+    w.service.contracts.task(invented.tasks[0].id)!.trustedRequest,
+    "",
+  );
+  assert.match(
+    w.service.contracts.project(invented.id)!.userIntent,
+    /Arctic lantern/,
+  );
+  assert.equal(w.service.contracts.unresolved(invented.tasks[0]).length, 1);
+  const grounded = await assignProject(w.service, "main", assignment, {
+    confirmedChecks: false,
+    trustedRequest: "Write notes.txt containing Arctic lantern.",
+  });
+  assert.deepEqual(w.service.contracts.unresolved(grounded.tasks[0]), []);
+  assert.deepEqual(grounded.tasks[0].completionChecks, [check]);
+});
+
+test("generic model response checks need confirmation even without a coding classification", async (t) => {
+  const w = await fixture(t);
+  const agent = await w.service.saveAgent({
+    name: "Speaker",
+    environment: "claude",
+  });
+  const check = {
+    type: "output-matches" as const,
+    pattern: "^Arctic lantern\\.$",
+    flags: "",
+  };
+  const assignment = {
+    mode: "simple",
+    goal: "Give a greeting",
+    workspace: w.workspace,
+    tasks: [
+      {
+        agentId: agent.id,
+        title: "Say hello",
+        instructions: "Reply Arctic lantern.",
+        completionChecks: [check],
+      },
+    ],
+  };
+  const invented = await assignProject(w.service, "main", assignment, {
+    confirmedChecks: false,
+  });
+  const task = invented.tasks[0];
+  assert.equal(w.service.contracts.task(task.id)!.workKind, "response-only");
+  assert.deepEqual(task.completionChecks, []);
+  assert.deepEqual(
+    w.service.contracts.unresolved(task).map((c) => c.check),
+    [check],
+  );
+  assert.throws(() => w.service.contracts.assertCompletable(task), {
+    code: "required_check_unresolved",
+  });
+  const direct = await assignProject(w.service, "main", assignment);
+  assert.deepEqual(direct.tasks[0].completionChecks, [check]);
+  assert.deepEqual(w.service.contracts.unresolved(direct.tasks[0]), []);
+});

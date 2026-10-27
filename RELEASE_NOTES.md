@@ -1,4 +1,15 @@
-# AgentTeam 0.5.0
+# AgentTeam 0.6.0
+
+Program requests now prepare an implementation, execution and review plan before starting providers. Choose one project folder, inspect the output precision and reviewers, then start the saved assignment.
+
+- **Reliable setup:** role-specific capability checks, durable acceptance criteria and typed Recovery actions preserve the request through folder repair and restart.
+- **Observed execution:** current source snapshots are independently compiled/run under mandatory OS confinement. Evidence records commands, exit status, output and source hashes; provider claims cannot satisfy the execution gate.
+- **Required reviews:** designated read-only reviewers approve the exact verified source. Corrections create fresh execution/review evidence, stop at the configured round limit, and invalidate approval when source or reviewer permissions change.
+- **Interface:** one setup card, execution evidence and bounded review history replace duplicated recovery text. Large Team Assistant catalogs retain valid structured context, and user-entered file checks remain enforced.
+
+Native verifier fixtures cover Python, JavaScript, TypeScript and C++ on macOS. Linux bubblewrap execution is implemented but has not been exercised on this Mac. Windows execution verification returns a typed unavailable result. Installers remain unsigned unless signing credentials are configured.
+
+## Earlier release notes: 0.5.0
 
 Assign simple file tasks directly to the team, see concrete setup blockers, and review changes reliably in large folders.
 

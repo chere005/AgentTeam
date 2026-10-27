@@ -9,6 +9,7 @@
 import type { Agent, Task } from "./model.ts";
 import {
   effectiveCapabilities,
+  capabilityScopeHash,
   type EffectiveCapabilities,
   type HostFacts,
   type PlanFacts,
@@ -90,9 +91,12 @@ export function capabilityContext(
   agent: Agent,
   plan: PlanFacts,
   host: HostFacts = service.launchReadiness.host(),
+  taskId?: string,
 ): CapabilityContext {
   const effective = effectiveCapabilities(plan, host);
-  const teammates = reachableTeammates(service, agent);
+  const teammates = service.executionProjects.isReview(taskId)
+    ? []
+    : reachableTeammates(service, agent);
   const tools = effective.toolNames.length
     ? effective.toolNames.join(", ")
     : `none (${effective.gaps.read?.message ?? "no file tools are exposed"})`;
@@ -134,6 +138,10 @@ export function launchManifest(
   const contract = service.contracts.effective(input.task);
   return {
     version: 1 as const,
+    scopeHash: capabilityScopeHash(
+      input.plan,
+      input.host ?? service.launchReadiness.host(),
+    ),
     taskId: input.task.id,
     agentId: input.agent.id,
     adapter: {
@@ -150,7 +158,13 @@ export function launchManifest(
     toolNames: [
       ...effective.toolNames,
       ...(input.teammateTools
-        ? ["mcp__agentteam__invoke_teammate", "mcp__agentteam__teammate_result"]
+        ? [
+            ...(!service.executionProjects.isReview(input.task.id) &&
+            reachableTeammates(service, input.agent).length
+              ? ["mcp__agentteam__invoke_teammate"]
+              : []),
+            "mcp__agentteam__teammate_result",
+          ]
         : []),
     ],
     sandbox: effective.sandbox,

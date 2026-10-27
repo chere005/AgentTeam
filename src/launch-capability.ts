@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 // What a provider launch can actually do. Pure functions over the facts of a `LaunchPlan`
 // (`TeamService.launchPlan`): saved role names and saved tool checkboxes are never capabilities by
 // themselves, only the grants a run really receives are. `src/runtime.ts` `commandFor` builds the
@@ -270,4 +271,20 @@ export function effectiveCapabilities(
           : "codex-workspace-write"
         : "codex-read-only";
   return { ...base, available, gaps, toolNames, sandbox };
+}
+
+/** Stable effective access identity; provider sessions never inherit silently widened scope. */
+export function capabilityScopeHash(plan: PlanFacts, host: HostFacts = {}) {
+  const caps = effectiveCapabilities(plan, host);
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        adapter: caps.adapter,
+        root: caps.taskRoot,
+        folders: [...caps.folders].sort((a, b) => a.path.localeCompare(b.path)),
+        tools: [...caps.toolNames].sort(),
+        sandbox: caps.sandbox,
+      }),
+    )
+    .digest("hex");
 }

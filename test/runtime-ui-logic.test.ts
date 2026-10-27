@@ -216,6 +216,7 @@ function plan(environment: string, over: Record<string, unknown> = {}) {
     effort: "high",
     instructions: "i",
     skills: [],
+    tools: ["read", "write", "shell"],
     cwd: process.cwd(),
     connection: undefined,
     ...over,

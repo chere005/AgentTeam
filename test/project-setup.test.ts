@@ -55,7 +55,7 @@ test("the setup card proposes the folder, the participants and the least access 
   for (const reviewer of team.reviewers)
     assert.equal(access[reviewer.name], "reviewer:read");
   assert.equal(access[team.planner.name], undefined);
-  assert.equal(access[team.reporter.name], undefined);
+  assert.equal(access[team.reporter.name], "reporter:read");
   // One repair per blocked worker.
   assert.ok(view.blockers.length >= 4);
   for (const blocker of view.blockers)
@@ -74,13 +74,13 @@ test("applying the approved setup attaches exactly those roles and makes the sav
       [[folder, "write", true]],
       worker.name,
     );
-  for (const reader of [team.adjudicator, ...team.reviewers])
+  for (const reader of [team.adjudicator, team.reporter, ...team.reviewers])
     assert.deepEqual(
       agentOf(w, reader.id).workspaces.map((x) => [x.path, x.access]),
       [[folder, "read"]],
       reader.name,
     );
-  for (const none of [team.planner, team.reporter])
+  for (const none of [team.planner])
     assert.deepEqual(agentOf(w, none.id).workspaces, [], none.name);
   // The contract now authorizes this folder, and the setup record is ready.
   assert.equal(w.service.contracts.project(workflowId)!.projectFolder, folder);
@@ -169,7 +169,7 @@ test("existing attachments, rules and other folders are preserved; widening a re
   assert.equal(after[0].active, true);
   // With per-file rules the provider cannot enforce, file tools stay withheld, and setup says so.
   assert.equal(widened.state, "needed");
-  assert.equal(widened.blockers[0].issues[0].code, "folder-restricted");
+  assert.equal(widened.blockers[0].issues[0].code, "confinement-unsupported");
   assert.equal(widened.blockers[0].issues[0].fix?.kind, "remove-access-rules");
 });
 
@@ -186,7 +186,7 @@ test("grants go only to listed roles, never past a global denial, never to .git 
   await assert.rejects(
     w.service.setups.apply(workflowId, {
       folder,
-      widen: [team.reporter.id],
+      widen: [team.planner.id],
     }),
     { code: "participant_not_in_setup" },
   );
@@ -404,7 +404,11 @@ test("the setup, contract and readiness data are served over the API", async (t)
   assert.match(hand.body.notice.text, /Dev cannot write or run code yet/);
   assert.equal(hand.body.notice.action.kind, "choose-project-folder");
   const leaf = await call("GET", `/agents/${dev.id}/delegation-readiness`);
-  assert.equal(leaf.body.notice, null, "a leaf worker has nobody to wait for");
+  assert.equal(
+    leaf.body.notice.code,
+    "agent-not-ready",
+    "a folderless leaf needs its own setup",
+  );
   assert.equal(
     (
       await call("POST", `/projects/${workflowId}/setup`, {
@@ -443,7 +447,7 @@ test("the setup, contract and readiness data are served over the API", async (t)
   void (null as unknown as Task);
 });
 
-test("Start sends the original chat request again exactly once, after the setup is ready", async (t) => {
+test("generic Start preserves a user correction and sends the original request exactly once", async (t) => {
   const { createApi } = await import("../src/http.ts");
   const { w, team, workflowId } = await incident(t);
   const server = createApi(w.service, "test-token", w.runs);
@@ -496,6 +500,7 @@ test("Start sends the original chat request again exactly once, after the setup 
   assert.equal(userMessages().length, 1);
   w.runs.changeExecution("resume");
 
+  w.service.contracts.setUserWorkKind(workflowId, "response-only");
   const calls: string[] = [];
   w.setProvider(async (command, _e, emit) => {
     calls.push(command.stdin);

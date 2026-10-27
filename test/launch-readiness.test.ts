@@ -1,3 +1,4 @@
+import { checkSlot } from "../src/execution-contract.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { world } from "./fixtures/execution-world.ts";
@@ -159,7 +160,7 @@ test("choosing the folder makes the same saved assignment ready; a retry that om
   assert.equal(literal.label, "unverified");
   assert.deepEqual(
     w.service.contracts.unresolved(child).map((c) => c.slot),
-    ["output-matches"],
+    [checkSlot(INVENTED)],
   );
 });
 
@@ -204,15 +205,28 @@ test("chat, nested delegation, the task API and Assign to team reach the same de
   // 1 + 4. Chat and the nested delegation inside it.
   w.setProvider(async (command, _environment, emit) => {
     const ctx = w.runs.toolSessions.authenticate(command.teammateTools!.token);
-    try {
-      w.service.orchestration.invokeTeammate(ctx, {
-        recipient: team.integrator.id,
-        title: "Develop the pi program",
-        instructions: "Write and run it.",
-      });
-    } catch (error) {
-      assert.equal((error as { code?: string }).code, "capability_missing");
-    }
+    assert.throws(
+      () =>
+        w.service.orchestration.invokeTeammate(ctx, {
+          recipient: team.integrator.id,
+          title: "Develop the pi program",
+          instructions: "Write and run it.",
+        }),
+      { code: "capability_missing" },
+    );
+    const evaluated = w.service.launchReadiness.evaluateProspective(
+      w.store.get<any>("agent", team.integrator.id),
+      {
+        contract: w.service.contracts.project(
+          w.store.get<Task>("task", ctx.taskId!).workflowId,
+        ),
+      },
+    );
+    assert.equal(evaluated.ready, false);
+    decisions.chat = {
+      code: evaluated.issues[0].code,
+      worker: team.integrator.name,
+    };
     emit({ type: "text", data: "Setup is missing." });
   });
   await w.chat(team.planner.id, REQUEST);

@@ -1,4 +1,5 @@
 import { realpath, stat } from "node:fs/promises";
+import { canonicalPolicyPath } from "./filesystem-policy.ts";
 import { join } from "node:path";
 import { assert, type Agent, type Task } from "./model.ts";
 import { hasRestrictions } from "./access.ts";
@@ -27,6 +28,13 @@ export function taskScope(
       `${agent.name} no longer has a folder containing ${path}, which this task declares; attach it again or change the task`,
       409,
     );
+    assert(
+      canonicalPolicyPath(attachment.path) === attachment.path &&
+        canonicalPolicyPath(path) === path,
+      "workspace_changed",
+      "Task folder target changed; reattach it and reassign the task",
+      409,
+    );
     // A directory-wide CLI grant cannot represent per-file or nested attachment overrides.
     assert(
       !hasRestrictions(attachment) &&
@@ -51,6 +59,7 @@ export async function taskFilesystem(
   store: Store,
   agent: Agent,
   taskId?: string,
+  fallbackPaths?: string[],
 ) {
   if (!taskId) return null;
   const task = store.get<Task>("task", taskId);
@@ -60,7 +69,9 @@ export async function taskFilesystem(
     "Task belongs to another agent",
     403,
   );
-  const declared = task.resourcePaths;
+  const declared = task.resourcePaths?.length
+    ? task.resourcePaths
+    : fallbackPaths;
   if (!declared?.length) return null;
   for (const path of declared) {
     const attachment = agent.workspaces

@@ -77,6 +77,7 @@ async function until(
 test("a parent releases its lease, waits for real child artifacts, then continues once", async () => {
   const w = await setup();
   const runs = new RunManager(w.service, true, w.dir);
+  runs.prepareExecutableChats = false;
   let parentCalls = 0,
     childCalls = 0;
   let childId = "";
@@ -235,6 +236,7 @@ test("failed delegated work stays blocked across restart; repair resumes without
     let parentCalls = 0,
       childCalls = 0;
     const runs = new RunManager(service, true, w.dir);
+    runs.prepareExecutableChats = false;
     scheduler = new Scheduler(service, runs, async (command, _env, emit) => {
       if (
         command.args[command.args.indexOf("--tools") + 1]
@@ -321,6 +323,7 @@ test("a chat manager's early reply waits for its child and publishes one final c
   const w = await setup();
   w.service.transitionTask(w.parent.id, { status: "cancelled" });
   const runs = new RunManager(w.service, true, w.dir);
+  runs.prepareExecutableChats = false;
   runs.teammateToolsUrl = () => "http://127.0.0.1:1/mcp"; // No network: fixture uses the policy service.
   let managerCalls = 0;
   let managerToken = "";

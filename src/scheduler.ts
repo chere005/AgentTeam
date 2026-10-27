@@ -30,7 +30,8 @@ export class Scheduler {
     service.limits.abortTask = (id) => {
       const controller = runs.active.get("task:" + id);
       controller?.abort();
-      return !!controller;
+      const verification = service.verification.cancel(id);
+      return !!controller || verification;
     };
   }
   start() {
@@ -53,6 +54,7 @@ export class Scheduler {
       this.service.graphs.sweep(); // workflow-graph steps waiting on gates without an event
       this.service.locks.sweep(); // draining leases whose processes have exited
       this.service.pipelines.sweep(); // pipeline sample: assign stage-5 workers once integration finished
+      await this.service.executionProjects.sweep(); // verified prepared assignments and bounded reviews
       await this.service.delegations.sweep(); // stopped parents whose delegated results are ready
       // One ordering for tasks and chat run requests (src/queue.ts): Preempt first, then priority plus
       // aging; one clock reading keeps equal-age work FIFO. Entries waiting only for a lease on paths
@@ -270,6 +272,7 @@ export class Scheduler {
       const inputs = this.service.shared.beginRun(task, {
         replay: recovery.willReplayRun(task),
       }).text;
+      const reviewContext = this.service.pipelines.reviewContext(task);
       // Ledger: a provider run that already completed is replayed from its saved output, never repeated.
       const run = recovery.startRun(
         task,
@@ -279,7 +282,7 @@ export class Scheduler {
           ),
       );
       effectId = run.effectId;
-      const prompt = `${task.title}\n${task.instructions}\nCompletion criteria: ${task.completionCriteria}\nDependency results:\n${inputs}${recovery.continuationNote(task)}${delegationInputs}`;
+      const prompt = `${task.title}\n${task.instructions}\nCompletion criteria: ${task.completionCriteria}\nDependency results:\n${inputs}${recovery.continuationNote(task)}${delegationInputs}${reviewContext}`;
       let command;
       try {
         command = commandFor(plan, run.sessionId, prompt, this.runs.cwd);
@@ -394,6 +397,8 @@ export class Scheduler {
                 kind: "confirm-check",
                 label: "Confirm the required check",
                 agentId: agent.id,
+                contractId: `task:${task.id}`,
+                slot: unverified[0].slot,
               },
             },
           ],

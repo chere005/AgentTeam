@@ -919,7 +919,20 @@ test("interrupted/blocked tasks: resumable at the last attempt, keep the agent n
   startup(b);
   assert.equal(statusOf(b, t.id), "interrupted");
   // resuming continues attempt 1 of 1; it is not a retry
-  assert.equal(b.service.recovery.view(t.id).retry.allowed, true);
+  assert.equal(
+    b.service.recovery.view(t.id).retry.allowed,
+    false,
+    "pending approval is the same blocker the resume action enforces",
+  );
+  assert.equal(
+    b.service.recovery.view(t.id).decision?.blocker?.code,
+    "approval_pending",
+  );
+  assert.deepEqual(b.service.recovery.view(t.id).decision?.attempt, {
+    current: 1,
+    after: 1,
+    max: 1,
+  });
   const activity = b.service.activity(w.agent.id);
   assert.equal(activity.state, "interrupted");
   assert.deepEqual(activity.interruptedTaskIds, [t.id]);

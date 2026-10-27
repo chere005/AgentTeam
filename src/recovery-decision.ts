@@ -12,6 +12,8 @@ import type { ReadinessIssue, SetupAction } from "./launch-readiness.ts";
 export const RECOVERY_KINDS = [
   /** A required capability, tool, folder or check is missing: repair it; the task then continues by itself. */
   "setup-repair",
+  /** The final report waits for verified input and current required approvals; no provider call. */
+  "approval-wait",
   /** A failed task starts the next attempt: a new provider call under a new ledger key. */
   "new-attempt",
   /** An interrupted run continues in the same attempt: a provider call (a resumed session when it can be). */
@@ -27,6 +29,7 @@ export type RecoveryKind = (typeof RECOVERY_KINDS)[number];
 
 export type RecoveryDecision = {
   kind: RecoveryKind;
+  label?: string;
   taskId: string;
   /** Whether the action can execute now; when not, `blocker` is the error the action raises. */
   allowed: boolean;

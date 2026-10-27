@@ -866,6 +866,7 @@ test("scheduler never starts a dependent while its required review is open", asy
   ];
   const started: string[] = [];
   const runs = new RunManager(service, true, process.cwd());
+  runs.prepareExecutableChats = false;
   const scheduler = new Scheduler(service, runs, async (cmd, _env, emit) => {
     started.push(cmd.executable);
     emit({ type: "text", data: outputs[started.length - 1] });
@@ -1139,6 +1140,7 @@ test("chat coordinator delegates to four teammates, waits for their task results
     service.saveEdge({ from: manager.id, to: teammate.id, kind: "delegate" });
 
   const runs = new RunManager(service, true, process.cwd());
+  runs.prepareExecutableChats = false;
   // This executor simulates a supported sandboxed provider; no native process runs.
   runs.runtimePlatform = "linux";
   const server = createApi(service, "desktop-token", runs);
@@ -1168,7 +1170,7 @@ test("chat coordinator delegates to four teammates, waits for their task results
         ((await response.json()) as any).result.tools.map(
           (tool: any) => tool.name,
         ),
-        ["invoke_teammate", "teammate_result"],
+        ["teammate_result"],
       );
       let result = `${environment} completed its assigned file`;
       if (environment === "claude") {

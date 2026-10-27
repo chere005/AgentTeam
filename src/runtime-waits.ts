@@ -24,9 +24,14 @@ export type RuntimeWait = {
     | "runtime-unavailable"
     | "sandbox-unavailable"
     | "capability-missing"
-    | "check-unconfirmed";
+    | "check-unconfirmed"
+    | "assignment-preparation";
   /** Capability waits are recorded only for a known pre-process refusal, never provider output. */
-  capability?: "sandboxed-shell" | "tools-and-folders" | "required-check";
+  capability?:
+    | "sandboxed-shell"
+    | "tools-and-folders"
+    | "required-check"
+    | "prepared-project";
   /** Actionable blocker displayed while a capability wait persists. */
   message?: string;
   /** Typed causes with one repair each (capability-missing), bounded and free of secrets. */
@@ -41,6 +46,7 @@ export const CAPABILITY_WAIT_REASONS = [
   "sandbox-unavailable",
   "capability-missing",
   "check-unconfirmed",
+  "assignment-preparation",
 ] as const;
 export const isCapabilityWait = (wait: Pick<RuntimeWait, "reason">) =>
   CAPABILITY_WAIT_REASONS.includes(
@@ -48,11 +54,13 @@ export const isCapabilityWait = (wait: Pick<RuntimeWait, "reason">) =>
   );
 /** The `taskState().runtimeBlocker.code` for a wait. */
 export const blockerCode = (wait: Pick<RuntimeWait, "reason">) =>
-  wait.reason === "capability-missing"
-    ? ("capability_missing" as const)
-    : wait.reason === "check-unconfirmed"
-      ? ("check_unconfirmed" as const)
-      : ("sandbox_unavailable" as const);
+  wait.reason === "assignment-preparation"
+    ? ("assignment_preparation" as const)
+    : wait.reason === "capability-missing"
+      ? ("capability_missing" as const)
+      : wait.reason === "check-unconfirmed"
+        ? ("check_unconfirmed" as const)
+        : ("sandbox_unavailable" as const);
 /** A wait older than this is dropped instead of re-queued (the user has likely moved on). */
 export const RUNTIME_WAIT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 

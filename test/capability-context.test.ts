@@ -203,7 +203,6 @@ test("a launch records a redacted manifest beside the task.settings event", asyn
       "Edit",
       "Write",
       "Bash",
-      "mcp__agentteam__invoke_teammate",
       "mcp__agentteam__teammate_result",
     ],
     "tool names come from the grants the run really got, plus the teammate tools",

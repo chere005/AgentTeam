@@ -507,7 +507,11 @@ test("waiting explainer: approvals, uncertain effects, interrupted and failed ta
     assert.equal(e.waiting, false);
     assert.ok(
       e.reasons.some(
-        (r) => r.code === "failed" && /Retry-from-checkpoint/.test(r.detail),
+        (r) =>
+          r.code === "failed" &&
+          r.detail.includes(
+            t.service.recovery.decide(t.store.get("task", f.id))!.summary,
+          ),
       ),
     );
     // finished tasks have nothing pending

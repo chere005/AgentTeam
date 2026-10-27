@@ -212,6 +212,20 @@ test("team assistant chat: proposal card, approve & apply adds skills, reject, i
     await expect(assigned).toContainText(/typescript/i);
     await expect(assigned).toContainText(/playwright/i);
     expect(errors).toEqual([]);
+  } catch (error) {
+    const page = await app.firstWindow();
+    await test.info().attach("assistant-runtime-state", {
+      body: JSON.stringify(
+        await page.evaluate(async () => ({
+          snapshot: await window.agentteam.request("GET", "/snapshot"),
+          events: await window.agentteam.request("GET", "/events"),
+        })),
+        null,
+        2,
+      ),
+      contentType: "application/json",
+    });
+    throw error;
   } finally {
     await app.close();
     await rm(directory, { recursive: true, force: true });

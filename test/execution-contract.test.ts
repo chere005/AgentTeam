@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { world } from "./fixtures/execution-world.ts";
 import {
   classifyRequest,
+  checkSlot,
   executionContractSchema,
   groundedLiteral,
   literalRuns,
@@ -24,7 +25,7 @@ test("the application reads a request itself: coding, file work or discussion, w
   assert.equal(kind(REQUEST), "executable-implementation");
   assert.equal(
     kind("Write a Python script that parses these logs"),
-    "executable-implementation",
+    "file-edit",
   );
   assert.equal(
     kind("Compile the C++ client and run it"),
@@ -60,7 +61,7 @@ test("the application reads a request itself: coding, file work or discussion, w
     kind(
       "Explain the options, then write a Python script that implements the best one",
     ),
-    "executable-implementation",
+    "file-edit",
   );
   assert.ok(
     classifyRequest(REQUEST).signals.some((s) => s.startsWith("verb:")),
@@ -317,7 +318,7 @@ test("an invented literal is not enforced as pass/fail, keeps its slot, and the 
   });
   assert.deepEqual(
     handoff.unverifiedChecks?.map((x) => x.slot),
-    ["output-matches"],
+    [checkSlot(INVENTED)],
   );
   const child = c.w.store.get<Task>("task", handoff.childTaskId);
   assert.deepEqual(
@@ -352,23 +353,16 @@ test("an invented literal is not enforced as pass/fail, keeps its slot, and the 
     c.w.service.taskState(child.id).runtimeBlocker?.code,
     "check_unconfirmed",
   );
-  // ... and no other path completes it around the slot either (a running sibling, by hand).
+  // Accepted work owns its pending requirement; unrelated later work must not inherit it.
   const sibling = c.delegate({ title: "Write pi2.py" });
-  c.w.service.transitionTask(sibling.childTaskId, { status: "running" });
-  await writeFile(join(c.folder, "pi.py"), "print(3.14)");
-  await c.w.service.limits.evaluate(
-    c.w.store.get<Task>("task", sibling.childTaskId),
-    "3.14159",
-    c.folder,
+  assert.deepEqual(
+    c.w.service.contracts.unresolved({ id: sibling.childTaskId }),
+    [],
   );
-  assert.throws(
-    () =>
-      c.w.service.transitionTask(sibling.childTaskId, {
-        status: "completed",
-        result: "3.14159",
-      }),
-    { code: "required_check_unresolved" },
-  );
+  assert.throws(() => c.w.service.contracts.assertCompletable(child), {
+    code: "required_check_unresolved",
+  });
+  c.w.service.transitionTask(sibling.childTaskId, { status: "cancelled" });
   const view = c.w.service.recovery.view(child.id);
   assert.equal(view.decision?.kind, "setup-repair");
   assert.equal(view.decision?.setup?.then?.kind, "completion-only-replay");
@@ -400,7 +394,7 @@ test("confirming the slot enforces it on the saved output with no provider call"
     () => c.w.store.get<Task>("task", childId).status === "blocked",
   );
   // The user confirms the requirement with the literal they actually mean.
-  c.w.service.contracts.confirmCheck(`task:${childId}`, "output-matches", {
+  c.w.service.contracts.confirmCheck(`task:${childId}`, checkSlot(INVENTED), {
     pattern: "^3\\.14159265358979323846264338327950288419716939937510\\s*$",
     note: "Reference checked by the user",
   });
@@ -424,9 +418,13 @@ test("confirming the slot enforces it on the saved output with no provider call"
 test("a confirmed literal is a hard gate: wrong output is failed by it", async (t) => {
   const c = await checkWorld(t);
   const { childTaskId } = c.delegate({ completionChecks: [INVENTED] });
-  c.w.service.contracts.confirmCheck(`task:${childTaskId}`, "output-matches", {
-    pattern: "^3\\.1415926535$",
-  });
+  c.w.service.contracts.confirmCheck(
+    `task:${childTaskId}`,
+    checkSlot(INVENTED),
+    {
+      pattern: "^3\\.1415926535$",
+    },
+  );
   c.w.setProvider(async (_c, _e, emit) => {
     await writeFile(join(c.folder, "pi.py"), "x");
     emit({ type: "text", data: "3.1415926536" });
@@ -459,7 +457,7 @@ test("a literal grounded in the user's own words is enforced at once", async (t)
   assert.deepEqual(c.w.service.contracts.unresolved(child), []);
 });
 
-test("delegations no contract governs keep the checks the caller wrote, as before", async (t) => {
+test("a response-only delegation cannot enforce a model-invented literal without confirmation", async (t) => {
   const w = await world(t);
   const planner = await w.service.saveAgent({
     name: "P",
@@ -488,11 +486,15 @@ test("delegations no contract governs keep the checks the caller wrote, as befor
     { agentId: planner.id, taskId: parent.id },
     { recipient: worker.id, title: "Say it", completionChecks: [INVENTED] },
   ) as { childTaskId: string };
+  const child = w.store.get<Task>("task", handoff.childTaskId);
+  assert.deepEqual(child.completionChecks ?? [], []);
   assert.deepEqual(
-    w.store.get<Task>("task", handoff.childTaskId).completionChecks,
+    w.service.contracts.unresolved(child).map((c) => c.check),
     [{ ...INVENTED, flags: "" }],
   );
-  assert.equal(w.store.list("execution-contract").length, 0);
+  assert.throws(() => w.service.contracts.assertCompletable(child), {
+    code: "required_check_unresolved",
+  });
 });
 
 test("the user can correct the reading of the work; that is the only way to lower it", async (t) => {
@@ -540,7 +542,7 @@ test("requirements the user wrote are inherited by every deliverable child; omit
   });
   assert.equal(saved.maxCorrectionRounds, 3);
   const slotted = saved.requiredChecks.find(
-    (x) => x.slot === "output-matches",
+    (x) => x.check.type === "output-matches",
   )!;
   assert.deepEqual(
     [slotted.origin, slotted.confirmation, slotted.enforcement],
@@ -564,6 +566,16 @@ test("requirements the user wrote are inherited by every deliverable child; omit
   }
   // An explicit analysis subtask is a response-only child: it keeps its own scope, and the
   // obligations stay on the project for the deliverables.
+  await c.w.service.saveAgent(
+    {
+      name: c.worker.name,
+      environment: c.worker.environment,
+      roleType: "implementer",
+      tools: ["read"],
+      workspaces: [{ path: c.folder, access: "read", active: true }],
+    },
+    c.worker.id,
+  );
   const analysis = c.delegate({
     title: "Explain which algorithms compute pi",
     instructions: "Summarize the options in prose.",
@@ -571,7 +583,10 @@ test("requirements the user wrote are inherited by every deliverable child; omit
   });
   const analysisTask = c.w.store.get<Task>("task", analysis.childTaskId);
   assert.deepEqual(analysisTask.completionChecks ?? [], []);
-  assert.equal(c.w.service.contracts.task(analysis.childTaskId), null);
+  assert.equal(
+    c.w.service.contracts.task(analysis.childTaskId)!.workKind,
+    "response-only",
+  );
   assert.equal(
     c.w.service.contracts.project(c.workflow.id)!.requiredChecks.length,
     1,
@@ -594,7 +609,7 @@ test("requirements the user wrote are inherited by every deliverable child; omit
   );
 });
 
-test("a recipient cannot accumulate more required checks than a task can carry; the refused call creates nothing", async (t) => {
+test("accepted requirements do not accumulate onto unrelated later deliverables", async (t) => {
   const w = await world(t);
   const team = w.insertPipeline();
   const folder = await w.folder("many");
@@ -627,6 +642,6 @@ test("a recipient cannot accumulate more required checks than a task can carry; 
     emit({ type: "text", data: "delegated" });
   });
   await w.chat(team.planner.id, REQUEST);
-  assert.equal(outcome.error?.code, "too_many_requirements");
-  assert.equal(w.tasks().length, outcome.tasksBefore);
+  assert.equal(outcome.error, undefined);
+  assert.equal(w.tasks().length, outcome.tasksBefore! + 1);
 });

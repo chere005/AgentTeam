@@ -59,6 +59,8 @@ export type ProjectSetupRecord = {
   signature: string;
   /** A chat request sent again once its setup was ready (Start); never sent twice. */
   startedAt?: string;
+  startMessageId?: string;
+  startMode?: "resent" | "requeued" | "prepared";
   updatedAt: string;
 };
 
@@ -284,6 +286,15 @@ export class ProjectSetupService {
     return saved;
   }
 
+  /** An executable chat requires explicit review/Start even when all grants already exist. */
+  requirePreparation(workflowId: string) {
+    const record = this.record(workflowId) ?? this.fresh(workflowId);
+    this.save({ ...record, state: "needed" });
+    this.store.emit("project.setup_required", workflowId, {
+      workflowId,
+      preparation: true,
+    });
+  }
   /** Re-evaluate a recorded setup: ready once every participant can do its part. */
   refresh(workflowId: string) {
     const record = this.record(workflowId);
@@ -392,6 +403,10 @@ export class ProjectSetupService {
           }
         : null,
       unresolvedChecks: this.service.contracts.view(workflowId).unresolved,
+      executionPlan: this.service.executionProjects?.canStart(workflowId)
+        ? this.service.executionProjects.plan(workflowId)
+        : null,
+      executionProject: this.service.executionProjects?.get(workflowId) ?? null,
       applied: record?.applied ?? [],
       /**
        * Start for a chat request: once its setup is ready the original message is sent again, once.
@@ -454,19 +469,89 @@ export class ProjectSetupService {
       "setup_not_ready",
       "The setup is not finished yet; apply it first",
     );
+    // Existing blocked children already carry this exact contract: repair them, never duplicate
+    // their work with another planner request.
+    const children = this.store
+      .list<Task>("task")
+      .filter(
+        (t) =>
+          t.workflowId === workflowId &&
+          t.parentTaskId &&
+          !["completed", "cancelled", "failed"].includes(t.status),
+      );
+    if (children.length) {
+      const requeued = this.service.launchReadiness.requeueWaiting(
+        (t) => t.workflowId === workflowId,
+      );
+      this.save({ ...record, startedAt: now(), startMode: "requeued" });
+      return {
+        ...this.view(workflowId),
+        executed: { mode: "requeued", requeued },
+      };
+    }
+    const projects = (
+      this.service as TeamService & {
+        executionProjects?: {
+          canStart: (id: string) => boolean;
+          startPrepared: (id: string) => Promise<unknown>;
+        };
+      }
+    ).executionProjects;
+    if (projects?.canStart(workflowId)) {
+      const result = await projects.startPrepared(workflowId);
+      this.save({ ...record, startedAt: now(), startMode: "prepared" });
+      return {
+        ...this.view(workflowId),
+        executed: { mode: "prepared", result },
+      };
+    }
+    const blockedRoots = this.store
+      .list<Task>("task")
+      .filter(
+        (t) =>
+          t.workflowId === workflowId &&
+          !t.parentTaskId &&
+          ["queued", "blocked", "running"].includes(t.status),
+      );
+    if (blockedRoots.length) {
+      const requeued = this.service.launchReadiness.requeueWaiting(
+        (t) => t.workflowId === workflowId,
+      );
+      this.save({ ...record, startedAt: now(), startMode: "requeued" });
+      return {
+        ...this.view(workflowId),
+        executed: { mode: "requeued", requeued },
+      };
+    }
     const original = this.store.get<Message>(
       "message",
       contract.origin.messageId,
     );
-    this.store.transaction(() => {
-      this.service.message(contract.origin!.sessionId, { text: original.text });
-      this.save({ ...record, startedAt: now() });
-      this.store.emit("project.setup_started", workflowId, {
-        workflowId,
-        sessionId: contract.origin!.sessionId,
-      });
+    // The message is idempotent across a thrown send. Mark started only when queueing succeeded.
+    const queued = record.startMessageId
+      ? this.store.get<Message>("message", record.startMessageId)
+      : this.store.transaction(() => {
+          const message = this.service.message(contract.origin!.sessionId, {
+            text: original.text,
+          });
+          this.save({ ...record, startMessageId: message.id });
+          return message;
+        });
+    this.store.put("prepared-chat", {
+      id: contract.origin.sessionId,
+      workflowId,
+      messageId: queued.id,
     });
     await execution.start(contract.origin.sessionId);
+    this.save({
+      ...(this.record(workflowId) ?? record),
+      startedAt: now(),
+      startMode: "resent",
+    });
+    this.store.emit("project.setup_started", workflowId, {
+      workflowId,
+      sessionId: contract.origin.sessionId,
+    });
     return this.view(workflowId);
   }
 
@@ -668,7 +753,8 @@ export async function projectSetupRoute(
       .object({
         contractId: z.string().min(1).max(300).optional(),
         slot: z.string().min(1).max(400),
-        pattern: z.string().min(1).max(500).optional(),
+        pattern: z.string().min(1).max(4096).optional(),
+        withdraw: z.boolean().optional(),
         flags: z
           .string()
           .regex(/^[imsu]*$/)

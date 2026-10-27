@@ -404,15 +404,16 @@ export class Orchestration {
 
   // -- tools -------------------------------------------------------------------------------------------
   tools(ctx?: ToolContext): ToolDefinition[] {
-    const reachable = ctx
-      ? this.store
-          .list<Agent>("agent")
-          .filter(
-            (agent) =>
-              agent.id !== ctx.agentId &&
-              this.service.permitted(ctx.agentId, agent.id, "delegate"),
-          )
-      : [];
+    const reachable =
+      ctx && !this.service.executionProjects.isReview(ctx.taskId)
+        ? this.store
+            .list<Agent>("agent")
+            .filter(
+              (agent) =>
+                agent.id !== ctx.agentId &&
+                this.service.permitted(ctx.agentId, agent.id, "delegate"),
+            )
+        : [];
     const invokeSchema = z.toJSONSchema(invokeArgsSchema, {
       io: "input",
     }) as Record<string, any>;
@@ -425,7 +426,7 @@ export class Orchestration {
         recipient.description = `Use an exact reachable teammate name or id. Names: ${names.join("; ")}.`;
       }
     }
-    return [
+    const definitions: ToolDefinition[] = [
       {
         name: "invoke_teammate",
         description: `Delegate work to a teammate through AgentTeam. ${ctx ? (reachable.length ? `Reachable teammates (use exact names): ${reachable.map((agent) => agent.name).join(", ")}.` : "No teammates are currently reachable from this agent.") : "The caller's reachable teammates are listed in the tool input schema."} Communication permissions, child/depth/loop limits, resource locks, validation gates and explicit file-excerpt sharing permissions are enforced by the backend. A recipient that cannot do the work (for example a worker with no folder to write in) is refused: nothing is created, and the error names the setup step to ask the user for. For file deliverables, supply completionChecks with artifact-exists and artifact-matches so the backend verifies actual files and required content. Do not attach or copy whole files. Share summaries in context; pass a short excerpt only through context.resources, where the recipient must have read access or the resource must allow sharing. Returns parent/child task ids; read the outcome with teammate_result.`,
@@ -442,6 +443,9 @@ export class Orchestration {
         handler: (ctx, args) => this.teammateResult(ctx, args),
       },
     ];
+    return definitions.filter(
+      (tool) => tool.name !== "invoke_teammate" || !ctx || reachable.length > 0,
+    );
   }
 
   // -- recipient resolution -----------------------------------------------------------------------------
@@ -802,6 +806,11 @@ export class Orchestration {
     );
   }
   invokeTeammate(ctx: ToolContext, input: unknown) {
+    assert(
+      !this.service.executionProjects.isReview(ctx.taskId),
+      "review_read_only",
+      "A required reviewer cannot delegate mutations or replacement work",
+    );
     const args = invokeArgsSchema.parse(input);
     if (args.context?.data)
       assert(
@@ -828,6 +837,7 @@ export class Orchestration {
       completionChecks: args.completionChecks,
       resourcePaths: args.resourcePaths,
     });
+    args.resourcePaths = plan.resourcePaths;
     const traits = this.inheritedTraits(parent, args);
     // The task folder as the delegation will store it (symlinks resolved); a path outside every
     // folder of the recipient is reported by the delegation itself, not by readiness.

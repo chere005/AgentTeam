@@ -44,6 +44,7 @@ import { teamSpaceRoute, teamIdSchema } from "./team-spaces.ts";
 import { projectRoute } from "./projects.ts";
 import { projectLifecycleRoute } from "./project-lifecycle.ts";
 import { projectSetupRoute } from "./project-setup.ts";
+import { executionProjectRoute } from "./execution-project-routes.ts";
 import { contractProposalSchema } from "./execution-contract.ts";
 import { teamSettingsRoute } from "./team-settings.ts";
 import { ExampleTeams } from "./example-teams.ts";
@@ -51,6 +52,7 @@ import { handleToolRpc } from "./tool-endpoint.ts";
 import { FilesystemPolicy } from "./filesystem-policy.ts";
 import {
   AppError,
+  taskSchema,
   type Agent,
   type Session,
   type Message,
@@ -432,6 +434,13 @@ export function createApi(
       // Projects assigned to a team (src/projects.ts), their lifecycle (src/project-lifecycle.ts)
       // and team settings (src/team-settings.ts); before the team container routes.
       const projected =
+        (await executionProjectRoute(
+          service,
+          method,
+          url,
+          () => body(req),
+          () => runs.enabled,
+        )) ??
         (await projectSetupRoute(service, method, url, () => body(req), {
           enabled: () => runs.enabled,
           start: (sessionId) => runs.start(sessionId),
@@ -888,43 +897,52 @@ export function createApi(
             : null;
         // `contract` is a proposal read by the application, not a task field.
         const { contract: rawContract, ...rest } = fields ?? {};
-        const input: unknown = fields ? rest : posted;
+        const input = taskSchema.parse(fields ? rest : posted);
         // A malformed proposal is refused before anything is created.
         const proposal =
           rawContract === undefined
             ? undefined
             : contractProposalSchema.parse(rawContract);
-        // Optional per-project setting: isolate coding work in a fresh worktree first.
-        const auto =
-          typeof rest.agentId === "string"
-            ? await development.worktrees.autoForTask(rest.agentId)
-            : null;
-        const task = service.task(input);
-        // The same contract and readiness decision as chat and delegation: the application reads
-        // the request, a proposal can only raise it, and a task its agent cannot do is saved
-        // and reported with the setup step it needs (the scheduler blocks it before it starts).
-        const contract = service.contracts.seedTask({
-          task,
-          text: `${task.title}\n${task.instructions}`,
-          source: "request",
-          proposal,
-        });
-        const readiness = service.launchReadiness.evaluateProspective(
-          store.get<Agent>("agent", task.agentId),
-          { task, contract },
-        );
-        if (!readiness.ready)
-          service.setups.noteBlocked(task.workflowId, readiness);
-        return send(
-          {
-            ...task,
-            ...(auto ? { autoWorktree: auto } : {}),
+        const prepareTask = () => {
+          const task = service.task(input);
+          // The same contract and readiness decision as chat and delegation: the application reads
+          // the request, a proposal can only raise it, and a task its agent cannot do is saved
+          // and reported with the setup step it needs (the scheduler blocks it before it starts).
+          const contract = service.contracts.seedTask({
+            task,
+            text: `${task.title}\n${task.instructions}`,
+            source: "request",
+            proposal,
+            confirmedChecks: true,
+          });
+          const readiness = service.launchReadiness.evaluateProspective(
+            store.get<Agent>("agent", task.agentId),
+            { task, contract },
+          );
+          if (!readiness.ready)
+            service.setups.noteBlocked(task.workflowId, readiness);
+          return {
+            ...store.get<Task>("task", task.id),
             ...(contract ? { contract } : {}),
             readiness,
-          },
-          201,
-        );
+          };
+        };
+        // Validate the authoritative synchronous mutation before an optional worktree operation.
+        // Store buffers events until commit, and this sentinel always rolls the preview back.
+        const validated = {};
+        try {
+          store.transaction(() => {
+            prepareTask();
+            throw validated;
+          });
+        } catch (error) {
+          if (error !== validated) throw error;
+        }
+        const auto = await development.worktrees.autoForTask(input.agentId);
+        const saved = store.transaction(prepareTask);
+        return send({ ...saved, ...(auto ? { autoWorktree: auto } : {}) }, 201);
       }
+
       if (
         method === "POST" &&
         (match = path.match(/^\/tasks\/([^/]+)\/supersede$/))

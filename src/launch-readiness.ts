@@ -48,6 +48,8 @@ export type SetupAction = {
   agentId?: string;
   path?: string;
   tool?: string;
+  contractId?: string;
+  slot?: string;
 };
 export type ReadinessIssueCode =
   | CapabilityIssueCode
@@ -56,7 +58,8 @@ export type ReadinessIssueCode =
   | "confinement-unsupported"
   | "global-denial"
   | "runtime-unavailable"
-  | "check-unconfirmed";
+  | "check-unconfirmed"
+  | "project-preparation";
 export type ReadinessIssue = {
   code: ReadinessIssueCode;
   capability: Capability | null;
@@ -143,7 +146,8 @@ export function requiredFor(input: {
   const floorApplies =
     (input.adapter === "claude" || input.adapter === "codex") &&
     input.roleClass !== "reviewer" &&
-    input.roleClass !== "adjudicator";
+    input.roleClass !== "adjudicator" &&
+    input.roleClass !== "reporter";
   const grants = (applies: boolean): Capability[] =>
     applies
       ? [
@@ -163,6 +167,19 @@ export function requiredFor(input: {
   const waived =
     input.contract.workKindSource === "user" &&
     input.contract.workKind === "response-only";
+  const readonly = ["reviewer", "adjudicator", "reporter"].includes(
+    input.roleClass,
+  );
+  if (readonly)
+    return {
+      required: waived
+        ? []
+        : input.contract.roles.some((r) => r.capabilities.includes("read")) ||
+            input.contract.workKind !== "response-only"
+          ? ["read"]
+          : [],
+      basis: "contract",
+    };
   const needed: Capability[] =
     input.contract.scope === "task"
       ? [...kindCapabilities(input.contract.workKind)]
@@ -256,14 +273,41 @@ export class LaunchReadiness {
   /** The launch facts a task would get, from saved configuration alone (synchronous, no disk). */
   prospectivePlan(
     agent: Agent,
-    task?: Pick<TaskTraits, "resourcePaths" | "executionMode">,
+    task?: Partial<TaskTraits>,
+    contract?: ContractLike | null,
   ): PlanFacts {
     const executionMode = task?.executionMode;
     const tools =
       executionMode === "file-only"
         ? agent.tools.filter((tool) => tool !== "shell")
         : agent.tools;
-    const scope = taskScope(agent, task?.resourcePaths);
+    const inherited =
+      contract ??
+      (task?.id && task.workflowId
+        ? this.service.contracts.effective({
+            id: task.id,
+            workflowId: task.workflowId,
+            parentTaskId: task.parentTaskId,
+          })
+        : task?.workflowId
+          ? this.service.contracts.project(task.workflowId)
+          : null);
+    const needsFolder =
+      requiredFor({
+        contract: inherited,
+        roleClass: roleClassOf(this.service, agent),
+        tools,
+        adapter:
+          this.service.connection(agent.environment).transport === "acp"
+            ? "acp"
+            : (agent.environment as EffectiveCapabilities["adapter"]),
+      }).required.length > 0;
+    const paths = task?.resourcePaths?.length
+      ? task.resourcePaths
+      : needsFolder && agent.workspaces.length && inherited?.projectFolder
+        ? [inherited.projectFolder]
+        : undefined;
+    const scope = taskScope(agent, paths);
     const workspaces = scope?.workspaces ?? agent.workspaces;
     return {
       environment: agent.environment,
@@ -538,7 +582,19 @@ export class LaunchReadiness {
       ...(options.task?.id ? { taskId: options.task.id } : {}),
       basis: "grants",
       roleClass,
-      required: [],
+      required: requiredFor({
+        contract:
+          options.contract ??
+          (options.task?.id
+            ? this.service.contracts.effective(options.task as Task)
+            : null),
+        roleClass,
+        tools: agent.tools,
+        adapter:
+          this.service.connection(agent.environment).transport === "acp"
+            ? "acp"
+            : (agent.environment as EffectiveCapabilities["adapter"]),
+      }).required,
       effective: null,
       issues: [issue],
       message: issue.message,
@@ -568,6 +624,7 @@ export class LaunchReadiness {
         agent.workspaces.length
           ? options.task
           : { ...options.task, resourcePaths: undefined },
+        options.contract,
       );
     } catch (error) {
       const issue = this.issueFromError(agent, error, options.task?.id);
@@ -807,30 +864,36 @@ export class LaunchReadiness {
       projectType: profile?.type ?? null,
       hasProject,
       notice:
-        profile?.type === "pipeline" && !hasProject
+        !reachable.length && !this.evaluateProspective(agent).ready
           ? {
-              code: "pipeline-needs-project" as const,
-              text: "This team runs projects; chat does not start the pipeline.",
-              action: {
-                kind: "choose-project-folder" as const,
-                label: "Assign a project",
-              },
+              code: "agent-not-ready" as const,
+              text: this.evaluateProspective(agent).message,
+              action: this.evaluateProspective(agent).issues[0]?.fix ?? null,
             }
-          : blocked.length
+          : profile?.type === "pipeline" && !hasProject
             ? {
-                code: "workers-not-ready" as const,
-                text: `${blocked
-                  .slice(0, 3)
-                  .map((worker) => worker.name)
-                  .join(
-                    ", ",
-                  )}${blocked.length > 3 ? ` and ${blocked.length - 3} more` : ""} cannot write or run code yet: ${blocked[0].issues[0]?.message ?? "setup is missing"}`,
-                action: blocked[0].issues[0]?.fix ?? {
+                code: "pipeline-needs-project" as const,
+                text: "This team runs projects; chat does not start the pipeline.",
+                action: {
                   kind: "choose-project-folder" as const,
-                  label: "Choose project folder",
+                  label: "Assign a project",
                 },
               }
-            : null,
+            : blocked.length
+              ? {
+                  code: "workers-not-ready" as const,
+                  text: `${blocked
+                    .slice(0, 3)
+                    .map((worker) => worker.name)
+                    .join(
+                      ", ",
+                    )}${blocked.length > 3 ? ` and ${blocked.length - 3} more` : ""} cannot write or run code yet: ${blocked[0].issues[0]?.message ?? "setup is missing"}`,
+                  action: blocked[0].issues[0]?.fix ?? {
+                    kind: "choose-project-folder" as const,
+                    label: "Choose project folder",
+                  },
+                }
+              : null,
     };
   }
 }

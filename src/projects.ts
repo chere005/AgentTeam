@@ -171,7 +171,11 @@ export async function createFreeFormProject(
   service: TeamService,
   teamId: string,
   input: unknown,
-  options: { simple?: boolean } = {},
+  options: {
+    simple?: boolean;
+    confirmedChecks?: boolean;
+    trustedRequest?: string;
+  } = {},
 ) {
   const schema = options.simple
     ? freeFormSchema.extend({ goal: z.string().trim().min(1).max(20_000) })
@@ -289,12 +293,17 @@ export async function createFreeFormProject(
     };
     store.put("workflow", { ...workflow, paused: true, setup });
     store.emit("workflow.paused", workflow.id);
-    // The execution contract: what this assignment needs, read from the user's own words (goal and
-    // task instructions). Response-only goals persist nothing (src/execution-contract.ts).
+    // Classify the assignment prose, but ground literal checks only in the separate human request.
+    // User-authored form checks are authoritative; model-authored checks still need provenance.
     service.contracts.seedProject({
       workflowId: workflow.id,
       text: [o.goal, ...o.tasks.map((t) => t.instructions)].join("\n"),
       source: "assignment",
+      trustedRequest:
+        options.trustedRequest ??
+        ((options.confirmedChecks ?? true)
+          ? [o.goal, ...o.tasks.map((t) => t.instructions)].join("\n")
+          : ""),
       projectFolder: workspace,
       owner,
       teamId,
@@ -338,6 +347,17 @@ export async function createFreeFormProject(
           ? { invokedBy: ownerId }
           : {}),
       });
+      service.contracts.seedTask({
+        task: created,
+        text: t.instructions || o.goal,
+        source: "assignment",
+        confirmedChecks: options.confirmedChecks ?? true,
+        trustedRequest:
+          options.trustedRequest ??
+          ((options.confirmedChecks ?? true)
+            ? [o.goal, ...o.tasks.map((t) => t.instructions)].join("\n")
+            : ""),
+      });
       ids[i] = created.id;
     }
     return workflow.id;
@@ -350,6 +370,7 @@ export async function assignProject(
   service: TeamService,
   teamId: string,
   input: unknown,
+  provenance: { confirmedChecks?: boolean; trustedRequest?: string } = {},
 ) {
   const { mode, ...projectInput } = z
     .object({ mode: z.enum(["simple", "team"]).optional() })
@@ -358,6 +379,8 @@ export async function assignProject(
   if (mode === "simple")
     return createFreeFormProject(service, teamId, projectInput, {
       simple: true,
+      confirmedChecks: provenance.confirmedChecks ?? true,
+      trustedRequest: provenance.trustedRequest,
     });
   const profile = teamProfile(service.store, teamId);
   const type: ProjectType = profile?.type ?? "free-form";
@@ -365,7 +388,10 @@ export async function assignProject(
     return createPipelineProject(service, teamId, projectInput);
   if (type === "wolfram-validated")
     return createWolframProject(service, teamId, projectInput);
-  return createFreeFormProject(service, teamId, projectInput);
+  return createFreeFormProject(service, teamId, projectInput, {
+    confirmedChecks: provenance.confirmedChecks ?? true,
+    trustedRequest: provenance.trustedRequest,
+  });
 }
 
 /** What the "Assign project" form needs for this team. */
