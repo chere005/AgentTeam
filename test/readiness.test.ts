@@ -290,6 +290,7 @@ async function pipelineWorld(t: any) {
     await mkdtemp(join(tmpdir(), "agentteam-ready-")),
   );
   const { store, service } = make();
+  service.hostPlatform = () => "linux"; // Controlled pipeline host, not a native provider launch.
   const root = join(base, "repo");
   await mkdir(join(root, "a"), { recursive: true });
   await mkdir(join(root, "b"), { recursive: true });
@@ -320,13 +321,9 @@ async function pipelineWorld(t: any) {
     readiness?: ReadinessService,
   ) => {
     const { createApi } = await import("../src/http.ts");
-    const server = createApi(
-      service,
-      "tok",
-      new RunManager(service, false, base),
-      discovery,
-      readiness,
-    );
+    const runs = new RunManager(service, false, base);
+    runs.runtimePlatform = "linux";
+    const server = createApi(service, "tok", runs, discovery, readiness);
     servers.push(server);
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
     const port = (server.address() as { port: number }).port;

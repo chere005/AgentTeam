@@ -153,152 +153,176 @@ export function ProjectSetupCard({
         </label>
       )}
       {view.blockers.length > 0 && (
-        <ul className="setup-blockers" data-testid="setup-blockers">
-          {view.blockers.map((blocker) => (
-            <li key={blocker.agentId}>
-              <b>{blocker.agentName}</b>
-              <ul>
-                {blocker.issues.map((issue, i) => (
-                  <li key={`${issue.code}-${i}`}>
-                    {issue.message}
-                    {issue.fix && (
-                      <button
-                        type="button"
-                        className="text-button"
-                        onClick={() => {
-                          if (issue.fix?.kind === "confirm-check")
-                            document
-                              .getElementById(`${id}-checks`)
-                              ?.scrollIntoView({ block: "nearest" });
-                          else if (
-                            [
-                              "choose-project-folder",
-                              "attach-folder",
-                              "grant-write-access",
-                            ].includes(issue.fix?.kind ?? "")
-                          )
-                            document.getElementById(`${id}-folder`)?.focus();
-                          else if (issue.fix) repair?.(issue.fix);
-                        }}
-                      >
-                        {issue.fix.label}
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </li>
-          ))}
-        </ul>
+        <details className="setup-details">
+          <summary>{view.blockers.length} participants need setup</summary>
+          <ul className="setup-blockers" data-testid="setup-blockers">
+            {view.blockers.map((blocker) => (
+              <li key={blocker.agentId}>
+                <b>{blocker.agentName}</b>
+                <ul>
+                  {blocker.issues.map((issue, i) => (
+                    <li key={`${issue.code}-${i}`}>
+                      {issue.message}
+                      {issue.fix && (
+                        <button
+                          type="button"
+                          className="text-button"
+                          onClick={() => {
+                            if (issue.fix?.kind === "confirm-check")
+                              document
+                                .getElementById(`${id}-checks`)
+                                ?.scrollIntoView({ block: "nearest" });
+                            else if (
+                              [
+                                "choose-project-folder",
+                                "attach-folder",
+                                "grant-write-access",
+                              ].includes(issue.fix?.kind ?? "")
+                            )
+                              document.getElementById(`${id}-folder`)?.focus();
+                            else if (issue.fix) repair?.(issue.fix);
+                          }}
+                        >
+                          {issue.fix.label}
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
       {view.proposal.participants.length > 0 && (
-        <form
-          aria-label="Project folder setup"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void run(async () => {
-              const result = await api(
-                `/projects/${workflowId}/setup`,
-                "POST",
-                {
-                  folder,
-                  participants,
-                  widen,
-                },
-              );
-              dirty.current = false;
-              setOutcome(
-                result.outcome
-                  ? `Folder applied. ${result.outcome.requeued.length} saved tasks ready to continue.`
-                  : "Folder applied.",
-              );
-            });
-          }}
-        >
-          <label htmlFor={`${id}-folder`}>Project folder</label>
-          <div className="setup-folder">
-            <input
-              id={`${id}-folder`}
-              list={`${id}-folders`}
-              value={folder}
-              disabled={busy}
-              placeholder="Choose a folder for this project"
-              onChange={(e) => {
-                dirty.current = true;
-                setFolder(e.target.value);
-              }}
-            />
-            <button
-              type="button"
-              className="secondary"
-              disabled={busy}
-              onClick={() =>
-                void run(async () => {
-                  const selected = await window.agentteam.chooseFolder();
-                  if (selected) {
-                    dirty.current = true;
-                    setFolder(selected);
-                  }
-                })
-              }
-            >
-              <FolderOpen size={14} /> Browse
-            </button>
-          </div>
-          <datalist id={`${id}-folders`}>
-            {view.proposal.candidates.map((path) => (
-              <option key={path} value={path} />
-            ))}
-          </datalist>
-          <fieldset disabled={busy} className="setup-participants">
-            <legend>Participants and access</legend>
-            {view.proposal.participants.map((p) => (
-              <div className="setup-participant" key={p.agentId}>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={participants.includes(p.agentId)}
-                    onChange={(e) =>
-                      selectParticipant(p.agentId, e.target.checked)
-                    }
-                  />
-                  <span>
-                    <b>{p.name}</b>
-                    <small>
-                      {p.roleClass} ·{" "}
-                      {p.access === "write" ? "Read and edit" : "Read only"}
-                      {p.ready ? " · Ready" : " · Setup required"}
-                    </small>
-                    {p.scope && <small className="setup-path">{p.scope}</small>}
-                  </span>
-                </label>
-                {p.access === "write" && participants.includes(p.agentId) && (
-                  <label className="setup-widen">
-                    <input
-                      type="checkbox"
-                      checked={widen.includes(p.agentId)}
-                      onChange={(e) =>
-                        setWiden((old) =>
-                          e.target.checked
-                            ? [...old, p.agentId]
-                            : old.filter((v) => v !== p.agentId),
-                        )
-                      }
-                    />
-                    Allow editing if this folder is currently read only
-                  </label>
-                )}
-              </div>
-            ))}
-          </fieldset>
-          <button
-            type="submit"
-            disabled={busy || !folder.trim() || !participants.length}
-            data-testid="setup-apply"
+        <details className="setup-details" open={!view.start?.startedAt}>
+          <summary>
+            Project folder and access
+            {view.start?.startedAt && folder ? ` · ${folder}` : ""}
+          </summary>
+          <form
+            aria-label="Project folder setup"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void run(async () => {
+                const result = await api(
+                  `/projects/${workflowId}/setup`,
+                  "POST",
+                  {
+                    folder,
+                    participants,
+                    widen,
+                  },
+                );
+                dirty.current = false;
+                setOutcome(
+                  result.outcome
+                    ? `Folder applied. ${result.outcome.requeued.length} saved tasks ready to continue.`
+                    : "Folder applied.",
+                );
+              });
+            }}
           >
-            Apply folder and access
-          </button>
-        </form>
+            <label htmlFor={`${id}-folder`}>Project folder</label>
+            <div className="setup-folder">
+              <input
+                id={`${id}-folder`}
+                list={`${id}-folders`}
+                value={folder}
+                disabled={busy}
+                placeholder="Choose a folder for this project"
+                onChange={(e) => {
+                  dirty.current = true;
+                  setFolder(e.target.value);
+                }}
+              />
+              <button
+                type="button"
+                className="secondary"
+                disabled={busy}
+                onClick={() =>
+                  void run(async () => {
+                    const selected = await window.agentteam.chooseFolder();
+                    if (selected) {
+                      dirty.current = true;
+                      setFolder(selected);
+                    }
+                  })
+                }
+              >
+                <FolderOpen size={14} /> Browse
+              </button>
+            </div>
+            <datalist id={`${id}-folders`}>
+              {view.proposal.candidates.map((path) => (
+                <option key={path} value={path} />
+              ))}
+            </datalist>
+            <details className="setup-details">
+              <summary>
+                Access for {participants.length} participants ·{" "}
+                {
+                  view.proposal.participants.filter(
+                    (p) =>
+                      participants.includes(p.agentId) && p.access === "write",
+                  ).length
+                }{" "}
+                can edit
+              </summary>
+              <fieldset disabled={busy} className="setup-participants">
+                <legend>Participants and access</legend>
+                {view.proposal.participants.map((p) => (
+                  <div className="setup-participant" key={p.agentId}>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={participants.includes(p.agentId)}
+                        onChange={(e) =>
+                          selectParticipant(p.agentId, e.target.checked)
+                        }
+                      />
+                      <span>
+                        <b>{p.name}</b>
+                        <small>
+                          {p.roleClass} ·{" "}
+                          {p.access === "write" ? "Read and edit" : "Read only"}
+                          {p.ready ? " · Ready" : " · Setup required"}
+                        </small>
+                        {p.scope && (
+                          <small className="setup-path">{p.scope}</small>
+                        )}
+                      </span>
+                    </label>
+                    {p.access === "write" &&
+                      participants.includes(p.agentId) && (
+                        <label className="setup-widen">
+                          <input
+                            type="checkbox"
+                            checked={widen.includes(p.agentId)}
+                            onChange={(e) =>
+                              setWiden((old) =>
+                                e.target.checked
+                                  ? [...old, p.agentId]
+                                  : old.filter((v) => v !== p.agentId),
+                              )
+                            }
+                          />
+                          Allow editing if this folder is currently read only
+                        </label>
+                      )}
+                  </div>
+                ))}
+              </fieldset>
+            </details>
+            <button
+              type="submit"
+              disabled={busy || !folder.trim() || !participants.length}
+              data-testid="setup-apply"
+            >
+              Apply folder and access
+            </button>
+          </form>
+        </details>
       )}
       {view.unresolvedChecks.length > 0 && (
         <div className="setup-checks" id={`${id}-checks`}>

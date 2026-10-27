@@ -31,11 +31,10 @@ async function world(t: any) {
   ]);
   await catalog.scan();
   const service = new TeamService(store, catalog);
-  const server = createApi(
-    service,
-    "test-token",
-    new RunManager(service, false, process.cwd()),
-  );
+  // These API fixtures model a supported sandboxed host without starting a provider.
+  const runs = new RunManager(service, false, process.cwd());
+  runs.runtimePlatform = "linux";
+  const server = createApi(service, "test-token", runs);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const base = await realpath(await mkdtemp(join(tmpdir(), "agentteam-ts-")));
   t.after(async () => {

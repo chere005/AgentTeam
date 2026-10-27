@@ -133,7 +133,10 @@ export function ExecutionProjectCard({
             ))}
           {view.reviews.map((review) => (
             <p key={review.taskId}>
-              Review: {review.verdict?.verdict ?? review.task.status}
+              {view.plan.reviewers.find(
+                (person) => person.id === review.reviewerId,
+              )?.name ?? "Review"}
+              : {review.verdict?.verdict ?? review.task.status}
             </p>
           ))}
           {project.phase === "needs-attention" && (

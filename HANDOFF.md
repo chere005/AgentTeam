@@ -1,5 +1,9 @@
 # AgentTeam handoff — October 26, 2026
 
+## Current checkpoint: 0.6.0 candidate, installed prompt acceptance passed
+
+Work remains on `fix/reliable-execution-contract` pending final preflight, main merge and deployment. Backend/UI milestones A–C are implemented. Local typecheck, package, backend (687 passed, one opt-in skip), full desktop (83/83) and final setup/Recovery checks (2/2) pass. The actual installed app completed the original three-language Pi request with independent native execution evidence and four real reviewer approvals; restart repeated no provider work. See [acceptance evidence](docs/installed-acceptance-0.6.0.md) and [current continuation](docs/CONTINUATION.md). Historical deployment status below describes 0.5.0.
+
 ## Current status: 0.5.0 released and deployed (October 26, 2026)
 
 The accumulated work is merged to `main` at `0f7c234`, tagged `v0.5.0`, and published as [AgentTeam 0.5.0](https://github.com/chere005/AgentTeam/releases/tag/v0.5.0). Continue on `main`; the branch and installation details below are historical.

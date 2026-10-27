@@ -111,3 +111,15 @@
 .setup-notice button {
   flex-shrink: 0;
 }
+
+.setup-details {
+  min-width: 0;
+}
+.setup-details > summary {
+  cursor: pointer;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.setup-details[open] > summary {
+  margin-bottom: 10px;
+}

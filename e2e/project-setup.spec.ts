@@ -137,6 +137,9 @@ process.stdin.on("end", () => {
     await start.click({ clickCount: 2 });
     await expect(start).toBeDisabled();
     await expect(card).toContainText("Request started");
+    await expect(
+      card.getByRole("form", { name: "Project folder setup" }),
+    ).toBeHidden();
     const starts = await page.evaluate(
       async (workflowId) =>
         (await window.agentteam.request("GET", "/events")).filter(

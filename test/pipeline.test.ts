@@ -43,6 +43,8 @@ async function world(
   const base = await realpath(await mkdtemp(join(tmpdir(), "agentteam-pipe-")));
   const store = new Store(":memory:");
   const service = new TeamService(store, new SkillCatalog([]));
+  // Scripted orchestration tests simulate a supported sandboxed provider host.
+  service.hostPlatform = () => "linux";
   const root = join(base, "repo");
   await mkdir(join(root, "a"), { recursive: true });
   await mkdir(join(root, "b"), { recursive: true });
@@ -515,6 +517,7 @@ test("creating, preparing and ticking never invoke a provider", async (t) => {
   const w = await world(t);
   let calls = 0;
   const runs = new RunManager(w.service, true, process.cwd());
+  runs.runtimePlatform = "linux";
   const scheduler = new Scheduler(w.service, runs, async () => {
     calls++;
   });
@@ -1108,7 +1111,9 @@ test("worktree isolation through stage 5: fix-worker worktrees keep the verifica
   const { createApi } = await import("../src/http.ts");
   const store2 = new Store(":memory:");
   const svc2 = new TeamService(store2, new SkillCatalog([]));
-  const server = createApi(svc2, "tok", new RunManager(svc2, false, w.base));
+  const runs2 = new RunManager(svc2, false, w.base);
+  runs2.runtimePlatform = "linux";
+  const server = createApi(svc2, "tok", runs2);
   t.after(() => {
     server.close();
     store2.close();
@@ -1160,11 +1165,9 @@ test("a hand-completed adjudication opens later stages only with an attributed o
   await finish(w2, r2.tasks.codexReview, JSON_REVIEW("request-changes"));
   await finish(w2, r2.tasks.fableReview, JSON_REVIEW());
   w2.service.transitionTask(r2.tasks.adjudicate, { status: "running" });
-  const server = createApi(
-    w2.service,
-    "tok",
-    new RunManager(w2.service, false, w2.base),
-  );
+  const runs2 = new RunManager(w2.service, false, w2.base);
+  runs2.runtimePlatform = "linux";
+  const server = createApi(w2.service, "tok", runs2);
   await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
   t.after(async () => {
     server.closeAllConnections();

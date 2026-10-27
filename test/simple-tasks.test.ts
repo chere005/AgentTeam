@@ -233,7 +233,7 @@ test("file-only narrowing survives delegation and disables Codex command tools w
             resourcePaths: [w.workspace],
           },
         ),
-      { code: "simple_task_unsupported" },
+      { code: "capability_missing" },
     );
     assert.equal(
       w.store.list("task").length,
@@ -409,7 +409,7 @@ test("native Windows Codex limitations are shown before a simple project or chil
         { agentId: manager.id, taskId: parent.id },
         { recipient: agent.id, title: "Write hello" },
       ),
-    { code: "simple_task_unsupported" },
+    { code: "capability_missing" },
   );
   assert.equal(
     w.store.list("task").length,

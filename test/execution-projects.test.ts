@@ -368,6 +368,9 @@ test("a restored coordinator continues the persisted round without duplicate tas
   );
   assert.equal(restored.service.executionProjects.get(c.id)!.round, round);
   assert.equal(restored.tasks().length, before);
+  // Close the reopened database before the earlier directory cleanup hook (Windows locks files).
+  restored.scheduler.stop();
+  restored.store.close();
 });
 
 test("hand-completed approval prose without an attributed provider run never approves the prepared project", async (t) => {

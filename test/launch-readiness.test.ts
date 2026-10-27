@@ -853,6 +853,9 @@ test("restart and repeated Start create no duplicates; the setup action after a 
     w2.waits().filter((x) => x.id === `task:${direct.id}`).length,
     0,
   );
+  // The first fixture owns the shared folder; release this reopened DB before its cleanup hook.
+  w2.scheduler.stop();
+  w2.store.close();
 });
 
 test("Prepare and verify holds every pipeline stage to the tools and folders it really has", async (t) => {
