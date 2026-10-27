@@ -36,3 +36,9 @@ All reviews bind subject `743d3f4185c121dae03d5523e7cca0db0db1f08876bebb54175e51
 - This validates prepared ordinary-chat execution on macOS, not a live run of the separate legacy seven-stage pipeline project or native Windows confinement. Correction, rejection, inconclusive review, exhaustion and cancellation are covered by backend fixtures. Final release/preflight/deployment identifiers are recorded in CONTINUATION.md.
 
 The final UI candidate at `c4e4659` was subsequently installed and opened against the same completed profile (archive SHA-256 `f747c610db71d9d675b6a97ca6070919871e6360d10d760a5d3a9fefb5437534`). The native UI showed the folder/access form collapsed, all three Execution verified disclosures, each reviewer name with approve, and the same completed state. No provider work was repeated.
+
+## Official release deployment
+
+[Release 40447233303](https://github.com/chere005/AgentTeam/actions/runs/40447233303) passed every required job/step and published [v0.6.0](https://github.com/chere005/AgentTeam/releases/tag/v0.6.0) from `a0e1c3b`. Every one of the seven `SHA256SUMS.txt` rows matched its GitHub asset digest; the downloaded arm64 ZIP bytes also matched. Package version and native arm64 architecture were checked before installation. The official app archive hash equals the final accepted candidate hash above.
+
+The official app was installed into `/Applications/AgentTeam.app` and opened with the existing default profile. A new normal-mode Team Assistant prompt, `Reply with exactly: AgentTeam 0.6.0 ready.`, returned exactly `AgentTeam 0.6.0 ready.` through the actual provider; both messages reached delivered and the session returned idle. Comparison after this test retained all 66 pre-existing entities with identical canonical hashes (generated workflow model-check metadata excluded). The new chat added its own records and the historical failed request was preserved. No user-data purge or backup was performed.

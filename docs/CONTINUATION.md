@@ -1,5 +1,17 @@
 # AgentTeam continuation handoff
 
+## Version 0.6.0 released and deployed (October 26, 2026)
+
+Merged `fix/reliable-execution-contract` into `main` at `a0e1c3b`, tagged `v0.6.0`, and published [AgentTeam 0.6.0](https://github.com/chere005/AgentTeam/releases/tag/v0.6.0). [Release 40447233303](https://github.com/chere005/AgentTeam/actions/runs/40447233303) passed every required job and step, including both Mac architectures, Windows, Linux and publication. All seven installers and `SHA256SUMS.txt` are present. Desktop preflight [40445553288](https://github.com/chere005/AgentTeam/actions/runs/40445553288) exited 0; installer preflight [40445554103](https://github.com/chere005/AgentTeam/actions/runs/40445554103) passed every build. Only documentation followed the preflighted implementation `c4e4659`.
+
+The official arm64 ZIP was downloaded, its bytes checked against the published manifest and GitHub asset digest, and all seven manifest rows checked against their corresponding asset digests. Its application is installed and running at `/Applications/AgentTeam.app`, version **0.6.0**. Archive SHA-256: `f747c610db71d9d675b6a97ca6070919871e6360d10d760a5d3a9fefb5437534` (identical to the final locally accepted UI candidate).
+
+The original ordinary-chat request succeeded in the installed normal-mode app with a fresh isolated profile: Python, C++ and TypeScript programs all matched the entire independently computed 500-significant-digit reference; all four designated actual reviewers approved their current source; restart repeated no work. The published build also answered `Reply with exactly: AgentTeam 0.6.0 ready.` with the exact expected reply through the real Team Assistant provider in the existing normal user profile. All **66 pre-existing entities** matched their prior canonical hashes (generated workflow model-check metadata excluded); no user data was deleted, backed up or replaced. Earlier failed attempts remain historical failures. See [the full acceptance/deployment record](installed-acceptance-0.6.0.md).
+
+Validation: local backend **687 passed, 1 opt-in skip**; final Mac arm64 CI backend **687 passed, 1 skip**, desktop **83 passed**; Windows backend **673 passed, 15 intentional skips**; Linux backend **687 passed, 1 skip**, including actual bubblewrap confinement. Native Windows execution verification deliberately returns `verifier_unavailable`. The separate legacy seven-stage pipeline has fixture coverage and fail-closed evidence gates; it was not live-run as part of this prepared-chat acceptance. Main's required macOS check also passed in [40447231524](https://github.com/chere005/AgentTeam/actions/runs/40447231524); optional Windows/Linux desktop jobs were still running at deployment and are not claimed as completed passes.
+
+The implementation/release work is complete. The following sections preserve the implementation checkpoints and earlier history.
+
 ## Reliable execution implementation — 0.6.0 release candidate (October 26, 2026)
 
 Current work is on `fix/reliable-execution-contract`. The user authorized finishing backend/UI milestones A, B and C, a real installed-app prompt test, then merge and deployment. Historical pause/no-live instructions below are superseded by that request.

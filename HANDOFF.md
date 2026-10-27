@@ -1,8 +1,8 @@
 # AgentTeam handoff — October 26, 2026
 
-## Current checkpoint: 0.6.0 candidate, installed prompt acceptance passed
+## Current status: 0.6.0 released and installed
 
-Work remains on `fix/reliable-execution-contract` with final Desktop and installer preflights passed; main merge and deployment are next. Backend/UI milestones A–C are implemented. Local typecheck, package, backend (687 passed, one opt-in skip), full desktop (83/83) and final setup/Recovery checks (2/2) pass. The actual installed app completed the original three-language Pi request with independent native execution evidence and four real reviewer approvals; restart repeated no provider work. See [acceptance evidence](docs/installed-acceptance-0.6.0.md) and [current continuation](docs/CONTINUATION.md). Historical deployment status below describes 0.5.0.
+The verified branch is merged to `main` at `a0e1c3b`, tagged `v0.6.0`, and published as [AgentTeam 0.6.0](https://github.com/chere005/AgentTeam/releases/tag/v0.6.0). All installer builds, publication, checksums and official Mac installation are verified. The original installed-app three-language Pi prompt completed with three independent execution passes and four real reviewer approvals; restart repeated no work. The official build also passed a basic real-provider prompt in the unchanged existing user profile. Local backend: 687 pass/one opt-in skip; desktop: 83/83. See [acceptance/deployment evidence](docs/installed-acceptance-0.6.0.md) and [the latest continuation](docs/CONTINUATION.md). Historical status below describes 0.5.0.
 
 ## Current status: 0.5.0 released and deployed (October 26, 2026)
 
