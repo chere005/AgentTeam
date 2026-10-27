@@ -235,6 +235,10 @@ export async function runVerificationCommand(
       "--bind",
       output,
       output,
+      // Freeze bubblewrap's private root after it created the bind parents. Child mounts,
+      // including the disposable Output bind, retain their own access flags.
+      "--remount-ro",
+      "/",
       "--chdir",
       output,
       "--",

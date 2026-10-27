@@ -189,7 +189,7 @@ test("Python execution records actual immutable source and rejects stale evidenc
   assert.equal(f.store.list("slot").length, 0);
 });
 
-test("sandbox permits source reads/output writes but denies outside reads, outside writes, network and generated descendants", async (t) => {
+test("sandbox permits source reads/output writes but denies outside access and confines generated descendants", async (t) => {
   if (!(await canConfine())) {
     t.skip("mandatory verification sandbox unavailable on this host");
     return;
@@ -205,7 +205,7 @@ test("sandbox permits source reads/output writes but denies outside reads, outsi
   t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
   const address = server.address();
   assert.ok(address && typeof address !== "string");
-  const program = `import os,socket\nresults=[]\nfor path,mode in [( ${JSON.stringify(outside)},'r'),(${JSON.stringify(forbidden)},'w')]:\n try:\n  open(path,mode);results.append('ALLOWED')\n except OSError: results.append('blocked')\ntry:\n socket.create_connection(('127.0.0.1',${address.port}),0.3);results.append('ALLOWED')\nexcept OSError: results.append('blocked')\n${process.platform === "darwin" ? "try:\n p=os.fork()\n if p==0: os._exit(0)\n os.waitpid(p,0);results.append('ALLOWED')\nexcept OSError: results.append('blocked')\n" : "results.append('blocked')\n"}open('allowed.txt','w').write('ok')\nprint(','.join(results))\n`;
+  const program = `import os,socket\nresults=[]\nfor path,mode in [( ${JSON.stringify(outside)},'r'),(${JSON.stringify(forbidden)},'w')]:\n try:\n  open(path,mode);results.append('ALLOWED')\n except OSError: results.append('blocked')\ntry:\n socket.create_connection(('127.0.0.1',${address.port}),0.3);results.append('ALLOWED')\nexcept OSError: results.append('blocked')\n${process.platform === "darwin" ? "try:\n p=os.fork()\n if p==0: os._exit(0)\n os.waitpid(p,0);results.append('ALLOWED')\nexcept OSError: results.append('blocked')\n" : `p=os.fork()\nif p==0:\n try:\n  open(${JSON.stringify(forbidden)},'w');os._exit(1)\n except OSError: os._exit(0)\n_,status=os.waitpid(p,0)\nresults.append('blocked' if os.waitstatus_to_exitcode(status)==0 else 'ALLOWED')\n`}open('allowed.txt','w').write('ok')\nprint(','.join(results))\n`;
   await writeFile(join(f.workspace, "contain.py"), program);
   const reference = f.service.verification.registerReference({
     label: "Containment probe",
