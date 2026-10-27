@@ -36,8 +36,16 @@ async function setup(filename = ":memory:") {
   const workflow = service.workflow({
     name: "Roll call",
     ownerId: parentAgent.id,
-    goal: "Create the worker's roll-call file",
+    goal: "Create worker.txt containing exactly Worker reporting for duty.",
     completionCriteria: "File has the expected content",
+  });
+  // These integration fixtures start from an explicit user acceptance requirement.
+  service.contracts.seedProject({
+    workflowId: workflow.id,
+    text: workflow.goal,
+    source: "request",
+    projectFolder: dir,
+    owner: parentAgent,
   });
   const parent = service.task({
     workflowId: workflow.id,
@@ -51,6 +59,10 @@ async function setup(filename = ":memory:") {
         pattern: "^Worker reporting for duty\\.$",
       },
     ],
+  });
+  service.contracts.setRequirements(workflow.id, {
+    expectedFiles: ["worker.txt"],
+    checks: parent.completionChecks,
   });
   return { dir, store, service, parentAgent, childAgent, workflow, parent };
 }
@@ -389,7 +401,7 @@ test("a chat manager's early reply waits for its child and publishes one final c
   const session = w.service.session(w.parentAgent.id);
   // The expected content comes from the user's own words, so the literal check is enforced.
   w.service.message(session.id, {
-    text: "Have the worker create its roll-call file containing: Worker reporting for duty.",
+    text: "Have the worker create worker.txt containing: Worker reporting for duty.",
   });
   try {
     await runs.start(session.id);

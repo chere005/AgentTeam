@@ -49,9 +49,16 @@ async function fixture(
   service.saveEdge({ from: caller.id, to: writer.id, kind: "delegate" });
   const workflow = service.workflow({
     name: "Duty files",
-    goal: "Write duty files",
+    goal: "Write Writer.txt containing exactly reporting for duty",
     ownerId: caller.id,
     completionCriteria: "Files checked",
+  });
+  // The fixture user supplies the expected content; the delegated regex merely encodes it.
+  service.contracts.seedProject({
+    workflowId: workflow.id,
+    text: workflow.goal,
+    source: "request",
+    owner: caller,
   });
   const parent = service.task({
     workflowId: workflow.id,

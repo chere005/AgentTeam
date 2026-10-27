@@ -153,11 +153,17 @@ test("an agent's Chat pane leads with its result and tucks full instructions beh
     const sendToGroup = groupChat.getByRole("button", {
       name: "Send to group",
     });
-    await page.getByText("Team assignments & conversations").hover();
-    await page.mouse.wheel(0, -5000);
-    await expect(
-      page.getByText("Team assignments & conversations"),
-    ).toBeInViewport();
+    // Target the stable scroll region, rather than text that moves during a wheel gesture.
+    await page
+      .locator(".chat-body")
+      .filter({ has: panel })
+      .hover({ position: { x: 20, y: 20 } });
+    await expect(async () => {
+      await page.mouse.wheel(0, -5000);
+      await expect(
+        page.getByText("Team assignments & conversations"),
+      ).toBeInViewport({ timeout: 250 });
+    }).toPass();
     await expect(async () => {
       await page.mouse.wheel(0, 150);
       await expect(sendToGroup).toBeInViewport({ timeout: 250 });

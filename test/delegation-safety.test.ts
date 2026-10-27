@@ -298,6 +298,11 @@ test("historical completion evidence is accepted only for its exact full ordered
         { type: "output-matches", pattern: "Done$", flags: "" },
       ],
     });
+    // The short literals are intentionally explicit user-approved gates, not inferred model truth.
+    for (const check of t.service.contracts.unresolved({ id }))
+      t.service.contracts.confirmCheck(`task:${id}`, check.slot, {
+        note: "User confirms the exact Done output for this ordered-evidence test.",
+      });
     await t.finish(id);
     const task = t.store.get<Task>("task", id);
     const meta = t.service.limits.meta(id);
