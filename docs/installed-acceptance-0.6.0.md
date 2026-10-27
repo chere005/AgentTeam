@@ -30,7 +30,9 @@ All reviews bind subject `743d3f4185c121dae03d5523e7cca0db0db1f08876bebb54175e51
 
 ## Build and scope
 
-- Candidate installed archive SHA-256: `3bbd7fcab20c43a2a97161586b80e46c590668f7356b40cec4c943daf6b17ec9`.
+- Original accepted candidate archive SHA-256: `3bbd7fcab20c43a2a97161586b80e46c590668f7356b40cec4c943daf6b17ec9`.
 - Claude Code: `2.1.308`; Codex CLI: `0.164.0-alpha.11.1`. Workers used configured Sonnet 5.5; reviewers used Codex default/max and configured Fable 5.1. These configured model IDs were exercised successfully, rather than treated as verified merely because they appeared in a catalog.
 - Profile: `../AgentTeam-Acceptance-0.6.0/Data`; sources: `../AgentTeam-Acceptance-0.6.0/Programs`. Immutable evidence lives under that profile's visible `AgentTeam Verification` folder.
 - This validates prepared ordinary-chat execution on macOS, not a live run of the separate legacy seven-stage pipeline project or native Windows confinement. Correction, rejection, inconclusive review, exhaustion and cancellation are covered by backend fixtures. Final release/preflight/deployment identifiers are recorded in CONTINUATION.md.
+
+The final UI candidate at `c4e4659` was subsequently installed and opened against the same completed profile (archive SHA-256 `f747c610db71d9d675b6a97ca6070919871e6360d10d760a5d3a9fefb5437534`). The native UI showed the folder/access form collapsed, all three Execution verified disclosures, each reviewer name with approve, and the same completed state. No provider work was repeated.

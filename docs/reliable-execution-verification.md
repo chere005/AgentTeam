@@ -43,11 +43,11 @@ Output comparison covers the entire string and its length. `newline: "exact"` pe
 
 ## Confinement and runtime constraints
 
-| Host    | Enforcement and validation                                                                                                                                                              |
-| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| macOS   | Mandatory `/usr/bin/sandbox-exec` default-deny profile. Actual fixture execution and containment were tested on this Mac.                                                               |
-| Linux   | Mandatory `bwrap` with isolated namespaces, read-only inputs/toolchain mounts and writable output. Implemented but untested on this Mac; absent/unusable confinement refuses execution. |
-| Windows | Execution verification refuses with `verifier_unavailable`.                                                                                                                             |
+| Host    | Enforcement and validation                                                                                                                                                                       |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| macOS   | Mandatory `/usr/bin/sandbox-exec` default-deny profile. Actual fixture execution and containment were tested on this Mac.                                                                        |
+| Linux   | Mandatory `bwrap` with isolated namespaces, read-only root/inputs/toolchains and writable output. Actual native fixtures passed on GitHub Ubuntu; absent/unusable confinement refuses execution. |
+| Windows | Execution verification refuses with `verifier_unavailable`.                                                                                                                                      |
 
 There is no unsandboxed fallback. Generated programs cannot access the workspace or home directory; only snapshot inputs, output and necessary runtime/system roots are readable. Writes stay in `Output/`, network access is denied, and permanent filesystem denials take precedence. macOS denies generated-process forks; the trusted C++ compiler driver may create descendants inside the same sandbox. Process groups are terminated before resources are released. Commands use a sanitized environment, bounded combined output (1,000,000 bytes), and a per-command timeout (default 20 seconds; configurable from 100 milliseconds through 60 seconds). Verification uses a dedicated single-capacity slot and the ordinary task lease.
 
@@ -68,4 +68,4 @@ The packaged Electron executable is never substituted for Node. Runtime discover
 
 ## Validation scope
 
-The focused `test/execution-verification.test.ts` suite passed **9/9, zero skipped**, using real macOS confinement. It covers Pi precision/wrong digits, whole-output matching, fabricated run prose, external imports, immutable/stale sources, symlink/grant denial, outside reads/writes, network/fork denial, output overflow, timeout, cancellation, all four runtimes, and nested Python imports. These are fixture results. They do not claim a real installed-app run or live-provider acceptance; Linux execution has not been exercised and Windows is intentionally refused.
+The focused `test/execution-verification.test.ts` suite passed **9/9, zero skipped**, using real macOS confinement. It covers Pi precision/wrong digits, whole-output matching, fabricated run prose, external imports, immutable/stale sources, symlink/grant denial, outside reads/writes, network/fork denial, output overflow, timeout, cancellation, all four runtimes, and nested Python imports. The same verifier cases also passed with actual Linux bubblewrap, including an actual forked-child outside-write probe, in [installer preflight 40445554103](https://github.com/chere005/AgentTeam/actions/runs/40445554103) (Ubuntu backend: 687 passed, one opt-in skip). Windows verification is intentionally refused. These native fixtures are distinct from [the completed installed-app/live-provider acceptance](installed-acceptance-0.6.0.md).

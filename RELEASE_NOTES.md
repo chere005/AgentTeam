@@ -7,7 +7,7 @@ Program requests now prepare an implementation, execution and review plan before
 - **Required reviews:** designated read-only reviewers approve the exact verified source. Corrections create fresh execution/review evidence, stop at the configured round limit, and invalidate approval when source or reviewer permissions change.
 - **Interface:** one setup card, execution evidence and bounded review history replace duplicated recovery text. Large Team Assistant catalogs retain valid structured context, and user-entered file checks remain enforced.
 
-Native verifier fixtures cover Python, JavaScript, TypeScript and C++ on macOS. Linux bubblewrap execution is implemented but has not been exercised on this Mac. Windows execution verification returns a typed unavailable result. Installers remain unsigned unless signing credentials are configured.
+Native verifier fixtures cover Python, JavaScript, TypeScript and C++ on macOS and Linux, including real confinement probes. Windows execution verification returns a typed unavailable result. Installers remain unsigned unless signing credentials are configured.
 
 ## Earlier release notes: 0.5.0
 
