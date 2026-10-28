@@ -13,6 +13,23 @@ const MESSAGE_LIMIT = 500;
 const REPEAT_WINDOW_MS = 2000;
 const recentByStore = new WeakMap<Store, Map<string, number>>();
 
+/**
+ * The text a failed API response becomes in the desktop bridge, and so in the toast: an unexpected
+ * backend error names the route that failed, everything else keeps its own message.
+ */
+export function apiFailureText(result: {
+  error?: string;
+  message?: string;
+  route?: string;
+  issues?: { message?: string }[];
+}) {
+  return result.error === "internal_error" && result.route
+    ? `${result.route}: ${result.message ?? "Unexpected backend error"}`
+    : (result.message ??
+        result.issues?.map((i) => i.message).join("; ") ??
+        result.error);
+}
+
 export type RecordedBackendError = {
   route: string;
   message: string;

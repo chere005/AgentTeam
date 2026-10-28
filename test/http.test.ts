@@ -180,3 +180,34 @@ test("the recorded stack and message are bounded, a failing poll is recorded onc
     1,
   );
 });
+
+test("the desktop bridge words a failed response: the route for an unexpected error, the message otherwise", async () => {
+  const { apiFailureText } = await import("../src/backend-errors.ts");
+  assert.equal(
+    apiFailureText({
+      error: "internal_error",
+      route: "POST /tasks/t1/resume",
+      message: "boom",
+    }),
+    "POST /tasks/t1/resume: boom",
+  );
+  assert.equal(
+    apiFailureText({ error: "internal_error", route: "GET /x" }),
+    "GET /x: Unexpected backend error",
+  );
+  assert.equal(
+    apiFailureText({
+      error: "folder-denied",
+      message: "macOS has not allowed AgentTeam",
+    }),
+    "macOS has not allowed AgentTeam",
+  );
+  assert.equal(
+    apiFailureText({
+      error: "validation_error",
+      issues: [{ message: "Required" }, { message: "Too short" }],
+    }),
+    "Required; Too short",
+  );
+  assert.equal(apiFailureText({ error: "not_found" }), "not_found");
+});
