@@ -29,7 +29,7 @@ AgentTeam is a local, cross-platform desktop workspace for configuring and orche
 | `src/store.ts` | SQLite entities/events and synchronous transactions |
 | `src/scheduler.ts`, `src/resources.ts`, `src/priorities.ts` | Scheduling, dependencies, locks, fairness and invocation limits |
 | `src/runtime.ts`, `src/runtime-types.ts`, `src/acp.ts` | Runtime dispatch, sessions, streaming, cancellation and ACP |
-| `src/provider-filesystem.ts`, `src/filesystem-policy.ts` | Exact task roots, provider permission profiles and permanent global filesystem denials |
+| `src/provider-filesystem.ts`, `src/filesystem-policy.ts`, `src/folder-access.ts` | Exact task roots, provider permission profiles, permanent global filesystem denials and real folder-access probes (macOS folder privacy) |
 | `src/tool-endpoint.ts`, `src/orchestration.ts`, `src/roles.ts` | Run-scoped teammate tools, delegation, specialist routing and required reviews |
 | `src/discovery.ts`, `src/approvals.ts` | Harness discovery/settings and permission requests |
 | `src/http.ts` | Authenticated loopback API |
@@ -62,6 +62,7 @@ AgentTeam is a local, cross-platform desktop workspace for configuring and orche
 - Preview/dry-run services must copy the profile's denials and own their mutable policy guards. Never rebind a live skill catalog to a temporary store that will close after a preview.
 - Keep global wrap-up and immediate pause distinct. Wrap-up holds new work and drains current requests; immediate pause aborts them and preserves partial output/checkpoints. Do not advertise readiness to close until tracked execution has stopped. Resume must keep uncertain external effects behind Recovery rather than replaying them.
 - Direct Claude/Codex runs expose teammate tools with per-run MCP tokens. Keep tokens out of logs and portable artifacts, clean up temporary configuration, and revoke tokens after the run. Keep unsupported ACP teammate tools and other provider MCP grants explicit.
+- A grant is not proof of access. The operating system can refuse a granted folder (macOS folder privacy for Desktop, Documents, Downloads, volumes and iCloud; read-only disks; permissions), and it refuses the app and every process it starts alike. Ask the system (`src/folder-access.ts`) before a launch, setup, Start or retry, and show its answer and fix; never spend a provider call to find out.
 - Preserve role-based provider file access and the restrictions for attachments with per-file rules or explicit-only access. Verify each CLI's actual sandbox behavior; AgentTeam-mediated path checks and post-run change detection do not establish an OS sandbox for provider processes or command descendants.
 - Required validation is a scheduler gate; suggested routing is advisory. Nonempty agent output, model agreement, or a prompt saying “validated” is not evidence that a required check passed.
 - Bind validation evidence to the exact inputs/revision and record actual outcomes. Missing, failed, inconclusive, cancelled, or stale checks must keep dependent steps blocked.
