@@ -1,7 +1,6 @@
 import "./fixtures/temp-data-dir.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import {
   chmod,
   mkdir,
@@ -964,6 +963,3 @@ test("a pending answer is the typed folder_probe_pending error, a refusal keeps 
     1,
   );
 });
-
-// keep `spawn` imported for helper completeness in future cases
-void spawn;
