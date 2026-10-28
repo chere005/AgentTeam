@@ -98,7 +98,14 @@
       "category": "public.app-category.developer-tools",
       "hardenedRuntime": true,
       "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist"
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSDesktopFolderUsageDescription": "AgentTeam reads and writes project files in the folder you choose.",
+        "NSDocumentsFolderUsageDescription": "AgentTeam reads and writes project files in the folder you choose.",
+        "NSDownloadsFolderUsageDescription": "AgentTeam reads and writes project files in the folder you choose.",
+        "NSRemovableVolumesUsageDescription": "AgentTeam reads and writes project files in the folder you choose.",
+        "NSNetworkVolumesUsageDescription": "AgentTeam reads and writes project files in the folder you choose."
+      }
     },
     "win": {
       "target": [

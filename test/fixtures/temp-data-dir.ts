@@ -7,4 +7,7 @@ import { join } from "node:path";
 
 export const tempDataDir = mkdtempSync(join(tmpdir(), "agentteam-test-data-"));
 process.env.AGENTTEAM_DATA_DIR = tempDataDir;
+// AgentTeam proposes (and creates, on apply) new project folders in its projects folder: a test
+// that applies such a proposal must never create one in the developer's real home.
+process.env.AGENTTEAM_PROJECTS_DIR = join(tempDataDir, "AgentTeam Projects");
 process.on("exit", () => rmSync(tempDataDir, { recursive: true, force: true }));

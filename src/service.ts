@@ -76,6 +76,11 @@ import type { Readiness } from "./runtime-scan.ts";
 import { simpleTaskSupport } from "./simple-task-capabilities.ts";
 import { runtimeGuidance } from "./runtime-instructions.ts";
 import { ExecutionProjects } from "./execution-projects.ts";
+import {
+  FolderAccess,
+  probeFolderAccess,
+  withInjectedDenials,
+} from "./folder-access.ts";
 export class TeamService {
   store: Store;
   skills: SkillCatalog;
@@ -111,6 +116,11 @@ export class TeamService {
   setups: ProjectSetupService;
   executionProjects: ExecutionProjects;
   /**
+   * What the operating system really lets AgentTeam (and the programs it starts) do in a folder:
+   * the probe results every launch path reads (src/folder-access.ts).
+   */
+  folderAccess: FolderAccess;
+  /**
    * Whether a provider runtime is installed and signed in, as the app currently knows it. Wired by
    * the RunManager; the setup and notice views report it, the launch has its own path for it.
    */
@@ -142,6 +152,12 @@ export class TeamService {
     this.launchReadiness = new LaunchReadiness(this);
     this.setups = new ProjectSetupService(this);
     this.executionProjects = new ExecutionProjects(this);
+    this.folderAccess = new FolderAccess({
+      store,
+      probe: withInjectedDenials((path, options) =>
+        probeFolderAccess(path, options),
+      ),
+    });
   }
   /**
    * Create (no `id`) or replace an agent. `teamId` is accepted next to the agent fields: a new
@@ -296,7 +312,7 @@ export class TeamService {
         ensureWorkspaceBaseline(this.store, agent, workspace.path),
       ),
     );
-    return this.store.transaction(() => {
+    const saved = this.store.transaction(() => {
       if (id) {
         assert(
           !this.store
@@ -319,6 +335,19 @@ export class TeamService {
       this.store.emit(previous ? "agent.updated" : "agent.created", agent.id);
       return agent;
     });
+    // An attachment that changed is asked about again (src/folder-access.ts).
+    if (
+      previous &&
+      JSON.stringify(
+        previous.workspaces.map((w) => [w.path, w.access, w.active]),
+      ) !==
+        JSON.stringify(
+          saved.workspaces.map((w) => [w.path, w.access, w.active]),
+        )
+    )
+      for (const w of [...previous.workspaces, ...saved.workspaces])
+        this.folderAccess.invalidate(w.path);
+    return saved;
   }
   /**
    * Create or replace a communication edge. An edge between agents of different teams (a
