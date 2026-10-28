@@ -169,61 +169,68 @@ test(
   },
 );
 
-test("EPERM in a macOS-protected folder says macOS has not allowed AgentTeam; elsewhere it is a permissions problem", async (t) => {
-  const base = await scratch(t);
-  const home = join(base, "home");
-  const desktop = join(home, "Desktop", "pi");
-  await mkdir(desktop, { recursive: true });
-  const refuse = {
-    mkdir: async () => {
-      throw errno("EPERM");
-    },
-  };
-  const protectedFolder = failure(
-    await probeFolderAccess(desktop, {
-      write: true,
-      platform: "darwin",
-      home,
-      fs: refuse,
-      runChild: okChild,
-    }),
-  );
-  assert.equal(protectedFolder.code, "folder-denied");
-  assert.equal(protectedFolder.errno, "EPERM");
-  assert.equal(protectedFolder.protectedFolder, "Desktop");
-  assert.equal(protectedFolder.fix, MACOS_FOLDER_FIX);
-  assert.match(
-    MACOS_FOLDER_FIX,
-    /System Settings → Privacy & Security → Files and Folders → AgentTeam/,
-  );
-  assert.match(MACOS_FOLDER_FIX, /outside Desktop, Documents and Downloads/);
-  // The same refusal outside a protected location, and on another platform, gets the generic text.
-  const elsewhere = failure(
-    await probeFolderAccess(desktop, {
-      write: true,
-      platform: "darwin",
-      home: join(base, "other-home"),
-      fs: refuse,
-      runChild: okChild,
-    }),
-  );
-  assert.equal(elsewhere.protectedFolder, null);
-  assert.match(
-    elsewhere.fix,
-    /^AgentTeam cannot write in .*\(EPERM on mkdir\)/,
-  );
-  const linux = failure(
-    await probeFolderAccess(desktop, {
-      write: true,
-      platform: "linux",
-      home,
-      fs: refuse,
-      runChild: okChild,
-    }),
-  );
-  assert.equal(linux.protectedFolder, null);
-  assert.notEqual(linux.fix, MACOS_FOLDER_FIX);
-});
+test(
+  "EPERM in a macOS-protected folder says macOS has not allowed AgentTeam; elsewhere it is a permissions problem",
+  {
+    skip:
+      process.platform === "win32" && "simulated macOS paths are POSIX paths",
+  },
+  async (t) => {
+    const base = await scratch(t);
+    const home = join(base, "home");
+    const desktop = join(home, "Desktop", "pi");
+    await mkdir(desktop, { recursive: true });
+    const refuse = {
+      mkdir: async () => {
+        throw errno("EPERM");
+      },
+    };
+    const protectedFolder = failure(
+      await probeFolderAccess(desktop, {
+        write: true,
+        platform: "darwin",
+        home,
+        fs: refuse,
+        runChild: okChild,
+      }),
+    );
+    assert.equal(protectedFolder.code, "folder-denied");
+    assert.equal(protectedFolder.errno, "EPERM");
+    assert.equal(protectedFolder.protectedFolder, "Desktop");
+    assert.equal(protectedFolder.fix, MACOS_FOLDER_FIX);
+    assert.match(
+      MACOS_FOLDER_FIX,
+      /System Settings → Privacy & Security → Files and Folders → AgentTeam/,
+    );
+    assert.match(MACOS_FOLDER_FIX, /outside Desktop, Documents and Downloads/);
+    // The same refusal outside a protected location, and on another platform, gets the generic text.
+    const elsewhere = failure(
+      await probeFolderAccess(desktop, {
+        write: true,
+        platform: "darwin",
+        home: join(base, "other-home"),
+        fs: refuse,
+        runChild: okChild,
+      }),
+    );
+    assert.equal(elsewhere.protectedFolder, null);
+    assert.match(
+      elsewhere.fix,
+      /^AgentTeam cannot write in .*\(EPERM on mkdir\)/,
+    );
+    const linux = failure(
+      await probeFolderAccess(desktop, {
+        write: true,
+        platform: "linux",
+        home,
+        fs: refuse,
+        runChild: okChild,
+      }),
+    );
+    assert.equal(linux.protectedFolder, null);
+    assert.notEqual(linux.fix, MACOS_FOLDER_FIX);
+  },
+);
 
 test("a read-only file system is folder-read-only and a half-failed probe still cleans up", async (t) => {
   const base = await scratch(t);
@@ -299,6 +306,27 @@ test("the programs AgentTeam starts are checked too: a refusal that only the chi
     [],
     "the app process cleaned up its own probe",
   );
+  // A child that made its directory but could not remove it does not leave it behind.
+  if (posix) {
+    const messy = failure(
+      await probeFolderAccess(base, {
+        write: true,
+        runChild: async (_program, args) => {
+          await mkdir(args[3]);
+          return {
+            code: 1,
+            stderr: "rm: probe.txt: Operation not permitted\n",
+          };
+        },
+      }),
+    );
+    assert.equal(messy.actor, "child");
+    assert.deepEqual(
+      await readdir(base),
+      [],
+      "the leftover directory was removed",
+    );
+  }
   // The child that cannot even start is a typed "cannot probe", never a pass.
   const noShell = failure(
     await probeFolderAccess(base, {
@@ -517,95 +545,102 @@ test("a refusal stays known until the folder is asked about again; a success dec
   assert.equal(access.cached(join(base, "never-asked"), true), undefined);
 });
 
-test("only a change of answer is announced, and a probe stuck on a system prompt does not hold callers for ever", async (t) => {
-  const scratchFolder = await scratch(t);
-  // A simulated Mac whose home folder is a temporary one: the "Desktop" below is ours.
-  const home = join(scratchFolder, "home");
-  const base = join(home, "Desktop", "pi");
-  await mkdir(base, { recursive: true });
-  const store = new Store(":memory:");
-  t.after(() => store.close());
-  let release: (() => void) | undefined;
-  let open = false;
-  const stuck: ProbeFn = (path, { write }) =>
-    new Promise((resolve) => {
-      release = () =>
-        resolve(
-          open
-            ? {
-                ok: true,
-                path,
-                write,
-                checkedAt: "now",
-                protectedFolder: "Desktop",
-                steps: [],
-              }
-            : {
-                ok: false,
-                code: "folder-denied",
-                errno: "EPERM",
-                operation: "readdir",
-                actor: "app",
-                message: "m",
-                fix: "f",
-                path,
-                write,
-                checkedAt: "now",
-                protectedFolder: "Desktop",
-                steps: [],
-              },
-        );
-    });
-  const access = new FolderAccess({
-    store,
-    probe: stuck,
-    promptWaitMs: 20,
-    platform: "darwin",
-    home,
-  });
-  const first = await access.probe(base, { write: true });
-  // After the wait the caller gets "not allowed (yet)", and readiness sees the same thing.
-  const waiting = failure(first);
-  assert.equal(waiting.errno, "ETIMEDOUT");
-  assert.equal(waiting.fix, MACOS_FOLDER_FIX);
-  assert.equal(access.cached(base, true)?.ok, false);
-  assert.equal(
-    store.history(0, 100).filter((e) => e.type === "folder.access_changed")
-      .length,
-    0,
-  );
-  // The person answers the prompt later: the late result replaces the provisional one, once.
-  open = true;
-  release!();
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.equal(access.cached(base, true)?.ok, true);
-  const events = store
-    .history(0, 100)
-    .filter((e) => e.type === "folder.access_changed");
-  assert.equal(events.length, 1);
-  assert.deepEqual(events[0].data, { path: base, write: true, ok: true });
-  // Asking again with the same answer announces nothing new.
-  const refresh = access.probe(base, { write: true, force: true });
-  release!();
-  await refresh;
-  assert.equal(
-    store.history(0, 100).filter((e) => e.type === "folder.access_changed")
-      .length,
-    1,
-  );
-  // A stuck probe in a folder macOS does not protect is a timeout, not a privacy refusal.
-  const elsewhere = failure(
-    await new FolderAccess({
+test(
+  "only a change of answer is announced, and a probe stuck on a system prompt does not hold callers for ever",
+  {
+    skip:
+      process.platform === "win32" && "simulated macOS paths are POSIX paths",
+  },
+  async (t) => {
+    const scratchFolder = await scratch(t);
+    // A simulated Mac whose home folder is a temporary one: the "Desktop" below is ours.
+    const home = join(scratchFolder, "home");
+    const base = join(home, "Desktop", "pi");
+    await mkdir(base, { recursive: true });
+    const store = new Store(":memory:");
+    t.after(() => store.close());
+    let release: (() => void) | undefined;
+    let open = false;
+    const stuck: ProbeFn = (path, { write }) =>
+      new Promise((resolve) => {
+        release = () =>
+          resolve(
+            open
+              ? {
+                  ok: true,
+                  path,
+                  write,
+                  checkedAt: "now",
+                  protectedFolder: "Desktop",
+                  steps: [],
+                }
+              : {
+                  ok: false,
+                  code: "folder-denied",
+                  errno: "EPERM",
+                  operation: "readdir",
+                  actor: "app",
+                  message: "m",
+                  fix: "f",
+                  path,
+                  write,
+                  checkedAt: "now",
+                  protectedFolder: "Desktop",
+                  steps: [],
+                },
+          );
+      });
+    const access = new FolderAccess({
+      store,
       probe: stuck,
       promptWaitMs: 20,
       platform: "darwin",
       home,
-    }).probe(scratchFolder, { write: true }),
-  );
-  assert.equal(elsewhere.errno, "ETIMEDOUT");
-  assert.notEqual(elsewhere.fix, MACOS_FOLDER_FIX);
-  assert.match(elsewhere.fix, /Check the folder's permissions/);
-});
+    });
+    const first = await access.probe(base, { write: true });
+    // After the wait the caller gets "not allowed (yet)", and readiness sees the same thing.
+    const waiting = failure(first);
+    assert.equal(waiting.errno, "ETIMEDOUT");
+    assert.equal(waiting.fix, MACOS_FOLDER_FIX);
+    assert.equal(access.cached(base, true)?.ok, false);
+    assert.equal(
+      store.history(0, 100).filter((e) => e.type === "folder.access_changed")
+        .length,
+      0,
+    );
+    // The person answers the prompt later: the late result replaces the provisional one, once.
+    open = true;
+    release!();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(access.cached(base, true)?.ok, true);
+    const events = store
+      .history(0, 100)
+      .filter((e) => e.type === "folder.access_changed");
+    assert.equal(events.length, 1);
+    assert.deepEqual(events[0].data, { path: base, write: true, ok: true });
+    // Asking again with the same answer announces nothing new.
+    const refresh = access.probe(base, { write: true, force: true });
+    release!();
+    await refresh;
+    assert.equal(
+      store.history(0, 100).filter((e) => e.type === "folder.access_changed")
+        .length,
+      1,
+    );
+    // A stuck probe in a folder macOS does not protect is a timeout, not a privacy refusal.
+    const elsewhere = failure(
+      await new FolderAccess({
+        probe: stuck,
+        promptWaitMs: 20,
+        platform: "darwin",
+        home,
+      }).probe(scratchFolder, { write: true }),
+    );
+    assert.equal(elsewhere.errno, "ETIMEDOUT");
+    assert.notEqual(elsewhere.fix, MACOS_FOLDER_FIX);
+    assert.match(elsewhere.fix, /Check the folder's permissions/);
+  },
+);
 
 test("returning to the app asks again about every refused folder and announces the ones that opened", async (t) => {
   const base = await scratch(t);
@@ -744,4 +779,45 @@ test("`node src/cli.ts folder-probe <path> [--write]` prints the probe result as
   );
   assert.equal(run(base, "--bogus").status, 2);
   assert.deepEqual(await readdir(base), []);
+});
+
+test("changing an agent's attachments forgets what the system said about those folders; other edits keep it", async (t) => {
+  const { SkillCatalog } = await import("../src/skills.ts");
+  const { TeamService } = await import("../src/service.ts");
+  const base = await scratch(t);
+  const store = new Store(":memory:");
+  t.after(() => store.close());
+  const service = new TeamService(store, new SkillCatalog([]));
+  const folder = join(base, "project");
+  const other = join(base, "other");
+  await mkdir(folder);
+  await mkdir(other);
+  const agent = await service.saveAgent({
+    name: "Writer",
+    environment: "claude",
+    workspaces: [{ path: folder, access: "write", active: true }],
+  });
+  await service.folderAccess.probe(folder, { write: true });
+  assert.equal(service.folderAccess.cached(folder, true)?.ok, true);
+  // A change that leaves the attachments alone keeps the answer.
+  await service.saveAgent(
+    {
+      name: "Writer",
+      environment: "claude",
+      role: "Writes",
+      workspaces: [{ path: folder, access: "write", active: true }],
+    },
+    agent.id,
+  );
+  assert.equal(service.folderAccess.cached(folder, true)?.ok, true);
+  // Detaching, attaching or changing the access asks again.
+  await service.saveAgent(
+    {
+      name: "Writer",
+      environment: "claude",
+      workspaces: [{ path: other, access: "read", active: true }],
+    },
+    agent.id,
+  );
+  assert.equal(service.folderAccess.cached(folder, true), undefined);
 });

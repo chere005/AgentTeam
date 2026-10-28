@@ -660,72 +660,88 @@ test("a folder outside the projects folder is never created by the setup", async
   assert.ok(!existsSync(missing));
 });
 
-test("an attached folder in a macOS-protected location is checked before Start and the refusal shows beside it", async (t) => {
-  // A simulated macOS host whose home folder is a temporary one: the "Desktop" below is ours.
-  const home = await realpath(await mkdtemp(join(tmpdir(), "agentteam-home-")));
-  const savedHome = process.env.HOME;
-  process.env.HOME = home;
-  t.after(() => {
-    if (savedHome === undefined) delete process.env.HOME;
-    else process.env.HOME = savedHome;
-  });
-  const { w, team, workflowId } = await incident(t, "darwin");
-  const control = controlFolders(w.service);
-  const desktop = join(home, "Desktop", "pi");
-  await mkdir(desktop, { recursive: true });
-  // The folder is already attached to the workers (an earlier project, or the old setup card).
-  w.store.transaction(() =>
-    attachProjectWorkspaceInTx(
-      w.store,
-      Object.fromEntries(
-        [team.integrator, ...team.workers].map((a) => [a.id, "write" as const]),
+test(
+  "an attached folder in a macOS-protected location is checked before Start and the refusal shows beside it",
+  {
+    skip:
+      process.platform === "win32" && "simulated macOS paths are POSIX paths",
+  },
+  async (t) => {
+    // A simulated macOS host whose home folder is a temporary one: the "Desktop" below is ours.
+    const home = await realpath(
+      await mkdtemp(join(tmpdir(), "agentteam-home-")),
+    );
+    const savedHome = process.env.HOME;
+    process.env.HOME = home;
+    t.after(() => {
+      if (savedHome === undefined) delete process.env.HOME;
+      else process.env.HOME = savedHome;
+    });
+    const { w, team, workflowId } = await incident(t, "darwin");
+    const control = controlFolders(w.service);
+    const desktop = join(home, "Desktop", "pi");
+    await mkdir(desktop, { recursive: true });
+    // The folder is already attached to the workers (an earlier project, or the old setup card).
+    w.store.transaction(() =>
+      attachProjectWorkspaceInTx(
+        w.store,
+        Object.fromEntries(
+          [team.integrator, ...team.workers].map((a) => [
+            a.id,
+            "write" as const,
+          ]),
+        ),
+        desktop,
       ),
+    );
+    const before = w.service.setups.view(workflowId);
+    assert.equal(
+      before.proposal.folder,
       desktop,
-    ),
-  );
-  const before = w.service.setups.view(workflowId);
-  assert.equal(
-    before.proposal.folder,
-    desktop,
-    "the attached folder is the candidate",
-  );
-  const check = before.proposal.checks.find((c) => c.path === desktop)!;
-  assert.equal(check.protectedFolder, "Desktop");
-  assert.equal(check.result, null);
-  assert.equal(check.needsCheck, true, "the card asks the system before Start");
-  // Nothing is judged without an answer; with the answer the refusal is shown and Start waits.
-  control.refuse(desktop);
-  await w.service.folderAccess.probe(desktop, { write: true });
-  const after = w.service.setups.view(workflowId);
-  const answered = after.proposal.checks.find((c) => c.path === desktop)!;
-  assert.equal(answered.needsCheck, false);
-  assert.equal(answered.result?.ok, false);
-  assert.equal(after.state, "needed");
-  const issues = after.blockers.find(
-    (b) => b.agentId === team.integrator.id,
-  )!.issues;
-  assert.deepEqual(
-    issues.map((i) => [i.code, i.fix?.kind]),
-    [["folder-denied", "allow-folder-access"]],
-  );
-  assert.match(issues[0].message, MAC_FIX);
-  assert.equal(after.start?.available, false);
-  // Allowed in System Settings and asked again: the refusal is gone, no new grant was made (the
-  // roles that never had this folder still need their own setup).
-  control.allow(desktop);
-  await w.service.folderAccess.probe(desktop, { write: true, force: true });
-  const allowed = w.service.setups.view(workflowId);
-  assert.ok(
-    allowed.blockers.every((b) =>
-      b.issues.every((i) => i.code !== "folder-denied"),
-    ),
-  );
-  assert.equal(
-    allowed.proposal.checks.find((c) => c.path === desktop)?.result?.ok,
-    true,
-  );
-  assert.equal(control.probes(desktop), 2);
-});
+      "the attached folder is the candidate",
+    );
+    const check = before.proposal.checks.find((c) => c.path === desktop)!;
+    assert.equal(check.protectedFolder, "Desktop");
+    assert.equal(check.result, null);
+    assert.equal(
+      check.needsCheck,
+      true,
+      "the card asks the system before Start",
+    );
+    // Nothing is judged without an answer; with the answer the refusal is shown and Start waits.
+    control.refuse(desktop);
+    await w.service.folderAccess.probe(desktop, { write: true });
+    const after = w.service.setups.view(workflowId);
+    const answered = after.proposal.checks.find((c) => c.path === desktop)!;
+    assert.equal(answered.needsCheck, false);
+    assert.equal(answered.result?.ok, false);
+    assert.equal(after.state, "needed");
+    const issues = after.blockers.find(
+      (b) => b.agentId === team.integrator.id,
+    )!.issues;
+    assert.deepEqual(
+      issues.map((i) => [i.code, i.fix?.kind]),
+      [["folder-denied", "allow-folder-access"]],
+    );
+    assert.match(issues[0].message, MAC_FIX);
+    assert.equal(after.start?.available, false);
+    // Allowed in System Settings and asked again: the refusal is gone, no new grant was made (the
+    // roles that never had this folder still need their own setup).
+    control.allow(desktop);
+    await w.service.folderAccess.probe(desktop, { write: true, force: true });
+    const allowed = w.service.setups.view(workflowId);
+    assert.ok(
+      allowed.blockers.every((b) =>
+        b.issues.every((i) => i.code !== "folder-denied"),
+      ),
+    );
+    assert.equal(
+      allowed.proposal.checks.find((c) => c.path === desktop)?.result?.ok,
+      true,
+    );
+    assert.equal(control.probes(desktop), 2);
+  },
+);
 
 test("the folder probe route answers for a typed path and refuses relative and globally denied ones", async (t) => {
   const { createApi } = await import("../src/http.ts");

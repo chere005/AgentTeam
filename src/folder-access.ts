@@ -408,7 +408,10 @@ export async function probeFolderAccess(
     run: options.runChild ?? runChild,
     timeoutMs: options.childTimeoutMs ?? 15_000,
   });
-  if (child.kind === "failed")
+  if (child.kind === "failed") {
+    // A child that made the directory but could not remove it leaves it behind: clean up from here.
+    if (write && child.dir)
+      await fs.rm(child.dir, { recursive: true, force: true }).catch(() => {});
     return failureOf(base(), {
       errno: child.errno,
       operation: child.operation,
@@ -417,6 +420,7 @@ export async function probeFolderAccess(
       code: child.code,
       detail: child.detail,
     });
+  }
   if (child.kind === "ok") steps.push("child");
   return {
     ok: true,
@@ -436,6 +440,8 @@ type ChildCheck =
       errno: string;
       operation: string;
       shell: string;
+      /** The directory the child was asked to make (to remove it again when the child could not). */
+      dir: string;
       code?: FolderProbeCode;
       detail?: string;
     };
@@ -486,6 +492,7 @@ async function childCheck(
       errno: outcome.error.code ?? "ENOENT",
       operation: `spawn ${program}`,
       shell,
+      dir,
       code: "probe-unavailable",
       detail: outcome.error.message,
     };
@@ -495,6 +502,7 @@ async function childCheck(
       errno: "ETIMEDOUT",
       operation,
       shell,
+      dir,
       detail: "the child check did not finish",
     };
   if (outcome.code === 0) return { kind: "ok" };
@@ -503,6 +511,7 @@ async function childCheck(
     errno: errnoFromShell(outcome.stderr) ?? `EXIT${outcome.code}`,
     operation,
     shell,
+    dir,
     detail: outcome.stderr.trim().slice(0, 200) || `exit ${outcome.code}`,
   };
 }
