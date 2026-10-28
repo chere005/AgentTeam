@@ -60,6 +60,10 @@ There is no unsandboxed fallback. Generated programs cannot access the workspace
 
 The packaged Electron executable is never substituted for Node. Runtime discovery resolves installed native executables and macOS developer toolchains. Missing/incompatible runtimes return concrete failed/unavailable evidence. Import/header checks and confinement complement source review; passing a literal output check alone does not prove algorithm quality or general correctness.
 
+## Source folders the system refuses
+
+Verification reads the task's authorized source folder, and the worker that wrote the source ran in it. On macOS a folder under Desktop, Documents, Downloads, a volume or iCloud Drive is refused to AgentTeam, and to every program it starts, until the person allows it; a worker then reports `Operation not permitted` and the verifier sees `ENOENT ... realpath` for the file that was never written (the installed 0.6.0 run that led to this check). `execution-verified` therefore fails with its own evidence, as it should, but that failure is not a reason to start another attempt: the app asks the system about the folder before the provider is started and again after a run that reports a refusal, and Recovery shows setup with the fix instead of "Start attempt 2". A folder question the person has not answered yet is a wait (`folder-probe-pending`), not a failure, and never starts a worker. See "Folder access" in [durable-execution.md](durable-execution.md); that behaviour is fixture-tested, not tested against a real macOS prompt.
+
 ## Cancellation and stale evidence
 
 `verify(taskId, spec, { signal })` accepts an abort signal. `cancel(taskId)` aborts active verification; scheduler task cancellation invokes it. Cancellation preserves evidence, stops the process group and releases resources.
