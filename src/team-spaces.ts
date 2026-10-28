@@ -416,6 +416,9 @@ export class TeamSpaces {
     }
     if (event.type.startsWith("team.") && this.exists(event.entityId))
       out.add(event.entityId);
+    // The application's own events belong to every team's view.
+    if (isSystemEvent(event.type))
+      for (const team of this.list()) out.add(team.id);
     return out;
   }
   index() {
@@ -434,6 +437,13 @@ export class TeamSpaces {
     return { agent, workflow, task, session };
   }
 }
+
+/**
+ * Events about the application itself, not about a team: backend errors, folder access answers and
+ * any `system.*` kind. They belong to every team's view (labelled "System" in the Inspector).
+ */
+export const isSystemEvent = (type: string) =>
+  /^(?:backend|system|folder)\./.test(type);
 
 /**
  * Team routes (behind the bearer-token check in http.ts). `/teams` is the saved-template library;

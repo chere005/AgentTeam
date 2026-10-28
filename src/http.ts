@@ -45,7 +45,7 @@ import { projectRoute } from "./projects.ts";
 import { projectLifecycleRoute } from "./project-lifecycle.ts";
 import { projectSetupRoute } from "./project-setup.ts";
 import { executionProjectRoute } from "./execution-project-routes.ts";
-import { recordBackendError } from "./backend-errors.ts";
+import { backendErrorRedactor, recordBackendError } from "./backend-errors.ts";
 import { contractProposalSchema } from "./execution-contract.ts";
 import { teamSettingsRoute } from "./team-settings.ts";
 import { ExampleTeams } from "./example-teams.ts";
@@ -1222,8 +1222,33 @@ export function createApi(
       }
       throw new AppError(404, "not_found", "Unknown API endpoint");
     } catch (error) {
+      const failedPath = () => {
+        try {
+          return new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+        } catch {
+          return "/";
+        }
+      };
       if (res.headersSent) {
-        res.end();
+        // An unexpected failure after the response started (the event stream, a reply that could
+        // not be serialized) is recorded best effort; the person saw a cut-off answer, not a 500.
+        if (
+          !(error instanceof z.ZodError) &&
+          !(error instanceof AppError) &&
+          !(error instanceof URIError)
+        )
+          recordBackendError(store, {
+            method: req.method ?? "GET",
+            path: failedPath(),
+            error,
+            redactor: backendErrorRedactor([token]),
+            phase: "after-headers",
+          });
+        try {
+          res.end();
+        } catch {
+          // The connection is gone.
+        }
         return;
       }
       if (error instanceof z.ZodError)
@@ -1235,20 +1260,16 @@ export function createApi(
         );
       if (error instanceof URIError)
         return send({ error: "invalid_path" }, 400);
-      console.error(error);
       // Recorded as a `backend.error` event and named in the response, so the failing call can be
-      // identified afterwards (src/backend-errors.ts).
+      // identified afterwards (src/backend-errors.ts). The API token and secret-looking values
+      // never reach the event, `/events`, the body or the console line below.
       const recorded = recordBackendError(store, {
         method: req.method ?? "GET",
-        path: (() => {
-          try {
-            return new URL(req.url ?? "/", "http://127.0.0.1").pathname;
-          } catch {
-            return "/";
-          }
-        })(),
+        path: failedPath(),
         error,
+        redactor: backendErrorRedactor([token]),
       });
+      console.error(`${recorded.route}: ${recorded.stack || recorded.message}`);
       send(
         {
           error: "internal_error",

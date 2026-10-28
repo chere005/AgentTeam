@@ -13,6 +13,7 @@ import {
 } from "./invocation-view.ts";
 import { Redactor } from "./redact.ts";
 import { filesystemPolicy } from "./filesystem-policy.ts";
+import { isSystemEvent } from "./team-spaces.ts";
 import type { Event } from "./store.ts";
 import type { TeamService } from "./service.ts";
 import type { Agent, Edge, Session, Task, Workflow } from "./model.ts";
@@ -497,7 +498,9 @@ export function buildTimeline(
       summary: redactor.string(k.summary),
       correlationId: c.correlationId,
       agentId: c.agentId,
-      agentName: c.agentName,
+      // Events about the application itself (backend errors, folder answers) have no agent: the
+      // Inspector labels them "System" in every team's view.
+      agentName: c.agentName ?? (isSystemEvent(e.type) ? "System" : null),
       agentIds: c.agentIds,
       taskId: c.taskId,
       workflowId: c.workflowId,
