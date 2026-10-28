@@ -80,7 +80,7 @@ export function WorkflowRecovery({
     void load();
     return window.agentteam?.onEvent((e) => {
       if (
-        /^(task|approval|effect|checkpoint|tasks)[.]/.test(e.type) ||
+        /^(task|approval|effect|checkpoint|tasks|folder)[.]/.test(e.type) ||
         e.type.startsWith("workflow.")
       )
         void load();

@@ -129,3 +129,14 @@
 .assign-project {
   gap: 12px;
 }
+
+.assign-folder-problem {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #98606e;
+  border-radius: 6px;
+  background: #3b2831;
+  color: #e4bac3;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}

@@ -8,6 +8,7 @@ import {
 } from "react";
 import { FolderOpen } from "lucide-react";
 import type { ProjectSetupService } from "../../src/project-setup";
+import type { FolderProbeResult } from "../../src/folder-access";
 import type { LaunchReadiness } from "../../src/launch-readiness";
 import type { SetupAction } from "../../src/launch-readiness";
 import { api, type Snapshot } from "../api";
@@ -18,7 +19,7 @@ type SetupView = ReturnType<ProjectSetupService["view"]>;
 type NoticeView = ReturnType<LaunchReadiness["delegationReadiness"]>;
 type Act = (fn: () => Promise<unknown>) => Promise<void>;
 const changed =
-  /^(project\.|contract\.|task\.|agent\.|workflow\.|runtime\.|execution\.)/;
+  /^(project\.|contract\.|task\.|agent\.|workflow\.|runtime\.|execution\.|folder\.)/;
 const readingLabels = {
   "response-only": "Discuss or analyze",
   "file-edit": "Create or edit files",
@@ -44,6 +45,13 @@ export function ProjectSetupCard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [outcome, setOutcome] = useState("");
+  // What the system said about the folder in the field (probed when the field is left, after a
+  // choice from the native picker, and for "Check again").
+  const [check, setCheck] = useState<{
+    path: string;
+    result: FolderProbeResult;
+  } | null>(null);
+  const requested = useRef(new Set<string>());
   const dirty = useRef(false);
   const runLock = useRef(false);
   const started = useRef(false);
@@ -54,6 +62,10 @@ export function ProjectSetupCard({
     if (!dirty.current) {
       setFolder(next.proposal.folder ?? "");
       setParticipants(next.proposal.participants.map((p) => p.agentId));
+      const known = next.proposal.checks.find(
+        (c) => c.path === next.proposal.folder,
+      )?.result;
+      if (known) setCheck({ path: next.proposal.folder, result: known });
     }
     if (next.start?.startedAt) started.current = true;
   }, [workflowId]);
@@ -76,6 +88,43 @@ export function ProjectSetupCard({
       off?.();
     };
   }, [load]);
+  /** Ask the system about a folder (the backend probes the app process and a child shell). */
+  const probe = async (path: string, force = false) => {
+    const target = path.trim();
+    if (!target) {
+      setCheck(null);
+      return null;
+    }
+    try {
+      const result: FolderProbeResult = await api(
+        "/folder-access/probe",
+        "POST",
+        { path: target, write: true, force },
+      );
+      setCheck({ path: target, result });
+      return result;
+    } catch {
+      setCheck(null); // not a usable path at all: Apply says why
+      return null;
+    }
+  };
+  // A folder macOS protects that was never asked about is checked as soon as the card shows it,
+  // so the system prompt (and a refusal) comes before Start, not after wasted provider calls.
+  useEffect(() => {
+    for (const item of view?.proposal.checks ?? [])
+      if (item.needsCheck && !requested.current.has(item.path)) {
+        requested.current.add(item.path);
+        void probe(item.path).then(() => load().catch(() => {}));
+      }
+  }, [view]);
+  const chooseNative = async () => {
+    const selected = await window.agentteam.chooseFolder();
+    if (selected) {
+      dirty.current = true;
+      setFolder(selected);
+      await probe(selected);
+    }
+  };
   const run = async (fn: () => Promise<unknown>) => {
     if (runLock.current) return;
     runLock.current = true;
@@ -89,7 +138,10 @@ export function ProjectSetupCard({
         try {
           await fn();
         } catch (e) {
-          setError(e instanceof Error ? e.message : String(e));
+          // A folder the system refuses is explained once, beside the field; anything else here.
+          const refused = folder.trim() ? await probe(folder) : null;
+          if (!refused || refused.ok)
+            setError(e instanceof Error ? e.message : String(e));
         }
       });
       await load();
@@ -173,11 +225,28 @@ export function ProjectSetupCard({
                                 .getElementById(`${id}-checks`)
                                 ?.scrollIntoView({ block: "nearest" });
                             else if (
-                              [
-                                "choose-project-folder",
-                                "attach-folder",
-                                "grant-write-access",
-                              ].includes(issue.fix?.kind ?? "")
+                              issue.fix?.kind === "choose-project-folder"
+                            )
+                              // The native picker: a folder chosen in the system dialog is
+                              // opened to the app by macOS.
+                              void run(chooseNative);
+                            else if (issue.fix?.kind === "allow-folder-access")
+                              // After allowing it in System Settings: ask the system again.
+                              void run(async () => {
+                                const again = await probe(
+                                  issue.fix?.path ?? folder,
+                                  true,
+                                );
+                                setOutcome(
+                                  again?.ok
+                                    ? "AgentTeam can use this folder."
+                                    : "",
+                                );
+                              });
+                            else if (
+                              ["attach-folder", "grant-write-access"].includes(
+                                issue.fix?.kind ?? "",
+                              )
                             )
                               document.getElementById(`${id}-folder`)?.focus();
                             else if (issue.fix) repair?.(issue.fix);
@@ -235,29 +304,80 @@ export function ProjectSetupCard({
                   dirty.current = true;
                   setFolder(e.target.value);
                 }}
+                // A typed path stays possible; the system is asked when the field is left.
+                onBlur={() => void probe(folder)}
               />
               <button
                 type="button"
                 className="secondary"
                 disabled={busy}
-                onClick={() =>
-                  void run(async () => {
-                    const selected = await window.agentteam.chooseFolder();
-                    if (selected) {
-                      dirty.current = true;
-                      setFolder(selected);
-                    }
-                  })
-                }
+                onClick={() => void run(chooseNative)}
               >
                 <FolderOpen size={14} /> Browse
               </button>
             </div>
             <datalist id={`${id}-folders`}>
-              {view.proposal.candidates.map((path) => (
+              {[
+                ...new Set([
+                  ...view.proposal.candidates,
+                  view.proposal.defaultFolder,
+                ]),
+              ].map((path) => (
                 <option key={path} value={path} />
               ))}
             </datalist>
+            {check && check.path === folder.trim() && !check.result.ok && (
+              <div
+                className="setup-folder-problem"
+                role="alert"
+                data-testid="setup-folder-check"
+              >
+                <p>{check.result.message}</p>
+                <p>{check.result.fix}</p>
+                <div className="row wrap">
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={busy}
+                    onClick={() => void probe(folder, true)}
+                  >
+                    Check again
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={busy}
+                    onClick={() => void run(chooseNative)}
+                  >
+                    Choose another folder
+                  </button>
+                  {view.proposal.defaultFolder !== folder.trim() && (
+                    <button
+                      type="button"
+                      className="secondary"
+                      title={view.proposal.defaultFolder}
+                      disabled={busy}
+                      onClick={() => {
+                        dirty.current = true;
+                        setFolder(view.proposal.defaultFolder);
+                        setCheck(null);
+                      }}
+                    >
+                      Use AgentTeam's projects folder
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+            {check && check.path === folder.trim() && check.result.ok && (
+              <small className="setup-folder-ok" role="status">
+                AgentTeam can use this folder.
+              </small>
+            )}
+            {view.proposal.createsFolder &&
+              folder.trim() === view.proposal.folder && (
+                <small>AgentTeam creates this folder when you apply.</small>
+              )}
             <details className="setup-details">
               <summary>
                 Access for {participants.length} participants ·{" "}

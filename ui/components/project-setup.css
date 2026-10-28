@@ -123,3 +123,33 @@
 .setup-details[open] > summary {
   margin-bottom: 10px;
 }
+
+.project-setup-card form {
+  grid-template-columns: minmax(0, 1fr);
+}
+.setup-folder-problem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid #98606e;
+  border-radius: 6px;
+  background: #3b2831;
+  color: #e4bac3;
+  min-width: 0;
+}
+.setup-folder-problem p {
+  overflow-wrap: anywhere;
+}
+.setup-folder-problem .row {
+  min-width: 0;
+}
+.setup-folder-problem button {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.setup-folder-ok {
+  color: var(--muted);
+}

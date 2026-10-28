@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { api } from "../api";
+import type { FolderProbeResult } from "../../src/folder-access";
 import { agentSelectorLabel } from "../agent-identity";
 import "./pipeline.css";
 import "./team-settings.css";
@@ -142,8 +143,24 @@ export function AssignProject({
     [tasks, setTasks] = useState<DraftTask[]>([]),
     [sequential, setSequential] = useState(true),
     [error, setError] = useState(""),
+    // What the system said about the typed or chosen folder (Start asks again before anything runs).
+    [folderProblem, setFolderProblem] = useState(""),
     [waitingForExecution, setWaitingForExecution] = useState(false),
     [busy, setBusy] = useState(false);
+  const checkFolder = async (path: string) => {
+    setFolderProblem("");
+    if (!path.trim()) return;
+    try {
+      const result: FolderProbeResult = await api(
+        "/folder-access/probe",
+        "POST",
+        { path: path.trim(), write: true },
+      );
+      setFolderProblem(result.ok ? "" : `${result.message} ${result.fix}`);
+    } catch {
+      // Not a usable path at all: creating the project says why.
+    }
+  };
   const startButton = useRef<HTMLButtonElement>(null);
   const initialFocusDone = useRef(false);
   useEffect(() => {
@@ -438,20 +455,38 @@ export function AssignProject({
             required
             disabled={busy || !!createdId}
             value={workspace}
-            onChange={(e) => setWorkspace(e.target.value)}
+            onChange={(e) => {
+              setWorkspace(e.target.value);
+              setFolderProblem("");
+            }}
+            // A typed path stays possible; the system is asked when the field is left.
+            onBlur={() => void checkFolder(workspace)}
           />
           <button
             type="button"
             disabled={busy || !!createdId}
             onClick={async () => {
+              // The native picker: a folder chosen in the system dialog is opened to the app.
               const p = await window.agentteam.chooseFolder();
-              if (p) setWorkspace(p);
+              if (p) {
+                setWorkspace(p);
+                void checkFolder(p);
+              }
             }}
           >
             Choose
           </button>
         </span>
       </label>
+      {folderProblem && (
+        <p
+          className="assign-folder-problem"
+          role="alert"
+          data-testid="assign-folder-check"
+        >
+          {folderProblem}
+        </p>
+      )}
       {mode === "project" && (
         <label>
           Project name (optional)
