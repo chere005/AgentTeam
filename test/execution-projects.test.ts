@@ -147,7 +147,13 @@ function providers(w: World, id: string, script: Script = {}) {
 }
 async function fixture(
   t: Parameters<typeof world>[0],
-  options: { rounds?: number; storePath?: string; script?: Script } = {},
+  options: {
+    rounds?: number;
+    storePath?: string;
+    script?: Script;
+    /** One implementation worker per language (default: Python only). */
+    languages?: ("python" | "cpp" | "typescript")[];
+  } = {},
 ) {
   const w = await world(t, { storePath: options.storePath });
   mockVerification(w);
@@ -158,13 +164,23 @@ async function fixture(
     roleType: "coordinator",
     tools: ["read"],
   });
-  const worker = await w.service.saveAgent({
-    name: "Python developer",
-    environment: "claude",
-    roleType: "implementer",
-    tools: ["read", "write", "shell"],
-    workspaces: [{ path: folder, access: "write", active: true }],
-  });
+  const languages = options.languages ?? ["python"];
+  const workers = await Promise.all(
+    languages.map((language) =>
+      w.service.saveAgent({
+        name: {
+          python: "Python developer",
+          cpp: "C++ developer",
+          typescript: "TypeScript developer",
+        }[language],
+        environment: "claude",
+        roleType: "implementer",
+        tools: ["read", "write", "shell"],
+        workspaces: [{ path: folder, access: "write", active: true }],
+      }),
+    ),
+  );
+  const worker = workers[0];
   const reviewers = await Promise.all(
     ["Correctness reviewer", "Clarity reviewer"].map((name) =>
       w.service.saveAgent({
@@ -176,7 +192,7 @@ async function fixture(
       }),
     ),
   );
-  for (const target of [worker, ...reviewers])
+  for (const target of [...workers, ...reviewers])
     w.service.saveEdge({ from: planner.id, to: target.id, kind: "delegate" });
   const session = w.service.session(planner.id),
     message = w.service.message(session.id, { text: original });
@@ -197,11 +213,19 @@ async function fixture(
   });
   w.service.contracts.authorizeFolder(workflow.id, folder);
   w.service.executionProjects.configure(workflow.id, {
-    languages: ["python"],
+    languages,
     maxCorrectionRounds: options.rounds ?? 1,
   });
   providers(w, workflow.id, options.script);
-  return { w, id: workflow.id, folder, reviewers, worker };
+  return {
+    w,
+    id: workflow.id,
+    folder,
+    reviewers,
+    worker,
+    workers,
+    sessionId: session.id,
+  };
 }
 test("the original ordinary-chat request prepares one verified implementation and two attributed approvals", async (t) => {
   const c = await fixture(t);
@@ -517,4 +541,119 @@ test("production chat preparation spends no planner call and waits for explicit 
     userMessagesBeforeStart,
   );
   assert.equal(c.w.store.get<Task>("task", root.id).status, "cancelled");
+});
+
+// ---- one failure wave is announced once (fix F7) -----------------------------------------------
+
+/** Chat messages the coordinator posted about a failure. */
+const attentionMessages = (c: Awaited<ReturnType<typeof fixture>>) =>
+  c.w
+    .messages(c.sessionId)
+    .filter(
+      (m) =>
+        m.text.startsWith("**AgentTeam execution**") &&
+        /implementation or its independent verification failed/.test(m.text),
+    );
+const attentionEvents = (c: Awaited<ReturnType<typeof fixture>>) =>
+  c.w.events("execution.needs_attention").filter((e) => e.entityId === c.id);
+
+test("three outputs, one fails while two are still in flight: 20 sweeps announce one wave, once, and save nothing", async (t) => {
+  const c = await fixture(t, { languages: ["python", "cpp", "typescript"] });
+  const projects = c.w.service.executionProjects;
+  await projects.startPrepared(c.id);
+  const [failed, second, third] = projects
+    .get(c.id)!
+    .outputs.map((o) => o.taskId);
+  c.w.service.transitionTask(failed, { status: "running" });
+  c.w.service.transitionTask(failed, {
+    status: "failed",
+    result: "Operation not permitted",
+  });
+  // The siblings are queued/running: the case that used to flip the phase back every tick.
+  assert.deepEqual(
+    [second, third].map((id) => c.w.store.get<Task>("task", id).status),
+    ["queued", "queued"],
+  );
+  await projects.sweep();
+  const first = projects.get(c.id)!;
+  assert.equal(first.phase, "needs-attention");
+  for (let i = 0; i < 20; i++) await projects.sweep();
+  assert.equal(attentionEvents(c).length, 1, "one event for the wave");
+  assert.equal(attentionMessages(c).length, 1, "one chat message for the wave");
+  const after = projects.get(c.id)!;
+  assert.equal(after.phase, "needs-attention");
+  assert.equal(
+    after.updatedAt,
+    first.updatedAt,
+    "an unchanged record is not saved again on every tick",
+  );
+  assert.equal(c.w.store.get<Task>("task", failed).status, "failed");
+  // A second output failing later belongs to the same wave: the person was told, the failure
+  // stands, and nothing is announced again (decision: one wave = one event + one message).
+  c.w.service.transitionTask(second, { status: "running" });
+  c.w.service.transitionTask(second, {
+    status: "failed",
+    result: "Operation not permitted",
+  });
+  for (let i = 0; i < 5; i++) await projects.sweep();
+  assert.equal(attentionEvents(c).length, 1);
+  assert.equal(attentionMessages(c).length, 1);
+  assert.equal(projects.get(c.id)!.updatedAt, first.updatedAt);
+});
+
+test("coordination resumes only when every failed output has been dealt with; a failure after that is a new wave", async (t) => {
+  const c = await fixture(t, { languages: ["python", "cpp", "typescript"] });
+  const projects = c.w.service.executionProjects;
+  await projects.startPrepared(c.id);
+  const [a, b, rest] = projects.get(c.id)!.outputs.map((o) => o.taskId);
+  const fail = (id: string) => {
+    c.w.service.transitionTask(id, { status: "running" });
+    c.w.service.transitionTask(id, { status: "failed", result: "failed" });
+  };
+  fail(a);
+  fail(b);
+  await projects.sweep();
+  assert.equal(projects.get(c.id)!.phase, "needs-attention");
+  // Retrying one of two failed outputs from Recovery leaves a failure standing.
+  c.w.service.recovery.requeue(a);
+  for (let i = 0; i < 5; i++) await projects.sweep();
+  assert.equal(projects.get(c.id)!.phase, "needs-attention");
+  assert.equal(attentionEvents(c).length, 1);
+  // Once nothing is failed and work is in flight, coordination resumes without announcing anything.
+  c.w.service.recovery.requeue(b);
+  await projects.sweep();
+  assert.equal(projects.get(c.id)!.phase, "fixing");
+  assert.equal(attentionEvents(c).length, 1);
+  assert.equal(
+    c.w.store.get<Task>("task", rest).status,
+    "queued",
+    "the third output never ran",
+  );
+  // The retried output fails again: that is a new failure wave, announced once.
+  c.w.service.transitionTask(a, { status: "running" });
+  c.w.service.transitionTask(a, { status: "failed", result: "failed again" });
+  for (let i = 0; i < 10; i++) await projects.sweep();
+  assert.equal(projects.get(c.id)!.phase, "needs-attention");
+  assert.equal(attentionEvents(c).length, 2);
+  assert.equal(attentionMessages(c).length, 2);
+});
+
+test("a stale approval is announced once however long it stands", async (t) => {
+  const c = await fixture(t);
+  await c.w.service.executionProjects.startPrepared(c.id);
+  await c.w.until(
+    () => c.w.service.executionProjects.get(c.id)?.phase === "completed",
+  );
+  const record = c.w.service.executionProjects.get(c.id)!;
+  await writeFile(join(c.folder, record.outputs[0].entry), "# changed\n");
+  for (let i = 0; i < 20; i++) await c.w.service.executionProjects.sweep();
+  assert.equal(attentionEvents(c).length, 1);
+  assert.equal(
+    c.w
+      .messages(c.sessionId)
+      .filter((m) =>
+        /Source, reviewer permissions or approvals changed/.test(m.text),
+      ).length,
+    1,
+  );
 });

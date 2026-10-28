@@ -536,7 +536,14 @@ export class ExecutionProjects {
       workflowId: record.id,
     });
   }
+  /**
+   * Needs attention is announced once per wave: the event and the chat message are published only
+   * when the saved record is not already in this exact state. The scheduler sweep reaches this on
+   * every tick while a failure stands, so repeating it must change and publish nothing.
+   */
   private attention(record: ExecutionProject, message: string) {
+    const saved = this.get(record.id);
+    if (saved?.phase === "needs-attention" && saved.message === message) return;
     this.save({ ...record, phase: "needs-attention", message });
     this.store.emit("execution.needs_attention", record.id, { message });
     this.notify(record, message);
@@ -742,10 +749,14 @@ export class ExecutionProjects {
             continue;
           }
           if (record.phase === "needs-attention") {
+            // Coordination resumes only when the person has dealt with every failed output (a
+            // retry from Recovery or a correction round) and work is in flight again. Sibling
+            // outputs that are still running do not reopen a failure that stands: that flip
+            // announced the same failure on every tick.
+            const outputs = record.outputs.map((o) => this.task(o.taskId));
             if (
-              !record.outputs.some((o) =>
-                ["queued", "running"].includes(this.task(o.taskId).status),
-              )
+              outputs.some((t) => ["failed", "cancelled"].includes(t.status)) ||
+              !outputs.some((t) => ["queued", "running"].includes(t.status))
             )
               continue;
             record.phase = "fixing";
