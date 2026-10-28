@@ -45,6 +45,7 @@ import { projectRoute } from "./projects.ts";
 import { projectLifecycleRoute } from "./project-lifecycle.ts";
 import { projectSetupRoute } from "./project-setup.ts";
 import { executionProjectRoute } from "./execution-project-routes.ts";
+import { recordBackendError } from "./backend-errors.ts";
 import { contractProposalSchema } from "./execution-contract.ts";
 import { teamSettingsRoute } from "./team-settings.ts";
 import { ExampleTeams } from "./example-teams.ts";
@@ -1235,8 +1236,25 @@ export function createApi(
       if (error instanceof URIError)
         return send({ error: "invalid_path" }, 400);
       console.error(error);
+      // Recorded as a `backend.error` event and named in the response, so the failing call can be
+      // identified afterwards (src/backend-errors.ts).
+      const recorded = recordBackendError(store, {
+        method: req.method ?? "GET",
+        path: (() => {
+          try {
+            return new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+          } catch {
+            return "/";
+          }
+        })(),
+        error,
+      });
       send(
-        { error: "internal_error", message: "Unexpected backend error" },
+        {
+          error: "internal_error",
+          route: recorded.route,
+          message: recorded.message,
+        },
         500,
       );
     }

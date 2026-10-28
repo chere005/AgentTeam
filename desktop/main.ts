@@ -127,9 +127,13 @@ async function start() {
     const result = await response.json();
     if (!response.ok)
       throw new Error(
-        result.message ??
-          result.issues?.map((i: any) => i.message).join("; ") ??
-          result.error,
+        // An unexpected backend error names the route that failed (it is also recorded as a
+        // `backend.error` event the Inspector lists), so the toast says which call it was.
+        result.error === "internal_error" && result.route
+          ? `${result.route}: ${result.message ?? "Unexpected backend error"}`
+          : (result.message ??
+              result.issues?.map((i: any) => i.message).join("; ") ??
+              result.error),
       );
     return result;
   });

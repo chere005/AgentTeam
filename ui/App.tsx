@@ -253,6 +253,9 @@ export default function App() {
     void refresh();
     return window.agentteam.onEvent((e) => {
       setEvents((old) => [...old, e].slice(-300));
+      // A recorded backend error changes nothing in the snapshot; refreshing on it would repeat
+      // the failing call when the failing call is the refresh itself.
+      if (e.type === "backend.error") return;
       clearTimeout(refreshTimer.current);
       refreshTimer.current = setTimeout(() => void refresh(), 80);
     });

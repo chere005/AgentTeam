@@ -262,6 +262,12 @@ function classify(
       severity: "debug",
       summary: "Checkpoint saved",
     };
+  if (t === "backend.error")
+    return {
+      category: "other",
+      severity: "error",
+      summary: `Backend error in ${str(d.method) ?? "?"} ${str(d.path) ?? "?"}: ${str(d.message)?.slice(0, 200) ?? "unexpected error"}`,
+    };
   if (t === "workflow.limit_tripped")
     return {
       category: "limit",
