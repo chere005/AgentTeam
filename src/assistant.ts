@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { rmdir } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { completionCheckSchema, limitsPatchSchema } from "./limits-schema.ts";
@@ -8,6 +10,13 @@ import { withRoleDefaults } from "./roles.ts";
 import { TeamService } from "./service.ts";
 import { SkillCatalog } from "./skills.ts";
 import { canonical, issueLines, sha256 } from "./shared-common.ts";
+import { canonicalPolicyPath, filesystemPolicy } from "./filesystem-policy.ts";
+import {
+  createProjectsFolder,
+  folderRefusal,
+  insideProjectsRoot,
+  projectsRoot,
+} from "./folder-access.ts";
 import {
   AppError,
   assert,
@@ -1023,7 +1032,9 @@ export class AssistantProposals {
   async create(input: unknown, source: ProposalSource): Promise<Proposal> {
     const data = proposalInputSchema.parse(input);
     this.checkStatic(data.ops);
-    const failure = await dryRun(this.service, data.ops);
+    const failure = await this.withProposedFolders(data.ops, () =>
+      dryRun(this.service, data.ops),
+    );
     if (failure)
       throw new AppError(
         400,
@@ -1060,6 +1071,97 @@ export class AssistantProposals {
       );
     });
     return proposal;
+  }
+  /**
+   * The folders a proposal newly attaches (or newly widens to write access) must be open to
+   * AgentTeam and to the programs it starts. A proposal never applied Desktop access without any
+   * check; now each such folder is probed first. A folder inside AgentTeam's own projects folder
+   * that does not exist yet is created, as the setup card does.
+   */
+  private async checkFolders(ops: Op[]) {
+    for (const [path, write] of this.foldersOf(ops, true)) {
+      if (insideProjectsRoot(path) && !existsSync(path)) {
+        filesystemPolicy(this.store).assertPath(path);
+        await createProjectsFolder(path);
+      }
+      const result = await this.service.folderAccess.probe(path, {
+        write,
+        force: true,
+      });
+      // A folder that does not exist is the dry run's business, with its own message.
+      if (!result.ok && result.code !== "folder-missing")
+        throw folderRefusal(result);
+    }
+  }
+  /**
+   * While a proposal is being validated (a dry run), the new folders it names inside AgentTeam's
+   * own projects folder exist, so the dry run can attach them; the folders made only for the dry
+   * run are removed again. Nothing is created for a proposal nobody applies.
+   */
+  private async withProposedFolders<T>(ops: Op[], work: () => Promise<T>) {
+    const made: string[] = [];
+    const root = projectsRoot();
+    const rootExisted = existsSync(root);
+    for (const [path] of this.foldersOf(ops, false))
+      if (insideProjectsRoot(path) && !existsSync(path)) {
+        filesystemPolicy(this.store).assertPath(path);
+        await createProjectsFolder(path);
+        made.push(path);
+      }
+    try {
+      return await work();
+    } finally {
+      for (const path of made) await rmdir(path).catch(() => {});
+      if (!rootExisted) await rmdir(root).catch(() => {});
+    }
+  }
+  /** Absolute folders the operations attach with the access each gets (only new ones with `onlyNew`). */
+  private foldersOf(ops: Op[], onlyNew: boolean) {
+    const wanted = new Map<string, boolean>();
+    const note = (path: unknown, write: boolean) => {
+      if (typeof path === "string" && isAbsolute(path))
+        wanted.set(path, (wanted.get(path) ?? false) || write);
+    };
+    const attached = (agentId: unknown) => {
+      try {
+        return typeof agentId === "string"
+          ? this.store.get<Agent>("agent", agentId).workspaces
+          : [];
+      } catch {
+        return []; // an agent created earlier in the same proposal
+      }
+    };
+    const isNew = (
+      current: { path: string; access: string }[],
+      path: unknown,
+      write: boolean,
+    ) => {
+      // Saved attachments are canonical paths; a proposal may spell the same folder differently.
+      const target =
+        typeof path === "string" ? canonicalPolicyPath(path) : path;
+      const have = current.find((w) => canonicalPolicyPath(w.path) === target);
+      return !have || (write && have.access !== "write");
+    };
+    for (const op of ops) {
+      if (op.op === "resource.assign" && op.action === "add") {
+        const write = op.workspace.access === "write";
+        if (!onlyNew || isNew(attached(op.agentId), op.workspace.path, write))
+          note(op.workspace.path, write);
+      } else if (op.op === "agent.update" || op.op === "agent.create") {
+        const list = op.op === "agent.update" ? op.changes : op.agent;
+        const current = op.op === "agent.update" ? attached(op.id) : [];
+        if (Array.isArray(list.workspaces))
+          for (const entry of list.workspaces as {
+            path?: unknown;
+            access?: unknown;
+          }[]) {
+            const write = entry?.access === "write";
+            if (entry && (!onlyNew || isNew(current, entry.path, write)))
+              note(entry.path, write);
+          }
+      } else if (op.op === "project.start") note(op.workspace, true);
+    }
+    return wanted;
   }
   /** Reference and existing-entity checks that do not need a dry run. */
   private checkStatic(ops: Op[]) {
@@ -1363,6 +1465,9 @@ export class AssistantProposals {
           "approval_required",
           `This proposal has significant effects (${p.reasons.join("; ")}). Approve it explicitly before applying`,
         );
+      // A folder the system will not open to AgentTeam is refused before anything changes (the
+      // proposal stays pending: allow the folder, or propose another, and apply again).
+      await this.checkFolders(p.ops);
       const dry = await dryRun(this.service, p.ops);
       if (dry) {
         const failed: Proposal = {

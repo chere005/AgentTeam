@@ -312,6 +312,9 @@ export class ReadinessService {
   }
   /** Window focus (desktop/main.ts). */
   windowFocused() {
+    // Coming back from System Settings: folders the system refused are asked again, and work that
+    // waited for one starts by itself once it is open (`folder.access_changed`).
+    void this.o.service.folderAccess.recheckFailed().catch(() => {});
     return this.auto ? this.scheduler.focus() : false;
   }
   /** A sign-in for `runtimeId` was started from the app (POST /runtimes/:id/sign-in). */
@@ -346,6 +349,11 @@ export class ReadinessService {
       }
       case "agent.deleted":
         this.agents.delete(event.entityId);
+        return;
+      case "folder.access_changed":
+        // A folder the system refused was opened (or the other way round): blocked work is judged again.
+        this.pending.requeue = true;
+        this.schedule();
         return;
       case "workflow.created":
       case "workflow.lifecycle":
@@ -621,14 +629,23 @@ async function checkProjectReadiness(service: TeamService, workflowId: string) {
     );
   const contract = service.contracts.project(workflowId);
   const decisions = [];
+  // Start asks the system about each folder again (once per folder for the whole project).
+  const forced = new Set<string>();
   for (const task of tasks) {
     const agent = service.store.get<Agent>("agent", task.agentId);
     let decision;
     try {
       const plan = await service.launchPlan(agent.id, task.id);
+      const taskContract = service.contracts.effective(task) ?? contract;
+      await service.launchReadiness.probeFolders(agent, plan, {
+        task,
+        contract: taskContract,
+        force: true,
+        forced,
+      });
       decision = service.launchReadiness.evaluatePlan(agent, plan, {
         task,
-        contract: service.contracts.effective(task) ?? contract,
+        contract: taskContract,
       });
     } catch (error) {
       const issue = service.launchReadiness.issueFromError(

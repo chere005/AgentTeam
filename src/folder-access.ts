@@ -534,6 +534,19 @@ function injectedDenials() {
     .filter(Boolean)
     .map((path) => canonicalPolicyPath(path));
 }
+/** The answer macOS folder privacy gives for a protected folder AgentTeam was not allowed to use. */
+export function macosRefusal(path: string, write: boolean): FolderProbeFailure {
+  return failureOf(
+    {
+      path,
+      write,
+      checkedAt: new Date().toISOString(),
+      protectedFolder: "Desktop",
+      steps: ["realpath", "stat"],
+    },
+    { errno: "EPERM", operation: "readdir" },
+  );
+}
 export function withInjectedDenials(next: ProbeFn): ProbeFn {
   return async (path, options) => {
     const denied = injectedDenials();
@@ -543,17 +556,7 @@ export function withInjectedDenials(next: ProbeFn): ProbeFn {
         const rel = relative(entry, target);
         return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
       });
-      if (hit)
-        return failureOf(
-          {
-            path: target,
-            write: options.write,
-            checkedAt: new Date().toISOString(),
-            protectedFolder: "Desktop",
-            steps: ["realpath", "stat"],
-          },
-          { errno: "EPERM", operation: "readdir" },
-        );
+      if (hit) return macosRefusal(target, options.write);
     }
     return next(path, options);
   };
@@ -567,6 +570,9 @@ export type FolderAccessOptions = {
   /** How long one request waits for a probe that is stuck (a system prompt nobody answered). */
   promptWaitMs?: number;
   now?: () => number;
+  /** Which locations count as macOS-protected (tests simulate a Mac and its home folder). */
+  platform?: Platform;
+  home?: string;
 };
 
 export class FolderAccess {
@@ -583,6 +589,16 @@ export class FolderAccess {
     this.ttlMs = options.ttlMs ?? 30_000;
     this.promptWaitMs = options.promptWaitMs ?? 15_000;
     this.now = options.now ?? Date.now;
+    this.platform = options.platform;
+    this.home = options.home;
+  }
+  private platform?: Platform;
+  private home?: string;
+  private protectedIn(path: string) {
+    return protectedFolderName(path, {
+      platform: this.platform,
+      home: this.home,
+    });
   }
   /** Replace the probe (tests); `null` restores the real one. */
   setProbe(probe: ProbeFn | null) {
@@ -652,28 +668,31 @@ export class FolderAccess {
     }
     let work = this.running.get(key);
     if (!work) {
-      work = this.probeFn(canonicalPolicyPath(path), { write }).then(
-        (result) => this.record(key, result),
-        (error) =>
-          this.record(
-            key,
-            failureOf(
-              {
-                path,
-                write,
-                checkedAt: new Date(this.now()).toISOString(),
-                protectedFolder: protectedFolderName(path),
-                steps: [],
-              },
-              {
-                errno: "UNKNOWN",
-                operation: "probe",
-                code: "probe-unavailable",
-                detail: error instanceof Error ? error.message : String(error),
-              },
+      work = Promise.resolve()
+        .then(() => this.probeFn(canonicalPolicyPath(path), { write }))
+        .then(
+          (result) => this.record(key, result),
+          (error) =>
+            this.record(
+              key,
+              failureOf(
+                {
+                  path,
+                  write,
+                  checkedAt: new Date(this.now()).toISOString(),
+                  protectedFolder: this.protectedIn(path),
+                  steps: [],
+                },
+                {
+                  errno: "UNKNOWN",
+                  operation: "probe",
+                  code: "probe-unavailable",
+                  detail:
+                    error instanceof Error ? error.message : String(error),
+                },
+              ),
             ),
-          ),
-      );
+        );
       this.running.set(key, work);
       void work.finally(() => {
         if (this.running.get(key) === work) this.running.delete(key);
@@ -692,8 +711,7 @@ export class FolderAccess {
         path: canonicalPolicyPath(path),
         write,
         checkedAt: new Date(this.now()).toISOString(),
-        protectedFolder:
-          protectedFolderName(path) ?? (write ? "a protected folder" : null),
+        protectedFolder: this.protectedIn(path),
         steps: [],
       },
       { errno: "ETIMEDOUT", operation: "readdir" },
@@ -802,9 +820,24 @@ export function insideProjectsRoot(path: string) {
   const rel = relative(resolve(projectsRoot()), resolve(path));
   return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
 }
-/** Create a proposed project folder; refuses (returns false) outside the projects root. */
+/**
+ * Create a proposed project folder; refuses (returns false) outside the projects root. A folder
+ * that cannot be made is a typed refusal naming the system's error, never an unexpected 500.
+ */
 export async function createProjectsFolder(path: string) {
   if (!insideProjectsRoot(path)) return false;
-  await mkdir(resolve(path), { recursive: true });
+  try {
+    await mkdir(resolve(path), { recursive: true });
+  } catch (error) {
+    const errno = (error as NodeJS.ErrnoException)?.code ?? "UNKNOWN";
+    const refused = errno === "EPERM" || errno === "EACCES";
+    throw new AppError(
+      refused ? 409 : 400,
+      refused ? "folder-denied" : "invalid_path",
+      refused
+        ? `AgentTeam cannot create ${resolve(path)} (${errno} on mkdir). Check the folder's permissions or choose another folder.`
+        : `AgentTeam cannot create ${resolve(path)} (${errno} on mkdir): choose a folder that can be created.`,
+    );
+  }
   return true;
 }

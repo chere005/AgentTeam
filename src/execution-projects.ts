@@ -15,6 +15,7 @@ import { contractObjects } from "./limits.ts";
 import type { VerificationReference } from "./execution-verification.ts";
 import { teamProfile } from "./team-profiles.ts";
 import { filesystemPolicy } from "./filesystem-policy.ts";
+import { folderRefusal } from "./folder-access.ts";
 import { contains } from "./resources.ts";
 import { sha256, canonical } from "./shared-common.ts";
 import type { TeamService } from "./service.ts";
@@ -242,6 +243,15 @@ export class ExecutionProjects {
     }
     if (!contract?.projectFolder)
       issues.push("Choose the project folder before starting.");
+    else {
+      // What the system last said about the folder (a refusal stays until it is probed again).
+      const refused = this.service.folderAccess.cached(
+        contract.projectFolder,
+        true,
+      );
+      if (refused && !refused.ok)
+        issues.push(`${refused.message} ${refused.fix}`);
+    }
     if (writers.length < languages.length)
       issues.push(
         "Choose one implementation worker for each selected language.",
@@ -345,15 +355,30 @@ export class ExecutionProjects {
         options.maxCorrectionRounds ?? contract?.maxCorrectionRounds ?? 2,
     };
   }
+  /**
+   * Ask the system whether the workers can write in the approved folder (macOS folder privacy,
+   * read-only disks), now. Start and a correction round call it before any task exists, so a
+   * folder the system refuses costs no provider call and creates nothing.
+   */
+  async assertFolderWritable(folder: string) {
+    const probe = await this.service.folderAccess.probe(folder, {
+      write: true,
+      force: true,
+    });
+    if (!probe.ok) throw folderRefusal(probe);
+  }
   async startPrepared(id: string) {
     const have = this.get(id);
     if (have) return this.view(id);
-    const plan = this.plan(id);
+    const first = this.plan(id);
     assert(
-      plan.supported,
+      first.supported,
       "execution_not_supported",
       "This assignment is not a prepared code implementation",
     );
+    if (first.folder) await this.assertFolderWritable(first.folder);
+    // Planned again: a refusal the probe just cleared is not held against Start.
+    const plan = this.plan(id);
     assert(
       plan.ready && plan.folder,
       "execution_setup_required",
@@ -825,6 +850,9 @@ export class ExecutionProjects {
             );
             continue;
           }
+          // The correction round creates new workers' tasks: the folder must still be writable. A
+          // refusal stops here as a setup problem (announced once), not as tasks that cannot start.
+          await this.assertFolderWritable(record.folder);
           const findings = JSON.stringify(
             verdicts.map((v, i) => ({
               reviewerId: record.reviews[i].reviewerId,

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Task } from "./model.ts";
 import type { TeamService } from "./service.ts";
 
 /**
@@ -58,6 +59,15 @@ export async function recoveryRoute(
     z.object({})
       .strict()
       .parse(await readBody());
+    // Ask the system about the task's folders again before the action, so a retry the system
+    // would refuse is judged on today's answer: the decision this action carries out and the
+    // preview that offered it read the same probe result.
+    const task = service.store.get<Task>("task", taskId);
+    if (["interrupted", "blocked", "failed"].includes(task.status)) {
+      const before = recovery.decide(task);
+      if (before?.providerCall || before?.setup?.then?.providerCall)
+        await service.launchReadiness.probeTask(taskId, { force: true });
+    }
     // The response carries the decision that was executed (the one the preview showed), then
     // the task's view as it is now.
     const { decision } = recovery.requeueWithDecision(taskId);

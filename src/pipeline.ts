@@ -1971,10 +1971,8 @@ export class PipelineService {
    * Check every stage and app-created integration task. Fix workers are assessed against their
    * existing project grant before their narrower assignment is created, and again at dispatch.
    */
-  private readinessIssues(rec: PipelineRecord) {
-    const contract = this.service.contracts.project(rec.workflowId);
-    const issues: string[] = [];
-    const taskIds = new Set(
+  private readinessTaskIds(rec: PipelineRecord) {
+    return new Set(
       [
         ...Object.keys(rec.stages),
         rec.integration1TaskId,
@@ -1982,6 +1980,26 @@ export class PipelineService {
         this.service.parallel.plan(rec.workflowId)?.integrationTaskId,
       ].filter((id): id is string => !!id),
     );
+  }
+  /**
+   * "Prepare and verify" asks the system about each stage's folders again (once per folder) before
+   * the readiness check reads the answers: a grant the operating system overrules is not ready.
+   */
+  private async probeReadinessFolders(rec: PipelineRecord) {
+    const contract = this.service.contracts.project(rec.workflowId);
+    const forced = new Set<string>();
+    for (const taskId of this.readinessTaskIds(rec)) {
+      const task = this.task(taskId);
+      await this.service.launchReadiness.probeProspective(
+        this.agent(task.agentId),
+        { task, contract, force: true, forced },
+      );
+    }
+  }
+  private readinessIssues(rec: PipelineRecord) {
+    const contract = this.service.contracts.project(rec.workflowId);
+    const issues: string[] = [];
+    const taskIds = this.readinessTaskIds(rec);
     for (const taskId of taskIds) {
       const task = this.task(taskId);
       const decision = this.service.launchReadiness.evaluateProspective(
@@ -2280,13 +2298,14 @@ export class PipelineService {
       "stage-2 workers hold disjoint declared paths and can lease concurrently",
     );
     // Every stage must be able to do its work with the tools and folders it really gets.
-    if (checks.every((c) => c.ok))
+    if (checks.every((c) => c.ok)) {
+      await this.probeReadinessFolders(this.record(workflowId));
       add(
         "Execution readiness (the tools and folders each stage needs)",
         this.readinessIssues(this.record(workflowId)),
         "every stage can do its work",
       );
-    else
+    } else
       checks.push({
         name: "Execution readiness (the tools and folders each stage needs)",
         ok: false,

@@ -2,9 +2,12 @@
 import "./fixtures/temp-data-dir.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { controlFolders } from "./fixtures/folder-probe.ts";
+import { projectsRoot } from "../src/folder-access.ts";
 import { Store } from "../src/store.ts";
 import { SkillCatalog } from "../src/skills.ts";
 import { TeamService } from "../src/service.ts";
@@ -1550,6 +1553,193 @@ test("proposal grounding captures the preceding human request rather than assist
       { type: "assistant" },
     );
     assert.equal(unlinked.trustedRequest, "");
+  } finally {
+    await t.close();
+  }
+});
+
+// ---- folders the system refuses (fix F4) -------------------------------------------------------------
+// The 14:36:01 proposal on the installed app applied Desktop access without any check.
+
+const MAC_FIX =
+  /System Settings → Privacy & Security → Files and Folders → AgentTeam/;
+
+test("a proposal that attaches a folder the system refuses is refused before anything changes and stays pending", async () => {
+  const t = await setup();
+  try {
+    const control = controlFolders(t.service);
+    const dir = await t.dir();
+    const refused = join(dir, "desktop-like");
+    await mkdir(refused);
+    control.refuse(refused);
+    const viaResource = await t.proposals.create(
+      {
+        title: "Give the lead a folder",
+        ops: [
+          {
+            op: "resource.assign",
+            agentId: t.lead.id,
+            action: "add",
+            workspace: { path: refused, access: "write", active: true },
+          },
+        ],
+      },
+      { type: "assistant", agentId: t.assistant.id },
+    );
+    const viaUpdate = await t.proposals.create(
+      {
+        title: "Update the lead",
+        ops: [
+          {
+            op: "agent.update",
+            id: t.lead.id,
+            changes: {
+              workspaces: [{ path: refused, access: "write", active: true }],
+            },
+          },
+        ],
+      },
+      { type: "assistant", agentId: t.assistant.id },
+    );
+    for (const proposal of [viaResource, viaUpdate]) {
+      t.proposals.approve(proposal.id, { type: "user" });
+      await assert.rejects(
+        t.proposals.apply(proposal.id, { type: "user" }),
+        (error) => {
+          assert.equal((error as { code?: string }).code, "folder-denied");
+          assert.match((error as Error).message, MAC_FIX);
+          return true;
+        },
+      );
+      assert.equal(
+        t.proposals.get(proposal.id).status,
+        "approved",
+        "still open: allow the folder, then apply",
+      );
+    }
+    assert.deepEqual(t.store.get<Agent>("agent", t.lead.id).workspaces, []);
+    // Allowed in System Settings: the same proposal applies (the system is asked again).
+    control.allow(refused);
+    await t.proposals.apply(viaResource.id, { type: "user" });
+    assert.equal(
+      t.store.get<Agent>("agent", t.lead.id).workspaces[0].path,
+      await realpath(refused),
+    );
+  } finally {
+    await t.close();
+  }
+});
+
+test("only folders a proposal newly attaches (or widens to write) are asked about", async () => {
+  const t = await setup();
+  try {
+    const control = controlFolders(t.service);
+    const kept = await t.dir();
+    const added = await t.dir();
+    await t.service.saveAgent(
+      {
+        name: "Lead",
+        environment: "codex",
+        workspaces: [{ path: kept, access: "write", active: true }],
+      },
+      t.lead.id,
+    );
+    const p = await t.proposals.create(
+      {
+        title: "Rename role and add a folder",
+        ops: [
+          {
+            op: "agent.update",
+            id: t.lead.id,
+            changes: {
+              role: "Coordinator",
+              workspaces: [
+                { path: kept, access: "write", active: true },
+                { path: added, access: "read" },
+              ],
+            },
+          },
+        ],
+      },
+      { type: "assistant", agentId: t.assistant.id },
+    );
+    t.proposals.approve(p.id, { type: "user" });
+    await t.proposals.apply(p.id, { type: "user" });
+    const asked = control.calls.map((c) => `${c.write ? "w" : "r"}:${c.path}`);
+    assert.deepEqual(
+      asked,
+      [`r:${await realpath(added)}`],
+      "the unchanged folder is not asked about; a read-only folder is only read",
+    );
+  } finally {
+    await t.close();
+  }
+});
+
+test("a new folder in AgentTeam's projects folder can be proposed: it exists only while the proposal is checked, and is created when it is applied", async () => {
+  const t = await setup();
+  try {
+    const folder = join(projectsRoot(), "pi-in-three-languages");
+    assert.ok(!existsSync(folder));
+    const p = await t.proposals.create(
+      {
+        title: "Give the lead a project folder",
+        ops: [
+          {
+            op: "resource.assign",
+            agentId: t.lead.id,
+            action: "add",
+            workspace: { path: folder, access: "write", active: true },
+          },
+        ],
+      },
+      { type: "assistant", agentId: t.assistant.id },
+    );
+    assert.ok(!existsSync(folder), "proposing created nothing");
+
+    t.proposals.approve(p.id, { type: "user" });
+    await t.proposals.apply(p.id, { type: "user" });
+    assert.ok(existsSync(folder), "applying created the folder");
+    assert.equal(
+      t.store.get<Agent>("agent", t.lead.id).workspaces[0].path,
+      await realpath(folder),
+    );
+    // A path outside the projects folder that does not exist is still an invalid proposal.
+    await assert.rejects(
+      t.proposals.create(
+        {
+          title: "Elsewhere",
+          ops: [
+            {
+              op: "resource.assign",
+              agentId: t.lead.id,
+              action: "add",
+              workspace: {
+                path: join(await t.dir(), "missing"),
+                access: "read",
+              },
+            },
+          ],
+        },
+        { type: "assistant", agentId: t.assistant.id },
+      ),
+      { code: "proposal_invalid" },
+    );
+  } finally {
+    await t.close();
+  }
+});
+
+test("the assistant is told where to put new folders and to stay out of the protected ones", async () => {
+  const t = await setup();
+  try {
+    const { body, text } = assistantContext(t.service, ctx);
+    assert.equal(body.defaults.projectsFolder, projectsRoot());
+    assert.match(text, /defaults\.projectsFolder/);
+    assert.match(
+      text,
+      /Never choose a path inside Desktop, Documents or Downloads/,
+    );
   } finally {
     await t.close();
   }

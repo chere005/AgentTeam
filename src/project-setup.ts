@@ -11,6 +11,8 @@
 //
 // Existing projects with usable folders and grants pass with no new step: `view` is read-only and
 // reports them ready without writing anything (migration rule).
+import { existsSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { completionCheckSchema } from "./limits-schema.ts";
 import {
@@ -21,6 +23,15 @@ import {
   type Workflow,
 } from "./model.ts";
 import type { TeamService } from "./service.ts";
+import {
+  createProjectsFolder,
+  folderRefusal,
+  insideProjectsRoot,
+  protectedFolderName,
+  suggestProjectFolder,
+  type FolderProbeResult,
+} from "./folder-access.ts";
+import { filesystemPolicy } from "./filesystem-policy.ts";
 import type { ReadinessDecision, ReadinessIssue } from "./launch-readiness.ts";
 import type { ProjectWorkflow } from "./project-lifecycle.ts";
 import {
@@ -343,8 +354,35 @@ export class ProjectSetupService {
       .sort((a, b) => b[1] - a[1])
       .map(([path]) => path)
       .slice(0, 5);
+    // With nothing attached anywhere AgentTeam proposes a new folder of its own, never one inside
+    // a location macOS protects per application (Desktop, Documents, Downloads): it is created
+    // when the person applies the setup.
+    const defaultFolder = suggestProjectFolder(
+      contract?.userIntent || wf.goal || wf.name,
+      wf.name,
+    );
     const folder =
-      contract?.projectFolder ?? wf.setup?.workspace ?? candidates[0] ?? null;
+      contract?.projectFolder ??
+      wf.setup?.workspace ??
+      candidates[0] ??
+      defaultFolder;
+    const writes = needing.some((d) => d.required.includes("write"));
+    // What the system last said about the proposed folder and the attached ones. A folder macOS
+    // protects that was never asked about is flagged, so the card asks (and the system prompt
+    // appears) before Start rather than after three wasted provider calls.
+    const platform = this.service.hostPlatform?.();
+    const checks = [...new Set([folder, ...candidates])].map((path) => {
+      const result: FolderProbeResult | null =
+        this.service.folderAccess.cached(path, writes) ?? null;
+      const protectedFolder = protectedFolderName(path, { platform });
+      return {
+        path,
+        write: writes,
+        protectedFolder,
+        result,
+        needsCheck: !result && !!protectedFolder && existsSync(path),
+      };
+    });
     const participants = needing.map((d) => {
       const agent = this.store.get<Agent>("agent", d.agentId);
       const access: "read" | "write" = d.required.includes("write")
@@ -373,7 +411,15 @@ export class ProjectSetupService {
         needsWidening: current === "read" && access === "write",
       };
     });
-    return { folder, candidates, participants };
+    return {
+      folder,
+      candidates,
+      defaultFolder,
+      /** True when applying creates the proposed folder (it lies in AgentTeam's projects folder). */
+      createsFolder: insideProjectsRoot(folder) && !existsSync(folder),
+      checks,
+      participants,
+    };
   }
 
   /** What the setup card renders. Read-only: it never creates or changes a record. */
@@ -564,6 +610,11 @@ export class ProjectSetupService {
       "project_archived",
       "This project is archived; reopen it before changing its setup",
     );
+    // A folder AgentTeam proposed in its own projects folder is made when the person approves it.
+    if (insideProjectsRoot(data.folder)) {
+      filesystemPolicy(this.store).assertPath(data.folder);
+      await createProjectsFolder(data.folder);
+    }
     const folder = await resolveProjectWorkspace(data.folder, this.store);
     const contract = this.service.contracts.project(workflowId);
     assert(
@@ -596,6 +647,13 @@ export class ProjectSetupService {
         "Only an approved writer's read-only attachment can be widened",
         400,
       );
+    // The system must let AgentTeam, and the programs it starts, use the folder before any role is
+    // given it: asked now, not assumed from the grants. A refused folder changes nothing.
+    const probe = await this.service.folderAccess.probe(folder, {
+      write: Object.values(access).includes("write"),
+      force: true,
+    });
+    if (!probe.ok) throw folderRefusal(probe);
     const outcome = this.store.transaction(() => {
       const added = attachProjectWorkspaceInTx(this.store, access, folder);
       const widened: string[] = [];
@@ -679,6 +737,31 @@ export async function projectSetupRoute(
         .list<ProjectSetupRecord>(PROJECT_SETUP)
         .filter((r) => r.state === "needed"),
     };
+  // Ask the system whether AgentTeam (and the programs it starts) can use a folder: the setup card
+  // calls it when a typed path is left and for "Check again" (src/folder-access.ts).
+  if (method === "POST" && path === "/folder-access/probe") {
+    const data = z
+      .object({
+        path: z.string().min(1).max(4096),
+        write: z.boolean().default(false),
+        force: z.boolean().default(false),
+      })
+      .strict()
+      .parse(await readBody());
+    assert(
+      isAbsolute(data.path) && !data.path.includes("\0"),
+      "invalid_path",
+      "The folder path must be absolute",
+      400,
+    );
+    filesystemPolicy(service.store).assertPath(data.path);
+    return {
+      data: await service.folderAccess.probe(data.path, {
+        write: data.write,
+        force: data.force,
+      }),
+    };
+  }
   if ((m = path.match(/^\/projects\/([^/]+)\/setup$/))) {
     const workflowId = id(m[1]);
     service.store.get<Workflow>("workflow", workflowId);

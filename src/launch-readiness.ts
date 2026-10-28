@@ -13,6 +13,7 @@
 import { AppError, type Agent, type Task } from "./model.ts";
 import {
   effectiveCapabilities,
+  providerRootsOf,
   type Capability,
   type CapabilityGap,
   type CapabilityIssueCode,
@@ -25,6 +26,7 @@ import {
   type ContractLike,
   type RoleClass,
 } from "./execution-contract.ts";
+import type { FolderProbeCode, FolderProbeResult } from "./folder-access.ts";
 import { taskScope } from "./provider-filesystem.ts";
 import { simpleTaskSupport } from "./simple-task-capabilities.ts";
 import { teamProfile } from "./team-profiles.ts";
@@ -35,6 +37,7 @@ import type { TeamService } from "./service.ts";
 export type SetupAction = {
   kind:
     | "choose-project-folder"
+    | "allow-folder-access"
     | "attach-folder"
     | "grant-write-access"
     | "grant-tool"
@@ -53,6 +56,8 @@ export type SetupAction = {
 };
 export type ReadinessIssueCode =
   | CapabilityIssueCode
+  /** The system refuses the folder (a probe answered): denied, missing, not a folder, read-only disk. */
+  | FolderProbeCode
   | "folder-detached"
   | "folder-changed"
   | "confinement-unsupported"
@@ -91,6 +96,14 @@ export type ReadinessDecision = {
     EffectiveCapabilities,
     "available" | "toolNames" | "folders" | "taskRoot" | "sandbox" | "adapter"
   > | null;
+  /** The folder probe answers this decision consulted (a folder never probed is absent). */
+  folderAccess?: {
+    path: string;
+    write: boolean;
+    ok: boolean;
+    checkedAt: string;
+    code?: FolderProbeCode;
+  }[];
   issues: ReadinessIssue[];
   message: string | null;
 };
@@ -483,17 +496,9 @@ export class LaunchReadiness {
       runtime?: (environment: string) => Readiness | undefined;
     } = {},
   ): ReadinessDecision {
-    const effective = effectiveCapabilities(plan, options.host ?? this.host());
-    const contract =
-      options.contract !== undefined
-        ? options.contract
-        : options.task?.id
-          ? this.service.contracts.effective({
-              id: options.task.id,
-              parentTaskId: options.task.parentTaskId,
-              workflowId: options.task.workflowId,
-            })
-          : null;
+    const host: HostFacts = { ...this.host(), ...options.host };
+    const effective = effectiveCapabilities(plan, host);
+    const contract = this.contractOf(options);
     const roleClass = roleClassOf(this.service, agent);
     const { required, basis } = requiredFor({
       contract,
@@ -507,6 +512,30 @@ export class LaunchReadiness {
       if (!effective.available[capability] && gap)
         issues.push(
           this.describeGap(agent, capability, gap, contract, options.task?.id),
+        );
+    }
+    // What the system really lets this launch do in its folders: the last probe answer (a folder
+    // never probed is not judged). A grant that the operating system overrules is not a capability;
+    // a refused folder blocks the launch the same way a missing grant does.
+    const folderAccess: NonNullable<ReadinessDecision["folderAccess"]> = [];
+    for (const target of this.folderTargets(plan, required)) {
+      const answer = host.folderAccess?.(target.path, target.write);
+      if (!answer) continue;
+      folderAccess.push({
+        path: answer.path,
+        write: answer.write,
+        ok: answer.ok,
+        checkedAt: answer.checkedAt,
+        ...(answer.ok ? {} : { code: answer.code }),
+      });
+      if (!answer.ok)
+        issues.push(
+          this.describeFolderFailure(
+            agent,
+            target.write,
+            answer,
+            options.task?.id,
+          ),
         );
     }
     // Authentication and installation: reported where the answer is informational (setup, notices,
@@ -557,11 +586,169 @@ export class LaunchReadiness {
         sandbox: effective.sandbox,
         adapter: effective.adapter,
       },
+      ...(folderAccess.length ? { folderAccess } : {}),
       issues: distinct,
       message: distinct.length
         ? distinct.map((i) => i.message).join(" ")
         : null,
     };
+  }
+
+  /** The contract a decision is judged against: the caller's, else the task's effective one. */
+  private contractOf(options: {
+    task?: TaskTraits;
+    contract?: ContractLike | null;
+  }) {
+    return options.contract !== undefined
+      ? options.contract
+      : options.task?.id
+        ? this.service.contracts.effective({
+            id: options.task.id,
+            parentTaskId: options.task.parentTaskId,
+            workflowId: options.task.workflowId,
+          })
+        : null;
+  }
+
+  /**
+   * The folders a launch needs the system to open, with the access each needs: the task's own
+   * folders (the declared task paths, else the active folder), written when the role must write
+   * and the folder is attached for writing, otherwise read.
+   */
+  folderTargets(plan: PlanFacts, required: Capability[]) {
+    if (!plan.cwd || !required.length) return [];
+    const roots = providerRootsOf(plan);
+    const own = plan.taskScoped
+      ? roots
+      : roots.filter((root) => root.path === plan.cwd);
+    const targets = (own.length ? own : [{ path: plan.cwd, access: "read" }])
+      .map((root) => ({
+        path: root.path,
+        write: required.includes("write") && root.access === "write",
+      }))
+      .filter(
+        (target, index, all) =>
+          all.findIndex((other) => other.path === target.path) === index,
+      );
+    return targets;
+  }
+
+  /** The issue a refused folder becomes: the probe's own words, and the one repair that fits. */
+  private describeFolderFailure(
+    agent: Agent,
+    write: boolean,
+    answer: Extract<FolderProbeResult, { ok: false }>,
+    taskId?: string,
+  ): ReadinessIssue {
+    const capability: Capability = write ? "write" : "read";
+    // macOS names the cause and the repair only for a permission refusal in a protected place.
+    const system =
+      answer.code === "folder-denied" &&
+      !!answer.protectedFolder &&
+      ["EPERM", "EACCES", "ETIMEDOUT"].includes(answer.errno);
+    return {
+      code: answer.code,
+      capability,
+      agentId: agent.id,
+      agentName: agent.name,
+      ...(taskId ? { taskId } : {}),
+      message: `${agent.name} cannot ${VERB[capability]}: ${answer.message} ${answer.fix}`,
+      fix: system
+        ? {
+            kind: "allow-folder-access",
+            label: `Allow AgentTeam to access ${answer.path}, then check again`,
+            agentId: agent.id,
+            path: answer.path,
+          }
+        : // A platform that cannot run the check has no repair a different folder would give.
+          answer.code === "probe-unavailable"
+          ? null
+          : {
+              kind: "choose-project-folder",
+              label: "Choose another project folder",
+              agentId: agent.id,
+              path: answer.path,
+            },
+    };
+  }
+
+  /**
+   * Ask the system about the folders this launch will use, before anything starts, and leave the
+   * answers where `evaluatePlan` reads them. Scheduler, Start, Recovery and project setup call it
+   * (they are asynchronous); the preview paths only read what these calls left behind, so a
+   * preview and the action it offers agree.
+   */
+  async probeFolders(
+    agent: Agent,
+    plan: PlanFacts,
+    options: {
+      task?: TaskTraits;
+      contract?: ContractLike | null;
+      host?: HostFacts;
+      /** Probe again even when a fresh answer exists (Start, Retry, Resume, setup). */
+      force?: boolean;
+      /**
+       * With `force`, probe a folder again only the first time this set sees it, so one action
+       * over many tasks of one project asks the system once per folder.
+       */
+      forced?: Set<string>;
+    } = {},
+  ) {
+    const host: HostFacts = { ...this.host(), ...options.host };
+    const effective = effectiveCapabilities(plan, host);
+    const { required } = requiredFor({
+      contract: this.contractOf(options),
+      roleClass: roleClassOf(this.service, agent),
+      tools: plan.tools,
+      adapter: effective.adapter,
+    });
+    return Promise.all(
+      this.folderTargets(plan, required).map((target) => {
+        const key = `${target.path}\u0000${target.write}`;
+        const force =
+          !!options.force && !(options.forced && options.forced.has(key));
+        options.forced?.add(key);
+        return this.service.folderAccess.probe(target.path, {
+          write: target.write,
+          force,
+        });
+      }),
+    );
+  }
+  /** `probeFolders` for the plan saved configuration gives (no launch plan exists yet). */
+  async probeProspective(
+    agent: Agent,
+    options: {
+      task?: Partial<TaskTraits>;
+      contract?: ContractLike | null;
+      force?: boolean;
+      forced?: Set<string>;
+    } = {},
+  ) {
+    let plan: PlanFacts;
+    try {
+      plan = this.prospectivePlan(
+        agent,
+        agent.workspaces.length
+          ? options.task
+          : { ...options.task, resourcePaths: undefined },
+        options.contract,
+      );
+    } catch {
+      return []; // a detached or changed folder is reported by the evaluator, not probed
+    }
+    return this.probeFolders(agent, plan, {
+      task: options.task as TaskTraits | undefined,
+      contract: options.contract,
+      force: options.force,
+      forced: options.forced,
+    });
+  }
+  /** `probeProspective` for a saved task (Recovery's Retry and Resume). */
+  async probeTask(taskId: string, options: { force?: boolean } = {}) {
+    const task = this.store.get<Task>("task", taskId);
+    const agent = this.store.get<Agent>("agent", task.agentId);
+    return this.probeProspective(agent, { task, ...options });
   }
 
   /** Evaluate from saved configuration (synchronous): delegation, resume, setup and previews. */
@@ -652,12 +839,22 @@ export class LaunchReadiness {
         seen.add(key);
         return true;
       });
+    const folderAccess = decisions
+      .flatMap((d) => d.folderAccess ?? [])
+      .filter(
+        (answer, index, all) =>
+          all.findIndex(
+            (other) =>
+              other.path === answer.path && other.write === answer.write,
+          ) === index,
+      );
     return {
       ...first,
       agentId: agent.id,
       agentName: agent.name,
       ready: issues.length === 0,
       required: uniq(decisions.flatMap((d) => d.required)),
+      ...(folderAccess.length ? { folderAccess } : {}),
       issues,
       message: issues.length ? issues.map((i) => i.message).join(" ") : null,
     };
@@ -666,7 +863,10 @@ export class LaunchReadiness {
   /** The host the provider processes run on, for the sandbox rule (the RunManager's platform). */
   host(): HostFacts {
     const platform = this.service.hostPlatform?.();
-    return platform ? { platform } : {};
+    return {
+      ...(platform ? { platform } : {}),
+      folderAccess: this.service.folderAccess.lookup,
+    };
   }
 
   /** Runtime installation and sign-in as the app currently knows it (wired by the RunManager). */

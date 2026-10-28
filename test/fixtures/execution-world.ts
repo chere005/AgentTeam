@@ -1,6 +1,7 @@
 // Shared fixture for the reliable-execution tests (Milestone A): a service with a controlled
 // runtime (no provider, no network), the pipeline team inserted with NO folders, and helpers to
 // drive the scheduler and a chat run with scripted "models". Temporary stores and folders only.
+import { mkdtempSync, rmSync } from "node:fs";
 import { mkdtemp, mkdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +15,12 @@ import { ExampleTeams } from "../../src/example-teams.ts";
 import { teamProfile } from "../../src/team-profiles.ts";
 import type { Command, RuntimeEvent } from "../../src/runtime.ts";
 import type { Agent, Message, Task, Workflow } from "../../src/model.ts";
+
+// New project folders AgentTeam proposes live in its projects folder; a test that applies such a
+// proposal must create it in a temporary place, never in the developer's real home.
+const projectsDir = mkdtempSync(join(tmpdir(), "agentteam-test-projects-"));
+process.env.AGENTTEAM_PROJECTS_DIR = join(projectsDir, "AgentTeam Projects");
+process.on("exit", () => rmSync(projectsDir, { recursive: true, force: true }));
 
 export type Provider = (
   command: Command,

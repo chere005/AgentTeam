@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 // provider arguments from the same helpers, so the readiness evaluator, the generated
 // "Tools in this run" line, the launch manifest and the real command cannot drift apart.
 import { isAbsolute, relative, sep } from "node:path";
+import type { FolderLookup } from "./folder-access.ts";
 import { providerCapabilityIssue } from "./provider-capabilities.ts";
 
 export const CAPABILITIES = ["read", "write", "shell"] as const;
@@ -111,7 +112,15 @@ export type EffectiveCapabilities = {
   sandbox: string;
 };
 
-export type HostFacts = { platform?: NodeJS.Platform };
+export type HostFacts = {
+  platform?: NodeJS.Platform;
+  /**
+   * What the system really lets AgentTeam do in a folder (src/folder-access.ts): the last probe
+   * answer, or undefined when the folder was never probed. `effectiveCapabilities` does not read
+   * it (a grant is a grant); the readiness evaluator does.
+   */
+  folderAccess?: FolderLookup;
+};
 
 /**
  * Effective capabilities of one launch, mirroring `commandFor`: Claude gets file tools only inside

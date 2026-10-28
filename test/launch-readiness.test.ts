@@ -1,8 +1,13 @@
 import { checkSlot } from "../src/execution-contract.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { world } from "./fixtures/execution-world.ts";
-import type { Task, Workflow } from "../src/model.ts";
+import { controlFolders } from "./fixtures/folder-probe.ts";
+import { attachProjectWorkspaceInTx } from "../src/team-profiles.ts";
+import { recoveryRoute } from "../src/recovery-routes.ts";
+import type { Agent, Task, Workflow } from "../src/model.ts";
 import type { ProjectSetupRecord } from "../src/project-setup.ts";
 import type { RuntimeWait } from "../src/runtime-waits.ts";
 
@@ -1081,4 +1086,447 @@ test("the task API refuses a malformed contract before creating anything, and ke
     [],
     "only project-relative paths are recorded as expectations",
   );
+});
+
+// ---- a granted folder the system refuses (macOS folder privacy; fixes F2 and F3) ------------------
+// The installed 0.6.0 app gave three workers write grants on ~/Desktop; macOS refuses the app and
+// every process it starts there until the person allows it, so every write failed with EPERM.
+// The system's answer, not the grant, now decides. The probe is controlled here (no protected
+// folder of the developer's machine is touched); the real probe is covered in folder-access.test.ts.
+
+const MAC_FIX =
+  /System Settings → Privacy & Security → Files and Folders → AgentTeam/;
+
+/** A coding task for a worker with a valid write grant on `folder`: only the system can refuse it. */
+async function grantedTask(
+  w: Awaited<ReturnType<typeof world>>,
+  folder: string,
+  extra: object = {},
+) {
+  const worker = await w.service.saveAgent({
+    name: "Writer",
+    environment: "claude",
+    roleType: "implementer",
+    tools: ["read", "write", "shell"],
+    workspaces: [{ path: folder, access: "write", active: true }],
+  });
+  const owner = await w.service.saveAgent({
+    name: "Owner",
+    environment: "claude",
+  });
+  const workflow = w.service.workflow({
+    name: "Pi",
+    goal: "Write and run a Python program",
+    ownerId: owner.id,
+    completionCriteria: "Done",
+  });
+  const task = w.service.task({
+    workflowId: workflow.id,
+    agentId: worker.id,
+    title: "Write and run a Python program",
+    instructions: "Create the program, then run it.",
+    completionCriteria: "It ran",
+    ...extra,
+  });
+  w.service.contracts.seedTask({
+    task,
+    text: "Write and run a Python program",
+    source: "request",
+  });
+  return { worker, owner, workflow, task };
+}
+
+test("a granted folder the system refuses blocks the task before it starts: no provider call, turn, lease, effect or attempt; opening it requeues the task once", async (t) => {
+  const w = await world(t);
+  const control = controlFolders(w.service);
+  const folder = await w.folder("desktop-like");
+  control.refuse(folder);
+  const { workflow, task } = await grantedTask(w, folder);
+  let calls = 0;
+  w.setProvider(async (_command, _environment, emit) => {
+    calls++;
+    emit({ type: "text", data: "ran" });
+  });
+  for (let i = 0; i < 3; i++) await w.scheduler.tick();
+  await w.settle();
+  // Blocked before it started, exactly like a missing grant.
+  assert.equal(calls, 0);
+  assert.equal(w.store.get<Task>("task", task.id).status, "blocked");
+  const wait = w.waits().find((x) => x.id === `task:${task.id}`) as RuntimeWait;
+  assert.equal(wait.reason, "capability-missing");
+  assert.deepEqual(
+    wait.issues?.map((i) => [i.code, i.capability, i.fix?.kind, i.fix?.path]),
+    [["folder-denied", "write", "allow-folder-access", folder]],
+  );
+  assert.match(wait.message ?? "", MAC_FIX);
+  assert.match(wait.message ?? "", new RegExp(folder));
+  assert.equal(w.service.limits.state(workflow.id).counters.turns, 0);
+  assert.equal(w.store.list("lease").length, 0);
+  assert.equal(w.service.recovery.ledger.list().length, 0);
+  assert.equal(w.service.recovery.state(task.id).attempt, 1);
+  assert.ok(
+    w.service.recovery
+      .checkpoints(task.id)
+      .every((c) => c.boundary !== "task.started"),
+  );
+  assert.equal(w.events("task.launch_manifest").length, 0);
+  assert.equal(w.waits().length, 1, "one wait, not one per tick");
+  assert.equal(
+    control.probes(folder),
+    1,
+    "the answer is shared, not re-asked per tick",
+  );
+  // The setup state names the worker and the cause; Recovery offers the repair, not a retry.
+  const setup = w.store.get<ProjectSetupRecord>("project-setup", workflow.id);
+  assert.equal(setup.state, "needed");
+  assert.deepEqual(
+    setup.blockers[0].issues.map((i) => [i.code, i.fix?.kind]),
+    [["folder-denied", "allow-folder-access"]],
+  );
+  const view = w.service.recovery.view(task.id);
+  assert.equal(view.decision?.kind, "setup-repair");
+  assert.equal(view.decision?.providerCall, false);
+  assert.equal(view.decision?.setup?.action?.kind, "allow-folder-access");
+  assert.equal(view.retry.allowed, false);
+  assert.throws(() => w.service.recovery.requeue(task.id), {
+    code: "runtime_capability_blocked",
+  });
+  // The person allows the folder in System Settings and comes back to the app: the refused
+  // folders are asked again, the answer changed, and the blocked task requeues once.
+  control.allow(folder);
+  assert.equal(await w.service.folderAccess.recheckFailed(), 1);
+  assert.equal(w.events("folder.access_changed").length, 1);
+  assert.equal(w.service.launchReadiness.requeueWaiting().length, 1);
+  assert.equal(w.service.launchReadiness.requeueWaiting().length, 0);
+  await w.until(
+    () => w.store.get<Task>("task", task.id).status === "completed",
+  );
+  assert.equal(calls, 1);
+  assert.equal(
+    w.service.recovery.state(task.id).attempt,
+    1,
+    "no attempt was consumed",
+  );
+  // The launch manifest records what the system answered just before the launch.
+  const manifest = w.events("task.launch_manifest")[0].data as {
+    folderAccess: { path: string; write: boolean; ok: boolean }[];
+  };
+  assert.deepEqual(
+    manifest.folderAccess.map(({ path, write, ok }) => ({ path, write, ok })),
+    [{ path: folder, write: true, ok: true }],
+  );
+});
+
+test("the same refusal without macOS names the permission error and asks for another folder", async (t) => {
+  const w = await world(t);
+  const control = controlFolders(w.service);
+  const folder = await w.folder("read-only-share");
+  control.refuse(folder, "permissions");
+  const { task } = await grantedTask(w, folder);
+  w.setProvider(async (_c, _e, emit) => emit({ type: "text", data: "ran" }));
+  await w.scheduler.tick();
+  await w.settle();
+  const wait = w.waits().find((x) => x.id === `task:${task.id}`) as RuntimeWait;
+  const issue = wait.issues![0];
+  assert.equal(issue.code, "folder-denied");
+  assert.equal(issue.fix?.kind, "choose-project-folder");
+  assert.match(issue.message, /EACCES/);
+  assert.match(
+    issue.message,
+    /Check the folder's permissions or choose another folder/,
+  );
+  assert.doesNotMatch(issue.message, /System Settings/);
+});
+
+test("delegation, the notice and the setup view read what the probes left behind; a role that needs no folder is unaffected", async (t) => {
+  const w = await world(t);
+  const control = controlFolders(w.service);
+  const team = w.insertPipeline();
+  const folder = await w.folder("shared");
+  // The folder is granted to the integrator (as Setup would) but the system refuses it.
+  w.store.transaction(() =>
+    attachProjectWorkspaceInTx(
+      w.store,
+      { [team.integrator.id]: "write" },
+      folder,
+    ),
+  );
+  control.refuse(folder);
+  await w.service.folderAccess.probe(folder, { write: true });
+  const refusals: string[] = [];
+  w.setProvider(async (command, _environment, emit) => {
+    const ctx = w.runs.toolSessions.authenticate(command.teammateTools!.token);
+    try {
+      w.service.orchestration.invokeTeammate(ctx, {
+        recipient: team.integrator.id,
+        title: "Develop: compute pi to 500 digits",
+        instructions: "Write and run the program.",
+        completionChecks: [{ type: "artifact-exists", path: "pi.py" }],
+        resourcePaths: [folder],
+      });
+      refusals.push("accepted");
+    } catch (error) {
+      refusals.push(
+        `${(error as { code?: string }).code}: ${(error as Error).message}`,
+      );
+    }
+    emit({ type: "text", data: "The integrator cannot work yet." });
+  });
+  const session = await w.chat(team.planner.id, REQUEST);
+  assert.equal(refusals.length, 1);
+  assert.match(refusals[0], /^capability_missing:/);
+  assert.match(refusals[0], MAC_FIX);
+  assert.match(refusals[0], /Nothing was created/);
+  assert.equal(w.store.list("invocation").length, 0);
+  assert.equal(
+    w.tasks().length,
+    1,
+    "only the planner's own conversation task exists",
+  );
+  // The chat notice names the worker and the cause.
+  const notice = w.service.launchReadiness.delegationReadiness(team.planner.id);
+  const integrator = notice.workers.find(
+    (x) => x.agentId === team.integrator.id,
+  )!;
+  assert.equal(integrator.ready, false);
+  assert.deepEqual(
+    integrator.issues.map((i) => i.code),
+    ["folder-denied"],
+  );
+  // The planner's own conversation was never blocked by the folder it does not use.
+  assert.ok(
+    w
+      .messages(session.id)
+      .some((m) => m.role === "assistant" && /cannot work/.test(m.text)),
+  );
+  // Choosing another folder that the system opens makes the same worker ready.
+  const other = await w.folder("elsewhere");
+  w.store.put("agent", {
+    ...w.store.get<Agent>("agent", team.integrator.id),
+    workspaces: [{ path: other, access: "write", active: true }],
+  });
+  await w.service.folderAccess.probe(other, { write: true });
+  const after = w.service.launchReadiness
+    .delegationReadiness(team.planner.id)
+    .workers.find((x) => x.agentId === team.integrator.id)!;
+  assert.equal(after.ready, true, JSON.stringify(after.issues));
+});
+
+test("a run that reports the system's refusal and fails its file checks asks about the folder: Recovery shows setup, not another attempt, and the failed attempt keeps its evidence", async (t) => {
+  const w = await world(t);
+  const control = controlFolders(w.service);
+  const folder = await w.folder("desktop-like");
+  const { task } = await grantedTask(w, folder, {
+    resourcePaths: [folder],
+    completionChecks: [{ type: "artifact-exists", path: "python/pi.py" }],
+  });
+  let calls = 0;
+  w.setProvider(async (_command, _environment, emit) => {
+    calls++;
+    if (calls === 1) {
+      // The launch probe passed; the permission goes away (or only the children are refused).
+      control.refuse(folder);
+      emit({
+        type: "text",
+        data: `Both attempts to write under \`${folder}\` failed with "Operation not permitted": Bash \`mkdir -p ${folder}/python\` was refused; the Write tool failed with \`EPERM\` on \`${folder}\`.`,
+      });
+      return;
+    }
+    await mkdir(join(folder, "python"), { recursive: true });
+    await writeFile(join(folder, "python", "pi.py"), "print(3)\n");
+    emit({ type: "text", data: "Created python/pi.py" });
+  });
+  await w.until(() => w.store.get<Task>("task", task.id).status === "failed");
+  const failed = w.store.get<Task>("task", task.id);
+  assert.match(failed.result ?? "", /Completion checks failed/);
+  assert.equal(calls, 1);
+  assert.equal(
+    w.service.folderAccess.cached(folder, true)?.ok,
+    false,
+    "the run's own report made the app ask the system",
+  );
+  const probesAfterRun = control.probes(folder);
+  assert.ok(
+    probesAfterRun >= 2,
+    "launch probe, then the probe after the failed run",
+  );
+
+  // Recovery: setup first, the fix named, no new attempt offered, the root cause is setup.
+  const view = w.service.recovery.view(task.id);
+  assert.equal(view.decision?.kind, "setup-repair");
+  assert.equal(view.decision?.label, "Fix setup");
+  assert.equal(view.decision?.allowed, false);
+  assert.equal(view.decision?.providerCall, false);
+  assert.doesNotMatch(view.decision?.summary ?? "", /Start attempt/);
+  assert.equal(view.decision?.setup?.action?.kind, "allow-folder-access");
+  assert.equal(view.rootCause?.kind, "setup");
+  assert.match(view.rootCause?.message ?? "", MAC_FIX);
+  assert.equal(view.retry.allowed, false);
+  // Preview and action agree: the action asks the system again first and is refused the same way.
+  const post = (id: string) =>
+    recoveryRoute(
+      w.service,
+      "POST",
+      new URL(`http://app.invalid/tasks/${id}/retry-from-checkpoint`),
+      async () => ({}),
+    );
+  await assert.rejects(post(task.id), { code: "capability_missing" });
+  assert.ok(
+    control.probes(folder) > probesAfterRun,
+    "the action probed the folder again",
+  );
+  assert.equal(calls, 1, "no provider call was spent");
+  assert.equal(w.service.recovery.state(task.id).attempt, 1);
+  assert.equal(w.store.get<Task>("task", task.id).status, "failed");
+
+  // The folder is opened. The preview keeps saying setup until the system is asked again (it never
+  // promises what the system may still refuse); the action asks, and then carries out the retry.
+  control.allow(folder);
+  assert.equal(w.service.recovery.view(task.id).decision?.kind, "setup-repair");
+  const result = (await post(task.id))!;
+  assert.equal(result.status, 202);
+  assert.equal(
+    (result.data as { executed: { kind: string } }).executed.kind,
+    "new-attempt",
+  );
+  await w.until(
+    () => w.store.get<Task>("task", task.id).status === "completed",
+  );
+  assert.equal(calls, 2);
+  assert.equal(w.service.recovery.state(task.id).attempt, 2);
+  // The first attempt stays failed history: its checkpoint and its provider run remain.
+  const history = w.service.recovery.checkpoints(task.id);
+  assert.ok(
+    history.some((c) => c.attempt === 1 && c.boundary === "task.failed"),
+  );
+  assert.equal(
+    w.service.recovery.ledger
+      .list(task.id)
+      .filter((e) => e.kind === "provider-run").length,
+    2,
+  );
+});
+
+test("a failed run that says nothing about the system's refusal keeps its ordinary retry", async (t) => {
+  const w = await world(t);
+  const control = controlFolders(w.service);
+  const folder = await w.folder("ordinary-failure");
+  const { task } = await grantedTask(w, folder, {
+    resourcePaths: [folder],
+    completionChecks: [{ type: "artifact-exists", path: "missing.py" }],
+  });
+  w.setProvider(async (_c, _e, emit) =>
+    emit({ type: "text", data: "I could not decide what to write." }),
+  );
+  await w.until(() => w.store.get<Task>("task", task.id).status === "failed");
+  const view = w.service.recovery.view(task.id);
+  assert.equal(view.decision?.kind, "new-attempt");
+  assert.equal(view.decision?.allowed, true);
+  assert.equal(view.rootCause?.kind, "failure");
+  assert.equal(control.probes(folder), 1, "only the launch probe ran");
+});
+
+test("Start asks the system about the folder: a refused folder keeps the project paused, an opened one starts it", async (t) => {
+  const { assignProject } = await import("../src/projects.ts");
+  const { resumeProject } = await import("../src/readiness.ts");
+  const { defaults } = await import("../src/discovery.ts");
+  const w = await world(t);
+  const control = controlFolders(w.service);
+  const team = w.insertPipeline();
+  const folder = await w.folder("assigned");
+  const discovery = {
+    settled: true,
+    runtimes: structuredClone(defaults).map((r) => ({
+      ...r,
+      installed: true,
+      authenticated: true,
+    })),
+  };
+  const project = await assignProject(w.service, team.teamId, {
+    mode: "simple",
+    goal: "Write notes.txt containing a greeting",
+    workspace: folder,
+    tasks: [
+      {
+        agentId: team.integrator.id,
+        title: "Write notes.txt",
+        instructions: "Create notes.txt containing a greeting.",
+        completionChecks: [{ type: "artifact-exists", path: "notes.txt" }],
+      },
+    ],
+  });
+  control.refuse(folder);
+  await assert.rejects(
+    resumeProject(w.service, discovery, project.id),
+    (error) => {
+      assert.equal((error as { code?: string }).code, "capability_missing");
+      assert.match((error as Error).message, MAC_FIX);
+      return true;
+    },
+  );
+  assert.equal(w.store.get<Workflow>("workflow", project.id).paused, true);
+  assert.equal(w.service.recovery.ledger.list().length, 0);
+  // Allowed: Start asks again (never trusts the earlier refusal) and resumes the saved assignment.
+  control.allow(folder);
+  await resumeProject(w.service, discovery, project.id);
+  assert.equal(w.store.get<Workflow>("workflow", project.id).paused, false);
+});
+
+test("Prepare and verify asks the system about each stage's folders and reports a refusal with its fix", async (t) => {
+  const { execFileSync } = await import("node:child_process");
+  const { createPipelineSample } = await import("../src/pipeline.ts");
+  const { defaults } = await import("../src/discovery.ts");
+  const w = await world(t);
+  const control = controlFolders(w.service);
+  const repo = await w.folder("repo");
+  await mkdir(`${repo}/a`);
+  await mkdir(`${repo}/b`);
+  await writeFile(`${repo}/a/x.txt`, "x");
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-C", repo, ...args], { encoding: "utf8" });
+  git("init", "-q");
+  git("config", "user.name", "T");
+  git("config", "user.email", "t@example.invalid");
+  git("add", ".");
+  git("commit", "-qm", "init");
+  const wt = new (await import("../src/worktrees.ts")).WorktreeService(
+    w.service,
+  );
+  t.after(() => wt.close());
+  w.service.pipelines.worktrees = wt;
+  const wf = await createPipelineSample(w.service, {
+    goal: "Add a greeting feature to the sample project",
+    workspace: repo,
+    isolation: "paths",
+    paths: [`${repo}/a`, `${repo}/b`],
+    implementationWorkers: 1,
+    fixWorkers: 1,
+  });
+  const runtimes = structuredClone(defaults).map((r) => ({
+    ...r,
+    installed: true,
+  }));
+  control.refuse(repo);
+  const refused = await w.service.pipelines.prepare(wf.id, runtimes, "manual");
+  assert.equal(refused.verified, false);
+  const check = refused.checks.find((c) =>
+    c.name.startsWith("Execution readiness"),
+  )!;
+  assert.equal(check.ok, false);
+  assert.match(check.detail, MAC_FIX);
+  assert.match(
+    check.detail,
+    /Implementation Worker 1 .* cannot create or change files/,
+  );
+  assert.equal(
+    w.store.get<ProjectSetupRecord>("project-setup", wf.id).state,
+    "needed",
+  );
+  // Opened: "Prepare and verify" asks again and the same project verifies.
+  control.allow(repo);
+  const passed = await w.service.pipelines.prepare(wf.id, runtimes, "manual");
+  const ok = passed.checks.find((c) =>
+    c.name.startsWith("Execution readiness"),
+  )!;
+  assert.equal(ok.ok, true, ok.detail);
 });

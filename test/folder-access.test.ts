@@ -518,7 +518,11 @@ test("a refusal stays known until the folder is asked about again; a success dec
 });
 
 test("only a change of answer is announced, and a probe stuck on a system prompt does not hold callers for ever", async (t) => {
-  const base = await scratch(t);
+  const scratchFolder = await scratch(t);
+  // A simulated Mac whose home folder is a temporary one: the "Desktop" below is ours.
+  const home = join(scratchFolder, "home");
+  const base = join(home, "Desktop", "pi");
+  await mkdir(base, { recursive: true });
   const store = new Store(":memory:");
   t.after(() => store.close());
   let release: (() => void) | undefined;
@@ -552,7 +556,13 @@ test("only a change of answer is announced, and a probe stuck on a system prompt
               },
         );
     });
-  const access = new FolderAccess({ store, probe: stuck, promptWaitMs: 20 });
+  const access = new FolderAccess({
+    store,
+    probe: stuck,
+    promptWaitMs: 20,
+    platform: "darwin",
+    home,
+  });
   const first = await access.probe(base, { write: true });
   // After the wait the caller gets "not allowed (yet)", and readiness sees the same thing.
   const waiting = failure(first);
@@ -583,6 +593,18 @@ test("only a change of answer is announced, and a probe stuck on a system prompt
       .length,
     1,
   );
+  // A stuck probe in a folder macOS does not protect is a timeout, not a privacy refusal.
+  const elsewhere = failure(
+    await new FolderAccess({
+      probe: stuck,
+      promptWaitMs: 20,
+      platform: "darwin",
+      home,
+    }).probe(scratchFolder, { write: true }),
+  );
+  assert.equal(elsewhere.errno, "ETIMEDOUT");
+  assert.notEqual(elsewhere.fix, MACOS_FOLDER_FIX);
+  assert.match(elsewhere.fix, /Check the folder's permissions/);
 });
 
 test("returning to the app asks again about every refused folder and announces the ones that opened", async (t) => {
@@ -678,6 +700,11 @@ test("project folders AgentTeam proposes live in its own projects folder, named 
   assert.equal(suggestProjectFolder("Compute pi to 500 digits"), first);
   await writeFile(join(first, "pi.py"), "x");
   assert.equal(suggestProjectFolder("Compute pi to 500 digits"), `${first}-2`);
+  // A folder that cannot be made is a typed refusal that names the error, not an unexpected failure.
+  await assert.rejects(createProjectsFolder(join(first, "pi.py", "inside")), {
+    code: "invalid_path",
+    message: /ENOTDIR on mkdir/,
+  });
   assert.equal(
     suggestProjectFolder("???", "Pipeline team"),
     join(projectsRoot(), "pipeline-team"),

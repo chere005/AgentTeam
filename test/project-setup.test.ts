@@ -1,9 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, realpath } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { world } from "./fixtures/execution-world.ts";
+import { controlFolders } from "./fixtures/folder-probe.ts";
 import { filesystemPolicy } from "../src/filesystem-policy.ts";
+import { attachProjectWorkspaceInTx } from "../src/team-profiles.ts";
+import { projectsRoot, protectedFolderName } from "../src/folder-access.ts";
 import { assignProject } from "../src/projects.ts";
 import { resumeProject } from "../src/readiness.ts";
 import { defaults } from "../src/discovery.ts";
@@ -14,8 +19,11 @@ const REQUEST =
   "Have the developers make a Python program that computes pi to 500 digits and run it.";
 
 /** The incident's conversation: a pipeline team, a coding chat, the planner delegated nothing yet. */
-async function incident(t: Parameters<typeof world>[0]) {
-  const w = await world(t);
+async function incident(
+  t: Parameters<typeof world>[0],
+  platform?: NodeJS.Platform,
+) {
+  const w = await world(t, { platform });
   const team = w.insertPipeline();
   w.setProvider(async (command, _e, emit) => {
     if (command.teammateTools)
@@ -35,10 +43,17 @@ test("the setup card proposes the folder, the participants and the least access 
   assert.equal(view.state, "needed");
   assert.equal(view.kind, "conversation");
   assert.equal(view.contract?.workKind, "executable-implementation");
+  // Nothing is attached anywhere, so AgentTeam proposes a NEW folder of its own (created when the
+  // setup is applied), never one inside Desktop, Documents or Downloads (F4).
+  assert.equal(view.proposal.folder, view.proposal.defaultFolder);
+  assert.equal(view.proposal.createsFolder, true);
   assert.equal(
     view.proposal.folder,
+    join(projectsRoot(), "have-the-developers-make-a-python"),
+  );
+  assert.equal(
+    protectedFolderName(view.proposal.folder, { platform: "darwin" }),
     null,
-    "nothing to propose: the user chooses",
   );
   const access = Object.fromEntries(
     view.proposal.participants.map((p) => [
@@ -535,5 +550,233 @@ test("generic Start preserves a user correction and sends the original request e
   assert.equal(
     (await call("POST", `/projects/${folderless.id}/setup/start`, {})).status,
     400,
+  );
+});
+
+// ---- folder access in the setup card (fixes F2, F4, F5) -------------------------------------------
+
+const MAC_FIX =
+  /System Settings → Privacy & Security → Files and Folders → AgentTeam/;
+
+test("applying the setup asks the system first: a refused folder is refused with the typed issue, attaches nothing and keeps the setup needed", async (t) => {
+  const { w, team, workflowId } = await incident(t);
+  const control = controlFolders(w.service);
+  const desktopLike = await w.folder("desktop-like");
+  control.refuse(desktopLike);
+  const agentsBefore = JSON.stringify(w.store.list("agent"));
+  await assert.rejects(
+    w.service.setups.apply(workflowId, { folder: desktopLike }),
+    (error) => {
+      assert.equal((error as { code?: string }).code, "folder-denied");
+      assert.match((error as Error).message, MAC_FIX);
+      assert.match((error as Error).message, new RegExp(desktopLike));
+      return true;
+    },
+  );
+  assert.equal(
+    JSON.stringify(w.store.list("agent")),
+    agentsBefore,
+    "no grant was made",
+  );
+  assert.equal(w.events("project.setup_applied").length, 0);
+  assert.equal(w.service.setups.view(workflowId).state, "needed");
+  assert.equal(
+    w.service.contracts.project(workflowId)?.projectFolder ?? null,
+    null,
+    "the refused folder was not authorized as the project's folder",
+  );
+  assert.equal(
+    w.store.list<Task>("task").filter((x) => x.agentId === team.integrator.id)
+      .length,
+    0,
+  );
+  // The probe is the system's answer, so it is asked again each time: allowed, the same action works.
+  control.allow(desktopLike);
+  const applied = await w.service.setups.apply(workflowId, {
+    folder: desktopLike,
+  });
+  assert.equal(applied.state, "ready");
+  assert.ok(control.probes(desktopLike) >= 2);
+});
+
+test("the setup asks the system to write when an approved role writes, and only to read when every approved role reads", async (t) => {
+  const writers = await incident(t);
+  const writeControl = controlFolders(writers.w.service);
+  const folder = await writers.w.folder("pi");
+  await writers.w.service.setups.apply(writers.workflowId, { folder });
+  assert.deepEqual(
+    writeControl.calls.filter((c) => c.path === folder).map((c) => c.write),
+    [true],
+  );
+  const readers = await incident(t);
+  const readControl = controlFolders(readers.w.service);
+  const shared = await readers.w.folder("review");
+  await readers.w.service.setups.apply(readers.workflowId, {
+    folder: shared,
+    participants: readers.team.reviewers.map((a) => a.id),
+  });
+  assert.deepEqual(
+    readControl.calls.filter((c) => c.path === shared).map((c) => c.write),
+    [false],
+  );
+});
+
+test("with nothing attached AgentTeam proposes a new folder in its projects folder and creates it when the setup is applied", async (t) => {
+  const { w, team, workflowId } = await incident(t);
+  const view = w.service.setups.view(workflowId);
+  const proposed = view.proposal.folder;
+  assert.equal(proposed, view.proposal.defaultFolder);
+  assert.equal(view.proposal.createsFolder, true);
+  assert.ok(proposed.startsWith(projectsRoot()));
+  for (const protectedName of ["Desktop", "Documents", "Downloads"])
+    assert.ok(!proposed.includes(`/${protectedName}`));
+  assert.ok(!existsSync(proposed), "proposing creates nothing");
+  assert.ok(view.proposal.candidates.length === 0);
+  const applied = await w.service.setups.apply(workflowId, {
+    folder: proposed,
+  });
+  assert.equal(applied.state, "ready");
+  assert.ok(existsSync(proposed), "applying creates the folder");
+  assert.equal(
+    agentOf(w, team.integrator.id).workspaces[0].path,
+    await realpath(proposed),
+  );
+  assert.equal(
+    w.service.contracts.project(workflowId)?.projectFolder,
+    await realpath(proposed),
+  );
+  assert.equal(w.service.setups.view(workflowId).proposal.createsFolder, false);
+});
+
+test("a folder outside the projects folder is never created by the setup", async (t) => {
+  const { w, workflowId } = await incident(t);
+  const missing = join(w.base, "not-made");
+  await assert.rejects(
+    w.service.setups.apply(workflowId, { folder: missing }),
+    {
+      message: "Workspace folder does not exist",
+    },
+  );
+  assert.ok(!existsSync(missing));
+});
+
+test("an attached folder in a macOS-protected location is checked before Start and the refusal shows beside it", async (t) => {
+  // A simulated macOS host whose home folder is a temporary one: the "Desktop" below is ours.
+  const home = await realpath(await mkdtemp(join(tmpdir(), "agentteam-home-")));
+  const savedHome = process.env.HOME;
+  process.env.HOME = home;
+  t.after(() => {
+    if (savedHome === undefined) delete process.env.HOME;
+    else process.env.HOME = savedHome;
+  });
+  const { w, team, workflowId } = await incident(t, "darwin");
+  const control = controlFolders(w.service);
+  const desktop = join(home, "Desktop", "pi");
+  await mkdir(desktop, { recursive: true });
+  // The folder is already attached to the workers (an earlier project, or the old setup card).
+  w.store.transaction(() =>
+    attachProjectWorkspaceInTx(
+      w.store,
+      Object.fromEntries(
+        [team.integrator, ...team.workers].map((a) => [a.id, "write" as const]),
+      ),
+      desktop,
+    ),
+  );
+  const before = w.service.setups.view(workflowId);
+  assert.equal(
+    before.proposal.folder,
+    desktop,
+    "the attached folder is the candidate",
+  );
+  const check = before.proposal.checks.find((c) => c.path === desktop)!;
+  assert.equal(check.protectedFolder, "Desktop");
+  assert.equal(check.result, null);
+  assert.equal(check.needsCheck, true, "the card asks the system before Start");
+  // Nothing is judged without an answer; with the answer the refusal is shown and Start waits.
+  control.refuse(desktop);
+  await w.service.folderAccess.probe(desktop, { write: true });
+  const after = w.service.setups.view(workflowId);
+  const answered = after.proposal.checks.find((c) => c.path === desktop)!;
+  assert.equal(answered.needsCheck, false);
+  assert.equal(answered.result?.ok, false);
+  assert.equal(after.state, "needed");
+  const issues = after.blockers.find(
+    (b) => b.agentId === team.integrator.id,
+  )!.issues;
+  assert.deepEqual(
+    issues.map((i) => [i.code, i.fix?.kind]),
+    [["folder-denied", "allow-folder-access"]],
+  );
+  assert.match(issues[0].message, MAC_FIX);
+  assert.equal(after.start?.available, false);
+  // Allowed in System Settings and asked again: the refusal is gone, no new grant was made (the
+  // roles that never had this folder still need their own setup).
+  control.allow(desktop);
+  await w.service.folderAccess.probe(desktop, { write: true, force: true });
+  const allowed = w.service.setups.view(workflowId);
+  assert.ok(
+    allowed.blockers.every((b) =>
+      b.issues.every((i) => i.code !== "folder-denied"),
+    ),
+  );
+  assert.equal(
+    allowed.proposal.checks.find((c) => c.path === desktop)?.result?.ok,
+    true,
+  );
+  assert.equal(control.probes(desktop), 2);
+});
+
+test("the folder probe route answers for a typed path and refuses relative and globally denied ones", async (t) => {
+  const { createApi } = await import("../src/http.ts");
+  const { w } = await incident(t);
+  const control = controlFolders(w.service);
+  const server = createApi(w.service, "test-token", w.runs);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(
+    () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+  );
+  const base =
+    "http://127.0.0.1:" + (server.address() as { port: number }).port;
+  const call = async (body: unknown) => {
+    const res = await fetch(base + "/folder-access/probe", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer test-token",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    return { status: res.status, body: (await res.json()) as any };
+  };
+  const folder = await w.folder("typed");
+  const fine = await call({ path: folder, write: true });
+  assert.equal(fine.status, 200);
+  assert.equal(fine.body.ok, true);
+  control.refuse(folder);
+  const cached = await call({ path: folder, write: true });
+  assert.equal(cached.body.ok, true, "a fresh answer is reused");
+  const forced = await call({ path: folder, write: true, force: true });
+  assert.equal(forced.body.ok, false);
+  assert.equal(forced.body.code, "folder-denied");
+  assert.match(forced.body.fix, MAC_FIX);
+  assert.equal((await call({ path: "relative/path" })).status, 400);
+  assert.equal((await call({ path: folder, extra: true })).status, 400);
+  const denied = await w.folder("globally-denied");
+  filesystemPolicy(w.store).add({
+    paths: [denied],
+    acknowledgePermanent: true,
+  });
+  const blocked = await call({ path: denied, write: true });
+  assert.equal(blocked.status, 403);
+  assert.equal(blocked.body.error, "filesystem_blocked");
+  assert.equal(
+    control.probes(denied),
+    0,
+    "a globally denied folder is never touched",
   );
 });

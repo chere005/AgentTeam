@@ -34,6 +34,10 @@ export async function executionProjectRoute(
         "execution_paused",
         "Resume execution before starting another correction attempt",
       );
+      // A correction round creates new workers' tasks: the folder must still be writable.
+      const record = service.executionProjects.get(id);
+      if (record?.phase === "needs-attention")
+        await service.executionProjects.assertFolderWritable(record.folder);
       return { data: service.executionProjects.retry(id) };
     }
     if (method === "POST" && match[2] === "start") {

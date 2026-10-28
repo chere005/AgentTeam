@@ -16,6 +16,7 @@ import {
   type Workflow,
 } from "./model.ts";
 import type { Proposal } from "./assistant.ts";
+import { projectsRoot } from "./folder-access.ts";
 import { proposalProtocol } from "./assistant-protocol.ts";
 import type { TeamService } from "./service.ts";
 import { simpleTaskSupport } from "./simple-task-capabilities.ts";
@@ -182,6 +183,9 @@ export function assistantContext(
       id: activeTeamId,
       name: c(activeTeam?.name ?? activeTeamId, T.name),
     },
+    // Where to propose a new project folder when none is attached: AgentTeam's own folder, which
+    // the system never protects per application (Desktop, Documents and Downloads it does).
+    defaults: { projectsFolder: c(projectsRoot(), T.text) },
     otherTeams: rows(
       teams
         .filter((t) => t.id !== activeTeamId)

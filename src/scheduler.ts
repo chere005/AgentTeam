@@ -7,6 +7,8 @@ import { ensureWorkspaceBaseline } from "./workspace-changes.ts";
 import { prepareTaskResourceFolders } from "./project-worktrees.ts";
 import { noteRuntimeWait } from "./runtime-waits.ts";
 import { launchManifest } from "./capability-context.ts";
+import { reportsDeniedPath } from "./folder-access.ts";
+import type { CheckEvidence } from "./limits.ts";
 import {
   explicitlyReportsIncompleteExecution,
   explicitlyReportsNoWork,
@@ -174,13 +176,22 @@ export class Scheduler {
           // that cannot do its work is blocked here with no provider process, effect, lease, turn
           // or attempt consumed (src/launch-readiness.ts).
           const host = { platform: this.runs.runtimePlatform };
+          // Finalizing saved provider output makes no provider call and needs no capability.
+          const replaying = this.service.recovery.willReplayRun(task);
+          // Ask the system what it lets this launch do in its folders (macOS folder privacy,
+          // read-only disks) before anything starts: a grant it overrules is not a capability.
+          if (!replaying)
+            await this.service.launchReadiness.probeFolders(agent, plan, {
+              task,
+              host,
+            });
+          if (this.stopped || !this.runs.enabled) break;
           const decision = this.service.launchReadiness.evaluatePlan(
             agent,
             plan,
             { task, host },
           );
-          // Finalizing saved provider output makes no provider call and needs no capability.
-          if (!decision.ready && !this.service.recovery.willReplayRun(task)) {
+          if (!decision.ready && !replaying) {
             this.service.launchReadiness.blockTask(task, decision);
             continue;
           }
@@ -213,6 +224,41 @@ export class Scheduler {
       }
     } finally {
       this.busy = false;
+    }
+  }
+  /**
+   * A run whose output reports the operating system's refusal ("Operation not permitted", EPERM,
+   * EACCES, "Permission denied") for a path under the task folder and then failed (its file checks
+   * failed, or it said outright that it could not do the work): ask the system about that folder
+   * now. The answer is kept where readiness reads it, so Recovery names the cause (setup, with the
+   * fix) instead of offering another attempt that would fail the same way. The failed attempt
+   * itself stays failed with its evidence.
+   */
+  private async noteDeniedAccess(
+    plan: Awaited<ReturnType<TeamService["launchPlan"]>>,
+    evidence: CheckEvidence | null,
+    output: string,
+  ) {
+    const root = plan.cwd;
+    if (
+      !root ||
+      (evidence &&
+        !evidence.results.some(
+          (entry) =>
+            !entry.passed &&
+            [
+              "artifact-exists",
+              "artifact-matches",
+              "execution-verified",
+            ].includes(entry.check.type),
+        )) ||
+      !reportsDeniedPath(output, root)
+    )
+      return;
+    try {
+      await this.service.folderAccess.probe(root, { write: true, force: true });
+    } catch {
+      // The probe never throws; the failed attempt is reported either way.
     }
   }
   async execute(
@@ -352,6 +398,7 @@ export class Scheduler {
         explicitlyReportsIncompleteExecution(task, result) ||
         explicitlyReportsUnapprovedReview(task, result)
       ) {
+        await this.noteDeniedAccess(plan, null, result);
         this.service.transitionTask(task.id, {
           status: "failed",
           result: result.slice(0, 100000),
@@ -366,8 +413,10 @@ export class Scheduler {
         result.slice(0, 100000),
         plan.cwd ?? this.runs.cwd,
       );
-      if (evidence && !evidence.passed)
+      if (evidence && !evidence.passed) {
+        await this.noteDeniedAccess(plan, evidence, result);
         throw new Error(this.service.limits.failedChecksText(evidence));
+      }
       // A required check a model invented is not enforced as pass/fail, but it keeps its slot: the
       // task waits (its saved output is replayed, no provider call) until the user confirms it.
       const unverified = this.service.contracts.unresolved(task);

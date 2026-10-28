@@ -37,6 +37,12 @@ function shortReason(issue: ReadinessIssue) {
       return "required sandbox unavailable";
     case "folder-restricted":
       return "folder uses access rules the provider cannot enforce";
+    case "folder-denied":
+      return "the system has not allowed access to its folder";
+    case "folder-missing":
+      return "its folder does not exist";
+    case "folder-not-directory":
+      return "its folder is not a folder";
     default:
       return issue.code.replace(/-/g, " ");
   }
@@ -177,6 +183,11 @@ export function launchManifest(
         capability,
       })),
     },
+    // What the system answered about the task's folders just before the launch (a launch that
+    // was never probed records nothing here).
+    ...(input.decision.folderAccess?.length
+      ? { folderAccess: input.decision.folderAccess }
+      : {}),
     contract: contract
       ? {
           id: contract.id,

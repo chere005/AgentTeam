@@ -7,6 +7,8 @@ import { readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { world, type World } from "./fixtures/execution-world.ts";
+import { controlFolders } from "./fixtures/folder-probe.ts";
+import { executionProjectRoute } from "../src/execution-project-routes.ts";
 import { AppError, type Task } from "../src/model.ts";
 import type { ExecutionVerificationRecord } from "../src/execution-verification.ts";
 import type { ExecutionVerificationSpec } from "../src/limits-schema.ts";
@@ -656,4 +658,124 @@ test("a stale approval is announced once however long it stands", async (t) => {
       ).length,
     1,
   );
+});
+
+// ---- Start asks the system about the folder (fix F2) -------------------------------------------
+
+test("Start asks the system about the approved folder: a refused folder creates no task, reference or project, and the plan says so", async (t) => {
+  const c = await fixture(t);
+  const control = controlFolders(c.w.service);
+  control.refuse(c.folder);
+  const tasks = c.w.tasks().length;
+  const references = c.w.store.list("verification-reference").length;
+  await assert.rejects(
+    c.w.service.executionProjects.startPrepared(c.id),
+    (error) => {
+      assert.equal((error as { code?: string }).code, "folder-denied");
+      assert.match(
+        (error as Error).message,
+        /System Settings → Privacy & Security → Files and Folders → AgentTeam/,
+      );
+      return true;
+    },
+  );
+  assert.equal(c.w.tasks().length, tasks, "no implementation task was created");
+  assert.equal(
+    c.w.store.list("verification-reference").length,
+    references,
+    "no reference was registered",
+  );
+  assert.equal(c.w.service.executionProjects.get(c.id), null);
+  assert.equal(c.w.events("execution.project_started").length, 0);
+  assert.equal(c.w.service.recovery.ledger.list().length, 0);
+  // The card's plan reads the answer the probe left, so Start stays disabled with the cause.
+  const plan = c.w.service.executionProjects.plan(c.id);
+  assert.equal(plan.ready, false);
+  assert.ok(
+    plan.issues.some((issue) => /AgentTeam to access this folder/.test(issue)),
+  );
+  // Allowed in System Settings: Start asks again and proceeds.
+  control.allow(c.folder);
+  await c.w.service.executionProjects.startPrepared(c.id);
+  assert.equal(c.w.service.executionProjects.get(c.id)?.phase, "implementing");
+  assert.equal(c.w.events("execution.project_started").length, 1);
+  assert.equal(c.w.service.executionProjects.plan(c.id).ready, true);
+});
+
+test("a correction round asks again before it creates new work, and an unsettled refusal creates nothing", async (t) => {
+  const c = await fixture(t, { rounds: 2 });
+  const control = controlFolders(c.w.service);
+  await c.w.service.executionProjects.startPrepared(c.id);
+  const [taskId] = c.w.service.executionProjects
+    .get(c.id)!
+    .outputs.map((o) => o.taskId);
+  c.w.service.transitionTask(taskId, { status: "running" });
+  c.w.service.transitionTask(taskId, { status: "failed", result: "EPERM" });
+  await c.w.service.executionProjects.sweep();
+  assert.equal(
+    c.w.service.executionProjects.get(c.id)!.phase,
+    "needs-attention",
+  );
+  const post = () =>
+    executionProjectRoute(
+      c.w.service,
+      "POST",
+      new URL(`http://app.invalid/projects/${c.id}/execution/retry`),
+      async () => ({}),
+      () => true,
+    );
+  const tasks = c.w.tasks().length;
+  control.refuse(c.folder);
+  await assert.rejects(post(), { code: "folder-denied" });
+  assert.equal(c.w.tasks().length, tasks);
+  assert.equal(c.w.service.executionProjects.get(c.id)!.round, 0);
+  control.allow(c.folder);
+  await post();
+  assert.equal(c.w.service.executionProjects.get(c.id)!.round, 1);
+  assert.equal(c.w.tasks().length, tasks + 1);
+});
+
+test("an automatic correction round that finds the folder refused stops as one setup announcement and creates no task", async (t) => {
+  let control: ReturnType<typeof controlFolders> | undefined;
+  const c = await fixture(t, {
+    rounds: 2,
+    script: {
+      verdict: (round) => {
+        // The permission goes away while the reviewers are working.
+        if (round === 0) control!.refuse(c.folder);
+        return "request-changes";
+      },
+    },
+  });
+  control = controlFolders(c.w.service);
+  await c.w.service.executionProjects.startPrepared(c.id);
+  await c.w.until(
+    () => c.w.service.executionProjects.get(c.id)?.phase === "needs-attention",
+  );
+  const tasks = c.w.tasks().length;
+  const record = c.w.service.executionProjects.get(c.id)!;
+  assert.equal(record.round, 0, "no correction round was started");
+  assert.match(
+    record.message ?? "",
+    /System Settings → Privacy & Security → Files and Folders → AgentTeam/,
+  );
+  for (let i = 0; i < 10; i++) await c.w.service.executionProjects.sweep();
+  assert.equal(c.w.tasks().length, tasks);
+  assert.equal(
+    c.w.events("execution.needs_attention").filter((e) => e.entityId === c.id)
+      .length,
+    1,
+  );
+  // Allowed: the person's explicit correction attempt asks again and goes ahead.
+  control.allow(c.folder);
+  const post = () =>
+    executionProjectRoute(
+      c.w.service,
+      "POST",
+      new URL(`http://app.invalid/projects/${c.id}/execution/retry`),
+      async () => ({}),
+      () => true,
+    );
+  await post();
+  assert.equal(c.w.service.executionProjects.get(c.id)!.round, 1);
 });
