@@ -39,6 +39,8 @@ function shortReason(issue: ReadinessIssue) {
       return "folder uses access rules the provider cannot enforce";
     case "folder-denied":
       return "the system has not allowed access to its folder";
+    case "folder-probe-pending":
+      return "waiting for the system to answer whether its folder may be used";
     case "folder-missing":
       return "its folder does not exist";
     case "folder-not-directory":

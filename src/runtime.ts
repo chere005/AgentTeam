@@ -30,6 +30,7 @@ import { assertProviderCapabilities } from "./provider-capabilities.ts";
 import { noteRuntimeWait } from "./runtime-waits.ts";
 import { classifyRequest } from "./execution-contract.ts";
 import { launchManifest } from "./capability-context.ts";
+import { TICK_PROBE_MS, isPending } from "./folder-access.ts";
 import {
   claudeFileTools,
   providerRootsOf as providerRoots,
@@ -669,7 +670,14 @@ export class RunManager {
         }
     });
   }
-  async start(sessionId: string, scheduled = false) {
+  async start(
+    sessionId: string,
+    scheduled = false,
+    options: {
+      /** One budget for the folder questions of a scheduler tick (Date.now() scale). */
+      probeDeadlineAt?: number;
+    } = {},
+  ) {
     assert(
       this.enabled,
       "live_disabled",
@@ -703,11 +711,35 @@ export class RunManager {
       store.emit("session.run_queued", sessionId, { agentId: agent.id });
       return { sessionId, status: "queued" };
     }
+    // The agent's own folders inside a macOS-protected location are asked about before anything
+    // looks at them (resolving the launch plan, the review baseline): a lookup there can wait for
+    // a prompt nobody has answered, and the scheduler tick waits for this call. The run stays
+    // queued and is tried again by the next tick.
+    const attached = await this.service.launchReadiness.probeAttached(agent, {
+      source: "chat",
+      waitMs: TICK_PROBE_MS,
+      deadlineAt: options.probeDeadlineAt,
+    });
+    const unanswered = attached.find((entry) => isPending(entry.result));
+    if (unanswered && !unanswered.result.ok)
+      throw new AppError(
+        409,
+        "folder_probe_pending",
+        `${unanswered.result.message} ${unanswered.result.fix}`,
+      );
     let plan = await this.service.launchPlan(agent.id);
     this.assertRuntimeReady(plan);
+    // The review baseline is a clean point: it is captured only in folders the system lets the app
+    // read (one captured in a refused folder would record an empty folder).
+    const unreadable = new Set(
+      attached.filter((entry) => !entry.result.ok).map((entry) => entry.path),
+    );
     await Promise.all(
       plan.workspaces
-        .filter((workspace) => workspace.access === "write")
+        .filter(
+          (workspace) =>
+            workspace.access === "write" && !unreadable.has(workspace.path),
+        )
         .map((workspace) =>
           ensureWorkspaceBaseline(store, agent, workspace.path),
         ),
@@ -912,10 +944,23 @@ export class RunManager {
           plan = await this.service.launchPlan(agent.id, conversationTask.id);
           command = commandFor(plan, null, prompt, this.cwd);
         }
+        // Ask the system about the folders this run will use BEFORE anything starts: a chat in a
+        // folder the system refuses (or has not answered about yet) must not spend a provider
+        // call to find that out. An answer that has not come leaves the run waiting, not the app.
+        const probed = await this.service.launchReadiness.probeLaunch(
+          agent,
+          plan,
+          {
+            task: conversationTask,
+            source: "chat",
+            waitMs: TICK_PROBE_MS,
+            deadlineAt: options.probeDeadlineAt,
+          },
+        );
         const decision = this.service.launchReadiness.evaluatePlan(
           agent,
           plan,
-          { task: conversationTask },
+          { task: conversationTask, host: probed.host, strictFolders: true },
         );
         if (!canDelegate && !decision.ready) {
           this.service.launchReadiness.blockTask(conversationTask, decision);
@@ -957,7 +1002,7 @@ export class RunManager {
             plan,
             decision: this.service.launchReadiness.evaluatePlan(agent, plan, {
               task: conversationTask,
-              host,
+              host: { ...probed.host, platform: this.runtimePlatform },
             }),
             host,
             adapterVersion: this.runtimeVersion?.(plan.environment),
@@ -1082,6 +1127,9 @@ export class RunManager {
         "Provider returned no assistant text",
         502,
       );
+      // A reply that reports the system's refusal for a path under the folder it ran in: ask the
+      // system about that folder now (bounded), so the next message is judged on its answer.
+      await this.noteDeniedAccess(plan, text, conversationTask);
       store.transaction(() => {
         setStatus("delivered");
         store.put<Message>("message", {
@@ -1126,6 +1174,8 @@ export class RunManager {
       }
     } catch (e) {
       if (effectId) this.service.recovery.failEffect(effectId, e);
+      if (text.trim())
+        await this.noteDeniedAccess(plan, text, conversationTask);
       if (this.executionInterrupts.has(id) && text.trim()) {
         store.put("message", {
           id: randomUUID(),
@@ -1176,6 +1226,23 @@ export class RunManager {
       delete session.timeoutMs;
       store.put("session", session);
       store.emit("session.idle", id, { agentId: session.agentId });
+    }
+  }
+  /**
+   * Output that reports the operating system's refusal for a path under the folder a run used:
+   * ask the system about that folder now, with the access the role needs. Best effort and bounded;
+   * the run's result is what it was.
+   */
+  private async noteDeniedAccess(plan: LaunchPlan, text: string, task?: Task) {
+    try {
+      await this.service.launchReadiness.noteDenial(
+        this.service.store.get<Agent>("agent", plan.agentId),
+        plan,
+        text,
+        { task, source: "post-run" },
+      );
+    } catch {
+      // The probe never throws; the reply is delivered either way.
     }
   }
   cancel(id: string) {

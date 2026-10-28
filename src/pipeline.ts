@@ -1992,7 +1992,7 @@ export class PipelineService {
       const task = this.task(taskId);
       await this.service.launchReadiness.probeProspective(
         this.agent(task.agentId),
-        { task, contract, force: true, forced },
+        { task, contract, force: true, forced, source: "start" },
       );
     }
   }

@@ -269,6 +269,18 @@ function classify(
       severity: "error",
       summary: `Backend error in ${str(d.method) ?? "?"} ${str(d.path) ?? "?"}: ${str(d.message)?.slice(0, 200) ?? "unexpected error"}`,
     };
+  if (t === "folder.access_refused")
+    return {
+      category: "other",
+      severity: "warn",
+      summary: `The system refused access to ${str(d.path) ?? "a folder"} (${str(d.errno) ?? str(d.code) ?? "refused"} on ${str(d.operation) ?? "access"})`,
+    };
+  if (t === "folder.access_allowed")
+    return {
+      category: "other",
+      severity: "info",
+      summary: `The system allows access to ${str(d.path) ?? "a folder"}`,
+    };
   if (t === "workflow.limit_tripped")
     return {
       category: "limit",
@@ -695,6 +707,19 @@ function explainTask(
     (state.runtimeBlocker || sandboxUnavailable(task.result))
   ) {
     const blockerKind = state.runtimeBlocker?.code;
+    if (blockerKind === "folder_probe_pending") {
+      push({
+        code: "folder-probe-pending",
+        blocking: true,
+        title: "the system has not said yet whether the folder may be used",
+        detail: state.runtimeBlocker?.message ?? "",
+        refs: { recoveryTaskId: task.id },
+      });
+      return finish(
+        true,
+        "Waiting for the system's answer about the folder; the task starts by itself when it has",
+      );
+    }
     if (
       blockerKind === "capability_missing" ||
       blockerKind === "check_unconfirmed"

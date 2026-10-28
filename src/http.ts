@@ -49,7 +49,7 @@ import { backendErrorRedactor, recordBackendError } from "./backend-errors.ts";
 import { contractProposalSchema } from "./execution-contract.ts";
 import { teamSettingsRoute } from "./team-settings.ts";
 import { ExampleTeams } from "./example-teams.ts";
-import { handleToolRpc } from "./tool-endpoint.ts";
+import { handleToolRpc, prepareToolRpc } from "./tool-endpoint.ts";
 import { FilesystemPolicy } from "./filesystem-policy.ts";
 import {
   AppError,
@@ -216,11 +216,18 @@ export function createApi(
         const runToken = authorization.startsWith("Bearer ")
           ? authorization.slice("Bearer ".length)
           : undefined;
+        const message = await body(req);
+        await prepareToolRpc(
+          service.orchestration,
+          runs.toolSessions,
+          runToken,
+          message,
+        );
         const result = handleToolRpc(
           service.orchestration,
           runs.toolSessions,
           runToken,
-          await body(req),
+          message,
         );
         if (result === null) {
           res.writeHead(202);

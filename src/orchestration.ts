@@ -44,6 +44,8 @@ import {
   UNTRUSTED_NOTICE,
 } from "./shared-common.ts";
 
+/** How long a delegation waits for the system's answer about the recipient's folders before it is accepted anyway. */
+const DELEGATION_PROBE_MS = 5000;
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 
 // ---- scope matching --------------------------------------------------------------------------
@@ -393,6 +395,8 @@ export const resultArgsSchema = z
 // ---- service -------------------------------------------------------------------------------------------
 export class Orchestration {
   service: TeamService;
+  /** How long a delegation waits for the system's answer about its recipient's folders (tests shorten it). */
+  delegationProbeMs = DELEGATION_PROBE_MS;
   /** True while this class creates review tasks, so they are not themselves re-planned. */
   private suppress = false;
   constructor(service: TeamService) {
@@ -805,7 +809,12 @@ export class Orchestration {
       }
     );
   }
-  invokeTeammate(ctx: ToolContext, input: unknown) {
+  /**
+   * Everything a delegation is judged on before anything is created: the parsed call, who calls
+   * whom, the contract the child inherits, the task facts the recipient's readiness is judged on.
+   * `invokeTeammate` and the folder pre-check (`preflightFolders`) read the same facts.
+   */
+  private delegationFacts(ctx: ToolContext, input: unknown) {
     assert(
       !this.service.executionProjects.isReview(ctx.taskId),
       "review_read_only",
@@ -851,22 +860,60 @@ export class Orchestration {
         delete traits.resourcePaths;
       }
     }
+    return {
+      args,
+      caller,
+      parent,
+      route,
+      recipient,
+      plan,
+      traits,
+      task: {
+        parentTaskId: parent.id,
+        workflowId: parent.workflowId,
+        ...traits,
+      },
+      contract: this.contractLike(plan),
+    };
+  }
+  /**
+   * Before a delegation is accepted its recipient's folders are asked about, bounded: the
+   * readiness check then judges a real answer. A refused folder is refused with nothing created;
+   * an answer that is slow (an unanswered macOS prompt) is accepted and the scheduler holds the
+   * task (nothing starts before the folder is proven), and the tool result says so. The caller
+   * (the HTTP tool endpoint) awaits this before the synchronous `invokeTeammate`.
+   */
+  async preflightFolders(ctx: ToolContext, input: unknown) {
+    try {
+      const facts = this.delegationFacts(ctx, input);
+      await this.service.launchReadiness.probeProspective(facts.recipient, {
+        task: facts.task,
+        contract: facts.contract,
+        source: "delegation",
+        waitMs: this.delegationProbeMs,
+      });
+    } catch {
+      // Invalid input and refusals are reported by the call itself.
+    }
+  }
+  invokeTeammate(ctx: ToolContext, input: unknown) {
+    const { args, caller, parent, route, recipient, plan, task, contract } =
+      this.delegationFacts(ctx, input);
     const decision = this.service.launchReadiness.evaluateProspective(
       recipient,
-      {
-        task: {
-          parentTaskId: parent.id,
-          workflowId: parent.workflowId,
-          ...traits,
-        },
-        contract: this.contractLike(plan),
-      },
+      { task, contract },
     );
+    // A folder the system has not answered about yet is not a refusal: the delegation is accepted
+    // (nothing starts before the scheduler has its answer) and the result says it is waiting.
+    const waiting = decision.issues.filter(
+      (issue) => issue.code === "folder-probe-pending",
+    );
+    const refused = decision.issues.length > waiting.length;
     // A recipient that cannot do the work is refused whether or not this call repeated the files
     // and checks the contract keeps. File checks the CALLER wrote keep their specific error
     // (a denied path, a missing task folder); the setup state behind it is recorded either way.
     if (
-      !decision.ready &&
+      refused &&
       !args.completionChecks.some(
         (c) => c.type === "artifact-exists" || c.type === "artifact-matches",
       )
@@ -879,11 +926,10 @@ export class Orchestration {
         completionChecks: plan.completionChecks,
       });
     } catch (error) {
-      if (!decision.ready)
-        this.service.setups.noteBlocked(parent.workflowId, decision);
+      if (refused) this.service.setups.noteBlocked(parent.workflowId, decision);
       throw error;
     }
-    if (!decision.ready)
+    if (refused)
       throw this.service.launchReadiness.refusal(decision, parent.workflowId);
     for (const resource of args.context?.resources ?? [])
       assert(
@@ -977,6 +1023,14 @@ export class Orchestration {
       status: child.status,
       waitReason: state.waitReason,
       route: invocation.route,
+      ...(waiting.length
+        ? {
+            folderAccess: {
+              state: "pending" as const,
+              note: `${waiting[0].message} The task was accepted and starts by itself once the folder is allowed; nothing runs before then.`,
+            },
+          }
+        : {}),
       ...(plan.advisory.length
         ? {
             unverifiedChecks: plan.advisory.map((c) => ({
@@ -1535,6 +1589,7 @@ export async function orchestrationRoute(
       .object({ fromAgentId: z.string(), taskId: z.string().optional() })
       .passthrough()
       .parse(await body());
+    await o.preflightFolders({ agentId: fromAgentId, taskId }, args);
     return ok(o.invokeTeammate({ agentId: fromAgentId, taskId }, args), 201);
   }
   if (method === "GET" && path === "/orchestration/triggers")

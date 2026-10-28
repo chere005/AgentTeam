@@ -48,6 +48,23 @@ const rpcSchema = z
   })
   .passthrough();
 
+/**
+ * The asynchronous step before `handleToolRpc` for a call that delegates: the recipient's folders
+ * are asked about (bounded) so the synchronous readiness check judges a real answer. Throws 401
+ * for a bad token, like `handleToolRpc`; anything else is left to the call itself.
+ */
+export async function prepareToolRpc(
+  orchestration: Orchestration,
+  sessions: ToolSessions,
+  token: string | undefined,
+  message: unknown,
+) {
+  const ctx = sessions.authenticate(token);
+  const rpc = message as Rpc | null;
+  if (rpc?.method === "tools/call" && rpc.params?.name === "invoke_teammate")
+    await orchestration.preflightFolders(ctx, rpc.params?.arguments ?? {});
+}
+
 /** Handles one JSON-RPC message; returns null for notifications. Throws 401 for a bad token. */
 export function handleToolRpc(
   orchestration: Orchestration,

@@ -312,9 +312,13 @@ export class ReadinessService {
   }
   /** Window focus (desktop/main.ts). */
   windowFocused() {
-    // Coming back from System Settings: folders the system refused are asked again, and work that
-    // waited for one starts by itself once it is open (`folder.access_changed`).
-    void this.o.service.folderAccess.recheckFailed().catch(() => {});
+    // Coming back from System Settings: the folders the system refused (and that something still
+    // uses) are asked again, and work that waited for one starts by itself once it is open
+    // (`folder.access_allowed`).
+    const service = this.o.service;
+    void service.folderAccess
+      .recheckFailed((path) => service.folderInUse(path))
+      .catch(() => {});
     return this.auto ? this.scheduler.focus() : false;
   }
   /** A sign-in for `runtimeId` was started from the app (POST /runtimes/:id/sign-in). */
@@ -350,8 +354,10 @@ export class ReadinessService {
       case "agent.deleted":
         this.agents.delete(event.entityId);
         return;
-      case "folder.access_changed":
-        // A folder the system refused was opened (or the other way round): blocked work is judged again.
+      case "folder.access_allowed":
+      case "folder.access_refused":
+        // A folder the system refused was opened (or the other way round, or a question that
+        // waited for the person was answered): blocked work is judged again.
         this.pending.requeue = true;
         this.schedule();
         return;
@@ -436,6 +442,7 @@ export class ReadinessService {
       // steps; the evaluator below re-checks them against the current configuration.
       if (
         wait.reason === "capability-missing" ||
+        wait.reason === "folder-probe-pending" ||
         wait.reason === "check-unconfirmed" ||
         wait.reason === "assignment-preparation"
       )
@@ -637,15 +644,18 @@ async function checkProjectReadiness(service: TeamService, workflowId: string) {
     try {
       const plan = await service.launchPlan(agent.id, task.id);
       const taskContract = service.contracts.effective(task) ?? contract;
-      await service.launchReadiness.probeFolders(agent, plan, {
+      const probed = await service.launchReadiness.probeLaunch(agent, plan, {
         task,
         contract: taskContract,
         force: true,
         forced,
+        source: "start",
       });
       decision = service.launchReadiness.evaluatePlan(agent, plan, {
         task,
         contract: taskContract,
+        host: probed.host,
+        strictFolders: true,
       });
     } catch (error) {
       const issue = service.launchReadiness.issueFromError(
@@ -671,6 +681,23 @@ async function checkProjectReadiness(service: TeamService, workflowId: string) {
   }
   for (const decision of decisions)
     service.setups.noteBlocked(workflowId, decision);
+  // Only waiting for the system's answer to a folder question: nothing is refused and nothing
+  // is missing; Start can be repeated when the answer has come.
+  if (
+    decisions.every((d) =>
+      d.issues.every((issue) => issue.code === "folder-probe-pending"),
+    )
+  )
+    throw new AppError(
+      409,
+      "folder_probe_pending",
+      `${decisions
+        .slice(0, 3)
+        .map((d) => d.message)
+        .join(
+          " ",
+        )} The project is saved and paused; no agent has started. Repeat Start once the folder is allowed.`,
+    );
   throw new AppError(
     409,
     "capability_missing",

@@ -27,12 +27,17 @@ import {
   createProjectsFolder,
   folderRefusal,
   insideProjectsRoot,
+  isPending,
   protectedFolderName,
   suggestProjectFolder,
   type FolderProbeResult,
 } from "./folder-access.ts";
 import { filesystemPolicy } from "./filesystem-policy.ts";
-import type { ReadinessDecision, ReadinessIssue } from "./launch-readiness.ts";
+import {
+  roleClassOf,
+  type ReadinessDecision,
+  type ReadinessIssue,
+} from "./launch-readiness.ts";
 import type { ProjectWorkflow } from "./project-lifecycle.ts";
 import {
   attachProjectWorkspaceInTx,
@@ -380,7 +385,9 @@ export class ProjectSetupService {
         write: writes,
         protectedFolder,
         result,
-        needsCheck: !result && !!protectedFolder && existsSync(path),
+        // Never touched from here: a lookup inside a protected folder from a request handler
+        // could wait for a system prompt. The asynchronous probe reports a missing folder.
+        needsCheck: !result && !!protectedFolder,
       };
     });
     const participants = needing.map((d) => {
@@ -415,11 +422,26 @@ export class ProjectSetupService {
       folder,
       candidates,
       defaultFolder,
+      /** The access the folder is checked at: write when any approved role writes there, else read. */
+      write: writes,
       /** True when applying creates the proposed folder (it lies in AgentTeam's projects folder). */
       createsFolder: insideProjectsRoot(folder) && !existsSync(folder),
       checks,
       participants,
     };
+  }
+
+  /** The access a team's work needs in a project folder: write when any non-review role may write there. */
+  teamAccess(teamId: string): "read" | "write" {
+    const { agents } = this.service.teamSpaces.members(teamId);
+    return agents.some(
+      (agent) =>
+        !["reviewer", "adjudicator", "reporter"].includes(
+          roleClassOf(this.service, agent),
+        ) && agent.tools.some((tool) => tool === "write" || tool === "edit"),
+    )
+      ? "write"
+      : "read";
   }
 
   /** What the setup card renders. Read-only: it never creates or changes a record. */
@@ -652,6 +674,7 @@ export class ProjectSetupService {
     const probe = await this.service.folderAccess.probe(folder, {
       write: Object.values(access).includes("write"),
       force: true,
+      source: "setup",
     });
     if (!probe.ok) throw folderRefusal(probe);
     const outcome = this.store.transaction(() => {
@@ -743,8 +766,13 @@ export async function projectSetupRoute(
     const data = z
       .object({
         path: z.string().min(1).max(4096),
-        write: z.boolean().default(false),
+        /** Explicit access level; otherwise the backend decides it from the project or the team. */
+        write: z.boolean().optional(),
+        workflowId: z.string().min(1).max(200).optional(),
+        teamId: z.string().min(1).max(200).optional(),
         force: z.boolean().default(false),
+        /** How long to wait for an answer before the pending answer (202) is returned. */
+        waitMs: z.number().int().min(0).max(60_000).optional(),
       })
       .strict()
       .parse(await readBody());
@@ -755,12 +783,24 @@ export async function projectSetupRoute(
       400,
     );
     filesystemPolicy(service.store).assertPath(data.path);
-    return {
-      data: await service.folderAccess.probe(data.path, {
-        write: data.write,
-        force: data.force,
-      }),
-    };
+    // The access level is the backend's decision: a project's approved roles (the card), a team's
+    // roles (the Assign form), else read. A folder is never written in just to look at it.
+    const write =
+      data.write ??
+      (data.workflowId
+        ? service.setups.view(data.workflowId).proposal.write
+        : data.teamId
+          ? service.setups.teamAccess(data.teamId) === "write"
+          : false);
+    const result = await service.folderAccess.probe(data.path, {
+      write,
+      force: data.force,
+      source: "check",
+      ...(data.waitMs !== undefined ? { waitMs: data.waitMs } : {}),
+    });
+    // The system has not answered yet: 202 with the pending answer (typed `folder-probe-pending`,
+    // worded for the person), not a hang and not a refusal. The caller asks again.
+    return isPending(result) ? { data: result, status: 202 } : { data: result };
   }
   if ((m = path.match(/^\/projects\/([^/]+)\/setup$/))) {
     const workflowId = id(m[1]);

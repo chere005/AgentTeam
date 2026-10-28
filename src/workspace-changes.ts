@@ -152,6 +152,8 @@ async function snapshot(
     );
     for (const entry of entries) {
       if ([".git", "node_modules"].includes(entry.name.toLowerCase())) continue;
+      // The folder-access probe's transient directory is never part of a review.
+      if (entry.name.startsWith(".agentteam-probe-")) continue;
       if (count >= MAX_FILES || entriesSeen++ >= MAX_ENTRIES) {
         truncated = true;
         break;

@@ -18,12 +18,16 @@ export type RuntimeWait = {
   /**
    * Missing on legacy records, which describe a missing/signed-out runtime. `capability-missing`:
    * the role cannot do the work its contract needs (no writable folder, tool not granted, adapter
-   * unsupported); `check-unconfirmed`: a required check is still unverified (src/execution-contract.ts).
+   * unsupported, a folder the system refuses); `folder-probe-pending`: the system has not answered
+   * yet whether the folder may be used (an unanswered macOS prompt), so nothing started and the
+   * task goes on by itself when the answer arrives (src/folder-access.ts); `check-unconfirmed`: a
+   * required check is still unverified (src/execution-contract.ts).
    */
   reason?:
     | "runtime-unavailable"
     | "sandbox-unavailable"
     | "capability-missing"
+    | "folder-probe-pending"
     | "check-unconfirmed"
     | "assignment-preparation";
   /** Capability waits are recorded only for a known pre-process refusal, never provider output. */
@@ -45,6 +49,7 @@ export const RUNTIME_WAIT = "runtime-wait";
 export const CAPABILITY_WAIT_REASONS = [
   "sandbox-unavailable",
   "capability-missing",
+  "folder-probe-pending",
   "check-unconfirmed",
   "assignment-preparation",
 ] as const;
@@ -58,9 +63,11 @@ export const blockerCode = (wait: Pick<RuntimeWait, "reason">) =>
     ? ("assignment_preparation" as const)
     : wait.reason === "capability-missing"
       ? ("capability_missing" as const)
-      : wait.reason === "check-unconfirmed"
-        ? ("check_unconfirmed" as const)
-        : ("sandbox_unavailable" as const);
+      : wait.reason === "folder-probe-pending"
+        ? ("folder_probe_pending" as const)
+        : wait.reason === "check-unconfirmed"
+          ? ("check_unconfirmed" as const)
+          : ("sandbox_unavailable" as const);
 /** A wait older than this is dropped instead of re-queued (the user has likely moved on). */
 export const RUNTIME_WAIT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 

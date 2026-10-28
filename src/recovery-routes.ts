@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { folderRefusal, isPending } from "./folder-access.ts";
 import type { Task } from "./model.ts";
 import type { TeamService } from "./service.ts";
 
@@ -65,8 +66,16 @@ export async function recoveryRoute(
     const task = service.store.get<Task>("task", taskId);
     if (["interrupted", "blocked", "failed"].includes(task.status)) {
       const before = recovery.decide(task);
-      if (before?.providerCall || before?.setup?.then?.providerCall)
-        await service.launchReadiness.probeTask(taskId, { force: true });
+      if (before?.providerCall || before?.setup?.then?.providerCall) {
+        const probed = await service.launchReadiness.probeTask(taskId, {
+          force: true,
+          source: "retry",
+        });
+        // The system has not answered yet (an unanswered macOS prompt): say so, typed, instead of
+        // hanging or reporting a refusal that was not given.
+        const waiting = probed.results.find((result) => isPending(result));
+        if (waiting && !waiting.ok) throw folderRefusal(waiting);
+      }
     }
     // The response carries the decision that was executed (the one the preview showed), then
     // the task's view as it is now.

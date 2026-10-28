@@ -796,3 +796,130 @@ test("the folder probe route answers for a typed path and refuses relative and g
     "a globally denied folder is never touched",
   );
 });
+
+// ---- the access level is the backend's decision; a pending answer is typed; no stat in a handler ----------
+
+test("the folder probe asks at the access the backend decides: the project's approved roles, a team's roles, else read; an unanswered question is a 202", async (t) => {
+  const { projectSetupRoute } = await import("../src/project-setup.ts");
+  const { FolderAccess } = await import("../src/folder-access.ts");
+  const { w, workflowId } = await incident(t);
+  const control = controlFolders(w.service);
+  const folder = await w.folder("typed");
+  const route = (body: object) =>
+    projectSetupRoute(
+      w.service,
+      "POST",
+      new URL("http://app.invalid/folder-access/probe"),
+      async () => ({ ...body, force: true }),
+    );
+  const levels = () =>
+    control.calls.filter((c) => c.path === folder).at(-1)?.write;
+  // The incident's roles write: the card asks the backend by workflow and gets the write level.
+  assert.equal(w.service.setups.view(workflowId).proposal.write, true);
+  await route({ path: folder, workflowId });
+  assert.equal(levels(), true);
+  // A team of reviewers only reads: its folder is looked at, never written in.
+  const team = w.service.teamSpaces.create({ name: "Reviewers" });
+  await w.service.saveAgent({
+    name: "Only reviewer",
+    environment: "claude",
+    roleType: "reviewer",
+    tools: ["read"],
+    teamId: team.id,
+  });
+  assert.equal(w.service.setups.teamAccess(team.id), "read");
+  await route({ path: folder, teamId: team.id });
+  assert.equal(levels(), false);
+  // A team with a writer writes.
+  const builders = w.service.teamSpaces.create({ name: "Builders" });
+  await w.service.saveAgent({
+    name: "Builder",
+    environment: "claude",
+    roleType: "implementer",
+    tools: ["read", "write", "shell"],
+    teamId: builders.id,
+  });
+  assert.equal(w.service.setups.teamAccess(builders.id), "write");
+  await route({ path: folder, teamId: builders.id });
+  assert.equal(levels(), true);
+  // Nothing says: read. An explicit level is still honoured (the diagnostic callers).
+  await route({ path: folder });
+  assert.equal(levels(), false);
+  await route({ path: folder, write: true });
+  assert.equal(levels(), true);
+  // An answer that has not come: 202 with the pending answer, not a hang and not a refusal.
+  w.service.folderAccess = new FolderAccess({
+    store: w.store,
+    probe: () => new Promise(() => {}),
+    promptWaitMs: 40,
+    platform: "darwin",
+    home: w.base,
+  });
+  const started = Date.now();
+  const pending = (await route({ path: folder, workflowId }))!;
+  assert.equal(pending.status, 202);
+  assert.equal((pending.data as { code: string }).code, "folder-probe-pending");
+  assert.ok(Date.now() - started < 1000);
+});
+
+test(
+  "the setup view does not look at a path inside a protected folder: it is flagged for the asynchronous probe, whether or not it exists",
+  {
+    skip:
+      process.platform === "win32" && "simulated macOS paths are POSIX paths",
+  },
+  async (t) => {
+    const home = await realpath(
+      await mkdtemp(join(tmpdir(), "agentteam-home-")),
+    );
+    const savedHome = process.env.HOME;
+    process.env.HOME = home;
+    t.after(() => {
+      if (savedHome === undefined) delete process.env.HOME;
+      else process.env.HOME = savedHome;
+    });
+    const { w, team, workflowId } = await incident(t, "darwin");
+    // An attachment inside the protected Desktop whose folder does not exist (any more).
+    const gone = join(home, "Desktop", "removed-project");
+    w.store.put("agent", {
+      ...agentOf(w, team.integrator.id),
+      workspaces: [{ path: gone, access: "write", active: true }],
+    });
+    const check = w.service.setups
+      .view(workflowId)
+      .proposal.checks.find((c) => c.path === gone)!;
+    assert.equal(check.protectedFolder, "Desktop");
+    assert.equal(
+      check.needsCheck,
+      true,
+      "no existence check ran in the handler; the probe says folder-missing",
+    );
+    const answer = await w.service.folderAccess.probe(gone, { write: true });
+    assert.equal(answer.ok, false);
+    assert.equal(answer.ok === false && answer.code, "folder-missing");
+  },
+);
+
+test("applying the setup while the folder question is unanswered is the typed folder_probe_pending and changes nothing", async (t) => {
+  const { FolderAccess } = await import("../src/folder-access.ts");
+  const { w, workflowId } = await incident(t);
+  const folder = await w.folder("waiting");
+  w.service.folderAccess = new FolderAccess({
+    store: w.store,
+    probe: () => new Promise(() => {}),
+    promptWaitMs: 40,
+    platform: "darwin",
+    home: w.base,
+  });
+  const agents = JSON.stringify(w.store.list("agent"));
+  await assert.rejects(w.service.setups.apply(workflowId, { folder }), {
+    code: "folder_probe_pending",
+    status: 409,
+  });
+  assert.equal(
+    JSON.stringify(w.store.list("agent")),
+    agents,
+    "no grant was made",
+  );
+  assert.equal(w.service.setups.view(workflowId).state, "needed");
+});

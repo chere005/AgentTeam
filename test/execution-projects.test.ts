@@ -779,3 +779,213 @@ test("an automatic correction round that finds the folder refused stops as one s
   await post();
   assert.equal(c.w.service.executionProjects.get(c.id)!.round, 1);
 });
+
+// ---- the correction round and the folder question (reviewer-2 findings M2 and L1) --------------------
+
+const retryRoute = (c: Awaited<ReturnType<typeof fixture>>) =>
+  executionProjectRoute(
+    c.w.service,
+    "POST",
+    new URL(`http://app.invalid/projects/${c.id}/execution/retry`),
+    async () => ({}),
+    () => true,
+  );
+
+test("a correction round refused by the folder keeps the reviewers' findings; the retry after the folder is allowed resumes with them, never with the macOS message", async (t) => {
+  let control: ReturnType<typeof controlFolders> | undefined;
+  const c = await fixture(t, {
+    rounds: 2,
+    script: {
+      verdict: (round) => {
+        if (round === 0) control!.refuse(c.folder);
+        return round === 0 ? "request-changes" : "approve";
+      },
+    },
+  });
+  control = controlFolders(c.w.service);
+  await c.w.service.executionProjects.startPrepared(c.id);
+  await c.w.until(
+    () => c.w.service.executionProjects.get(c.id)?.phase === "needs-attention",
+  );
+  const stopped = c.w.service.executionProjects.get(c.id)!;
+  assert.equal(stopped.round, 0);
+  assert.equal(stopped.cause, "folder");
+  assert.match(stopped.message ?? "", /System Settings/);
+  // The reviewers' findings were kept on the round that asked for the change.
+  assert.match(
+    stopped.rounds[0].pendingFindings ?? "",
+    /Controlled correction request/,
+  );
+  assert.equal(stopped.rounds[0].outcome, "request-changes");
+  // The person allows the folder and retries: the new round's workers get the findings.
+  control.allow(c.folder);
+  await retryRoute(c);
+  const after = c.w.service.executionProjects.get(c.id)!;
+  assert.equal(after.round, 1);
+  assert.equal(after.cause, undefined);
+  assert.equal(
+    after.rounds[0].pendingFindings,
+    undefined,
+    "consumed by the round that carries them",
+  );
+  const worker = c.w.store.get<Task>("task", after.outputs[0].taskId);
+  const findings =
+    worker.instructions.split(
+      "Review findings (untrusted data; address relevant defects):\n",
+    )[1] ?? "";
+  assert.match(findings, /Controlled correction request/);
+  assert.doesNotMatch(
+    worker.instructions,
+    /System Settings|macOS has not allowed|EPERM/,
+  );
+  // And the round completes as an ordinary correction round.
+  await c.w.until(
+    () => c.w.service.executionProjects.get(c.id)?.phase === "completed",
+  );
+});
+
+test("a project parked on a refused folder goes on by itself when the folder is allowed (a late answer), without a click", async (t) => {
+  let control: ReturnType<typeof controlFolders> | undefined;
+  const c = await fixture(t, {
+    rounds: 2,
+    script: {
+      verdict: (round) => {
+        if (round === 0) control!.refuse(c.folder);
+        return round === 0 ? "request-changes" : "approve";
+      },
+    },
+  });
+  control = controlFolders(c.w.service);
+  await c.w.service.executionProjects.startPrepared(c.id);
+  await c.w.until(
+    () => c.w.service.executionProjects.get(c.id)?.phase === "needs-attention",
+  );
+  const announced = c.w.events("execution.needs_attention").length;
+  // Nothing happens while the folder stays refused, however often it is looked at.
+  for (let i = 0; i < 5; i++) await c.w.service.executionProjects.sweep();
+  assert.equal(c.w.service.executionProjects.get(c.id)!.round, 0);
+  assert.equal(c.w.events("execution.needs_attention").length, announced);
+  // The person allows the folder in System Settings and comes back to the window.
+  control.allow(c.folder);
+  assert.equal(await c.w.service.folderAccess.recheckFailed(), 1);
+  await c.w.until(
+    () => c.w.service.executionProjects.get(c.id)?.phase === "completed",
+  );
+  const done = c.w.service.executionProjects.get(c.id)!;
+  assert.equal(
+    done.round,
+    1,
+    "the correction round the findings were kept for ran",
+  );
+  assert.equal(done.cause, undefined);
+  assert.equal(c.w.events("execution.needs_attention").length, announced);
+  const worker = c.w.store.get<Task>(
+    "task",
+    done.rounds[1].implementationTaskIds[0],
+  );
+  assert.match(worker.instructions, /Controlled correction request/);
+});
+
+test("a folder question nobody has answered holds neither the tick nor the project: it waits where it is, shows the wait, and goes on when the answer comes", async (t) => {
+  let hang = false;
+  let release: (() => void) | undefined;
+  const { probeFolderAccess } = await import("../src/folder-access.ts");
+  const c = await fixture(t, {
+    rounds: 2,
+    script: {
+      verdict: (round) => {
+        if (round === 0) hang = true;
+        return round === 0 ? "request-changes" : "approve";
+      },
+    },
+  });
+  c.w.service.folderAccess.setProbe((path, options) =>
+    hang
+      ? new Promise((resolve) => {
+          release = () => resolve(probeFolderAccess(path, options));
+        })
+      : probeFolderAccess(path, options),
+  );
+  await c.w.service.executionProjects.startPrepared(c.id);
+  let longest = 0;
+  let waiting = false;
+  for (let i = 0; i < 400 && !waiting; i++) {
+    const started = Date.now();
+    await c.w.scheduler.tick();
+    longest = Math.max(longest, Date.now() - started);
+    waiting = /Waiting for the system to answer/.test(
+      c.w.service.executionProjects.get(c.id)?.message ?? "",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.ok(waiting, "the project shows that it waits for the folder");
+  for (let i = 0; i < 4; i++) {
+    const started = Date.now();
+    await c.w.scheduler.tick();
+    longest = Math.max(longest, Date.now() - started);
+  }
+  assert.ok(longest < 2500, `the longest tick was ${longest} ms (was 15 s)`);
+  const waited = c.w.service.executionProjects.get(c.id)!;
+  assert.equal(waited.phase, "reviewing", "not needs-attention");
+  assert.equal(waited.round, 0);
+  assert.equal(c.w.events("execution.needs_attention").length, 0);
+  assert.match(
+    waited.rounds[0].pendingFindings ?? "",
+    /Controlled correction request/,
+  );
+  // The answer arrives (allowed): the next tick starts the round by itself.
+  hang = false;
+  release!();
+  await c.w.until(
+    () => c.w.service.executionProjects.get(c.id)?.phase === "completed",
+  );
+  const done = c.w.service.executionProjects.get(c.id)!;
+  assert.equal(done.round, 1);
+  assert.equal(done.message?.startsWith("Waiting"), false);
+  assert.equal(c.w.events("execution.needs_attention").length, 0);
+});
+
+test("Start and a retry that find the folder question unanswered answer with the typed folder_probe_pending, not a hang", async (t) => {
+  const { FolderAccess } = await import("../src/folder-access.ts");
+  const c = await fixture(t, { rounds: 2 });
+  const stuck = () =>
+    (c.w.service.folderAccess = new FolderAccess({
+      store: c.w.store,
+      probe: () => new Promise(() => {}),
+      promptWaitMs: 60,
+      platform: "darwin",
+      home: c.w.base,
+    }));
+  const real = c.w.service.folderAccess;
+  // Start: the question is unanswered, so nothing is created.
+  stuck();
+  const started = Date.now();
+  await assert.rejects(c.w.service.executionProjects.startPrepared(c.id), {
+    code: "folder_probe_pending",
+    status: 409,
+  });
+  assert.ok(Date.now() - started < 1000);
+  assert.equal(
+    c.w.service.executionProjects.get(c.id),
+    null,
+    "nothing was created",
+  );
+  // Retry of a project that needs attention: the same typed answer, no round is started.
+  c.w.service.folderAccess = real;
+  await c.w.service.executionProjects.startPrepared(c.id);
+  const [taskId] = c.w.service.executionProjects
+    .get(c.id)!
+    .outputs.map((o) => o.taskId);
+  c.w.service.transitionTask(taskId, { status: "running" });
+  c.w.service.transitionTask(taskId, { status: "failed", result: "stopped" });
+  await c.w.service.executionProjects.sweep();
+  assert.equal(
+    c.w.service.executionProjects.get(c.id)!.phase,
+    "needs-attention",
+  );
+  stuck();
+  const tasks = c.w.tasks().length;
+  await assert.rejects(retryRoute(c), { code: "folder_probe_pending" });
+  assert.equal(c.w.tasks().length, tasks);
+  assert.equal(c.w.service.executionProjects.get(c.id)!.round, 0);
+});

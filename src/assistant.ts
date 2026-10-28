@@ -1087,6 +1087,7 @@ export class AssistantProposals {
       const result = await this.service.folderAccess.probe(path, {
         write,
         force: true,
+        source: "assistant",
       });
       // A folder that does not exist is the dry run's business, with its own message.
       if (!result.ok && result.code !== "folder-missing")

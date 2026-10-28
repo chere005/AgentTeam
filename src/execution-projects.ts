@@ -15,7 +15,7 @@ import { contractObjects } from "./limits.ts";
 import type { VerificationReference } from "./execution-verification.ts";
 import { teamProfile } from "./team-profiles.ts";
 import { filesystemPolicy } from "./filesystem-policy.ts";
-import { folderRefusal } from "./folder-access.ts";
+import { TICK_PROBE_MS, folderRefusal, isPending } from "./folder-access.ts";
 import { contains } from "./resources.ts";
 import { sha256, canonical } from "./shared-common.ts";
 import type { TeamService } from "./service.ts";
@@ -69,9 +69,21 @@ export type ExecutionProject = {
     reviewTaskIds: string[];
     evidenceIds: string[];
     outcome?: string;
+    /**
+     * What the reviewers asked to change, kept on the round that asked for it until the correction
+     * round that carries it is created. A refused or unanswered folder question never loses it,
+     * and the person's retry after the folder is allowed resumes with exactly this.
+     */
+    pendingFindings?: string;
   }[];
   origin?: ExecutionContract["origin"];
   message?: string;
+  /**
+   * Why the project is waiting for the person when it is not about the work itself: the system
+   * refused the project folder at a correction round. Such a message is never given to a worker
+   * as review findings.
+   */
+  cause?: "folder";
   createdAt: string;
   updatedAt: string;
 };
@@ -364,6 +376,7 @@ export class ExecutionProjects {
     const probe = await this.service.folderAccess.probe(folder, {
       write: true,
       force: true,
+      source: "start",
     });
     if (!probe.ok) throw folderRefusal(probe);
   }
@@ -750,9 +763,12 @@ export class ExecutionProjects {
       evidence: value.evidence,
     };
   }
-  async sweep() {
+  async sweep(options: { probeDeadlineAt?: number } = {}) {
     if (this.busy) return;
     this.busy = true;
+    // The sweep runs on the scheduler's tick: its folder questions share the tick's budget.
+    const probeDeadlineAt =
+      options.probeDeadlineAt ?? Date.now() + TICK_PROBE_MS;
     try {
       for (const record of this.list()) {
         const workflow = this.workflow(record.id) as Workflow & {
@@ -772,6 +788,19 @@ export class ExecutionProjects {
                 "Source, reviewer permissions or approvals changed after approval. Verify and review the current source again.",
               );
             continue;
+          }
+          if (
+            record.phase === "needs-attention" &&
+            record.cause === "folder" &&
+            this.service.folderAccess.cached(record.folder, true)?.ok
+          ) {
+            // The folder the correction round was waiting for was allowed since (a late answer,
+            // or the person came back from System Settings): the round the reviewers' findings
+            // were kept for goes on by itself instead of waiting for a click.
+            delete record.cause;
+            delete record.message;
+            record.phase = "reviewing";
+            this.save(record);
           }
           if (record.phase === "needs-attention") {
             // Coordination resumes only when the person has dealt with every failed output (a
@@ -850,16 +879,49 @@ export class ExecutionProjects {
             );
             continue;
           }
-          // The correction round creates new workers' tasks: the folder must still be writable. A
-          // refusal stops here as a setup problem (announced once), not as tasks that cannot start.
-          await this.assertFolderWritable(record.folder);
           const findings = JSON.stringify(
             verdicts.map((v, i) => ({
               reviewerId: record.reviews[i].reviewerId,
               ...v,
             })),
           ).slice(0, 30_000);
+          // The reviewers' findings are kept on the round first, so nothing that happens to the
+          // folder question below can lose them.
+          const asked = record.rounds.at(-1)!;
+          if (asked.pendingFindings !== findings) {
+            asked.pendingFindings = findings;
+            this.save(record);
+          }
+          // The correction round creates new workers' tasks: the folder must still be writable,
+          // asked within the tick's shared budget. An answer that has not come leaves the project
+          // where it is (reviewing, with the wait shown) and the next tick asks again; a refusal
+          // stops here as a setup problem (announced once) that keeps the findings.
+          const access = await this.service.folderAccess.probe(record.folder, {
+            write: true,
+            // A decision point before new provider work: asked afresh, within the tick's budget
+            // (a probe that is still waiting is joined, not started again, on the next tick).
+            force: true,
+            source: "execution",
+            waitMs: TICK_PROBE_MS,
+            deadlineAt: probeDeadlineAt,
+          });
+          if (!access.ok && isPending(access)) {
+            const waiting = `${access.message} The correction round starts by itself once the folder is allowed.`;
+            if (record.message !== waiting) {
+              record.message = waiting;
+              this.save(record);
+            }
+            continue;
+          }
+          if (!access.ok) {
+            record.cause = "folder";
+            this.attention(record, `${access.message} ${access.fix}`);
+            continue;
+          }
           this.store.transaction(() => {
+            delete record.cause;
+            delete record.message;
+            delete asked.pendingFindings;
             record.round++;
             record.outputs = record.outputs.map((output) => ({
               ...output,
@@ -939,7 +1001,16 @@ export class ExecutionProjects {
       "correction_limit",
       "The configured correction-round limit was reached",
     );
+    // What the reviewers asked for, when that is what stopped the project (kept on the round); a
+    // folder refusal's message is a setup problem and never goes to a worker as a finding.
+    const asked = record.rounds.at(-1);
+    const findings =
+      asked?.pendingFindings ??
+      (record.cause === "folder" ? undefined : record.message) ??
+      "Repair the previous failed implementation or verification.";
     this.store.transaction(() => {
+      if (asked) delete asked.pendingFindings;
+      delete record.cause;
       record.round++;
       record.outputs = record.outputs.map((output) => ({
         ...output,
@@ -947,8 +1018,7 @@ export class ExecutionProjects {
           record,
           output,
           output.referenceId,
-          record.message ??
-            "Repair the previous failed implementation or verification.",
+          findings,
         ).id,
       }));
       record.phase = "fixing";

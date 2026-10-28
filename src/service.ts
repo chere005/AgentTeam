@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
-import { ResourceCoordinator } from "./resources.ts";
+import { ResourceCoordinator, overlaps } from "./resources.ts";
 import { normalizeRules, normalizeRelPath } from "./access.ts";
 import { canonicalDeclaredPaths } from "./declared-paths.ts";
 import { ValidationService } from "./validation.ts";
@@ -157,7 +157,34 @@ export class TeamService {
       probe: withInjectedDenials((path, options) =>
         probeFolderAccess(path, options),
       ),
+      onSettled: (info) => this.onFolderSettled(info),
     });
+  }
+  /**
+   * A question that waited for the person (an unanswered macOS prompt) was answered: the tasks
+   * that waited for it go on, or stay refused with the real cause. Other changes of answer reach
+   * the same code through the readiness service (`folder.access_allowed` / `_refused`).
+   */
+  onFolderSettled(info: { wasPending: boolean }) {
+    if (!info.wasPending) return;
+    try {
+      this.launchReadiness.requeueWaiting();
+    } catch {
+      // The store was closed meanwhile (shutdown).
+    }
+  }
+  /**
+   * Whether something still uses this folder: an agent has it (or a folder around it or inside it)
+   * attached. Stored refusals of folders nothing uses are not worth asking the system about again.
+   */
+  folderInUse(path: string) {
+    const lower = (value: string) =>
+      process.platform === "linux" ? value : value.toLowerCase();
+    return this.store
+      .list<Agent>("agent")
+      .some((agent) =>
+        agent.workspaces.some((w) => overlaps(lower(w.path), lower(path))),
+      );
   }
   /**
    * Create (no `id`) or replace an agent. `teamId` is accepted next to the agent fields: a new

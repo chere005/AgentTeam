@@ -22,6 +22,7 @@ import {
   insideProjectsRoot,
   probeFolderAccess,
   projectsRoot,
+  isPending,
   protectedFolderName,
   reportsDeniedPath,
   slugify,
@@ -312,7 +313,7 @@ test("the programs AgentTeam starts are checked too: a refusal that only the chi
       await probeFolderAccess(base, {
         write: true,
         runChild: async (_program, args) => {
-          await mkdir(args[3]);
+          await mkdir(args[4]);
           return {
             code: 1,
             stderr: "rm: probe.txt: Operation not permitted\n",
@@ -327,18 +328,20 @@ test("the programs AgentTeam starts are checked too: a refusal that only the chi
       "the leftover directory was removed",
     );
   }
-  // The child that cannot even start is a typed "cannot probe", never a pass.
-  const noShell = failure(
-    await probeFolderAccess(base, {
-      write: false,
-      runChild: async () => ({
-        code: null,
-        stderr: "",
-        error: Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }),
-      }),
+  // A child that cannot even start is neither a refusal nor a pass: the folder itself passed, the
+  // result is usable and carries a warning that the programs AgentTeam starts were not confirmed.
+  const noChild = await probeFolderAccess(base, {
+    write: false,
+    runChild: async () => ({
+      code: null,
+      stderr: "",
+      error: Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }),
     }),
-  );
-  assert.equal(noShell.code, "probe-unavailable");
+  });
+  assert.equal(noChild.ok, true);
+  assert.equal(noChild.ok && noChild.warning?.code, "probe-inconclusive");
+  assert.equal(noChild.ok && noChild.warning?.errno, "ENOENT");
+  assert.ok(noChild.ok && !noChild.steps.includes("child"));
   const hung = failure(
     await probeFolderAccess(base, {
       write: true,
@@ -346,7 +349,8 @@ test("the programs AgentTeam starts are checked too: a refusal that only the chi
     }),
   );
   assert.equal(hung.errno, "ETIMEDOUT");
-  // The real child runner receives the folder as an argument, never spliced into the script.
+  // The child is this app's own executable run as Node, with no shell on any platform: the folder
+  // is an argument after `--`, never part of the program text.
   const calls: { program: string; args: string[] }[] = [];
   await probeFolderAccess(base, {
     write: true,
@@ -356,12 +360,12 @@ test("the programs AgentTeam starts are checked too: a refusal that only the chi
       return { code: 0, stderr: "" };
     },
   });
-  if (posix) {
-    assert.equal(calls[0].program, "/bin/sh");
-    assert.equal(calls[0].args[0], "-c");
-    assert.ok(!calls[0].args[1].includes(base));
-    assert.ok(calls[0].args[3].startsWith(base));
-  }
+  assert.equal(calls[0].program, process.execPath);
+  assert.equal(calls[0].args[0], "-e");
+  assert.ok(!calls[0].args[1].includes(base));
+  assert.equal(calls[0].args[2], "--");
+  assert.equal(calls[0].args[3], "write");
+  assert.ok(calls[0].args[4].startsWith(base));
 });
 
 test("macOS-protected locations: Desktop, Documents, Downloads, iCloud Drive and volumes, on macOS only", () => {
@@ -442,6 +446,7 @@ test("an output that reports the system's refusal for a path under the task fold
 function fakeProbe(
   answers: Record<string, boolean>,
   log: string[] = [],
+  operation = "readdir",
 ): ProbeFn {
   return async (path, { write }) => {
     log.push(`${write ? "w" : "r"}:${path}`);
@@ -459,7 +464,7 @@ function fakeProbe(
           ok: false,
           code: "folder-denied",
           errno: "EPERM",
-          operation: "readdir",
+          operation,
           actor: "app",
           message: `denied ${path}`,
           fix: "fix it",
@@ -510,8 +515,9 @@ test("a refusal stays known until the folder is asked about again; a success dec
   const base = await scratch(t);
   const answers: Record<string, boolean> = { [base]: false };
   let clock = 0;
+  // The write is refused at the mkdir, after the folder was listed: reading is a question of its own.
   const access = new FolderAccess({
-    probe: fakeProbe(answers),
+    probe: fakeProbe(answers, [], "mkdir"),
     ttlMs: 30_000,
     now: () => clock,
   });
@@ -546,7 +552,7 @@ test("a refusal stays known until the folder is asked about again; a success dec
 });
 
 test(
-  "only a change of answer is announced, and a probe stuck on a system prompt does not hold callers for ever",
+  "only a change of answer is announced, and a probe stuck on a system prompt is pending (not refused) and does not hold callers for ever",
   {
     skip:
       process.platform === "win32" && "simulated macOS paths are POSIX paths",
@@ -597,37 +603,45 @@ test(
       platform: "darwin",
       home,
     });
+    const announced = (type: string) =>
+      store.history(0, 100).filter((e) => e.type === type);
     const first = await access.probe(base, { write: true });
-    // After the wait the caller gets "not allowed (yet)", and readiness sees the same thing.
+    // After the wait the caller is told the answer is pending: nothing was refused, so nothing
+    // says "not allowed", and readiness sees the same thing.
     const waiting = failure(first);
-    assert.equal(waiting.errno, "ETIMEDOUT");
-    assert.equal(waiting.fix, MACOS_FOLDER_FIX);
-    assert.equal(access.cached(base, true)?.ok, false);
-    assert.equal(
-      store.history(0, 100).filter((e) => e.type === "folder.access_changed")
-        .length,
-      0,
+    assert.equal(waiting.code, "folder-probe-pending");
+    assert.match(
+      waiting.message,
+      /^Waiting for macOS to allow access to .*pi…$/,
     );
-    // The person answers the prompt later: the late result replaces the provisional one, once.
+    assert.equal(isPending(first), true);
+    assert.equal(isPending(access.cached(base, true)), true);
+    assert.equal(announced("folder.access_refused").length, 0);
+    assert.equal(announced("folder.access_allowed").length, 0);
+    assert.equal(
+      store.list("folder-access").length,
+      0,
+      "pending is not stored",
+    );
+    // The person answers the prompt later: the late result replaces the pending one, once.
     open = true;
     release!();
     await new Promise((resolve) => setTimeout(resolve, 10));
     assert.equal(access.cached(base, true)?.ok, true);
-    const events = store
-      .history(0, 100)
-      .filter((e) => e.type === "folder.access_changed");
+    const events = announced("folder.access_allowed");
     assert.equal(events.length, 1);
-    assert.deepEqual(events[0].data, { path: base, write: true, ok: true });
+    assert.deepEqual(events[0].data, {
+      path: base,
+      write: true,
+      ok: true,
+      source: "unknown",
+    });
     // Asking again with the same answer announces nothing new.
     const refresh = access.probe(base, { write: true, force: true });
     release!();
     await refresh;
-    assert.equal(
-      store.history(0, 100).filter((e) => e.type === "folder.access_changed")
-        .length,
-      1,
-    );
-    // A stuck probe in a folder macOS does not protect is a timeout, not a privacy refusal.
+    assert.equal(announced("folder.access_allowed").length, 1);
+    // A stuck probe in a folder macOS does not protect is a wait for "the system", not for macOS.
     const elsewhere = failure(
       await new FolderAccess({
         probe: stuck,
@@ -636,9 +650,8 @@ test(
         home,
       }).probe(scratchFolder, { write: true }),
     );
-    assert.equal(elsewhere.errno, "ETIMEDOUT");
-    assert.notEqual(elsewhere.fix, MACOS_FOLDER_FIX);
-    assert.match(elsewhere.fix, /Check the folder's permissions/);
+    assert.equal(elsewhere.code, "folder-probe-pending");
+    assert.doesNotMatch(elsewhere.message, /macOS/);
   },
 );
 
@@ -653,7 +666,7 @@ test("returning to the app asks again about every refused folder and announces t
   assert.equal(await access.recheckFailed(), 1);
   assert.equal(access.cached(base, true)?.ok, true);
   assert.equal(
-    store.history(0, 100).filter((e) => e.type === "folder.access_changed")
+    store.history(0, 100).filter((e) => e.type === "folder.access_allowed")
       .length,
     1,
   );
@@ -675,7 +688,11 @@ test("the test seam denies listed folders as macOS would, only under AGENTTEAM_T
   const probe = withInjectedDenials(fakeProbe({}, seen));
   const saved = { ...process.env };
   t.after(() => {
-    for (const key of ["AGENTTEAM_TEST", "AGENTTEAM_TEST_FOLDER_DENY"])
+    for (const key of [
+      "AGENTTEAM_TEST",
+      "AGENTTEAM_TEST_FOLDER_DENY",
+      "AGENTTEAM_TEST_FOLDER_PENDING",
+    ])
       if (saved[key] === undefined) delete process.env[key];
       else process.env[key] = saved[key];
   });
@@ -697,6 +714,20 @@ test("the test seam denies listed folders as macOS would, only under AGENTTEAM_T
   assert.equal((await probe(fine, { write: true })).ok, true);
   // Refused folders never reach the real probe; the first call passed through with the seam off.
   assert.deepEqual(seen, [`w:${denied}`, `w:${fine}`]);
+  // A listed "pending" folder waits, like the real listing waits for an unanswered system prompt,
+  // until the variable no longer names it; then it is probed for real.
+  process.env.AGENTTEAM_TEST_FOLDER_DENY = "";
+  process.env.AGENTTEAM_TEST_FOLDER_PENDING = fine;
+  let done = false;
+  const waiting = probe(fine, { write: true }).then((result) => {
+    done = true;
+    return result;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.equal(done, false, "still waiting for the person");
+  process.env.AGENTTEAM_TEST_FOLDER_PENDING = "";
+  assert.equal((await waiting).ok, true);
+  assert.equal(seen.length, 3);
 });
 
 // ---- default project folders ---------------------------------------------------------------

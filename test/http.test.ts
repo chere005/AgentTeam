@@ -350,3 +350,39 @@ test("a steadily failing poll adds one event per route and message per minute; t
     store.close();
   }
 });
+
+test("folder access answers are system events: listed in every team's Inspector view, a refusal as a warning", async (t) => {
+  const { request, store } = await fixture(t);
+  store.emit("folder.access_refused", "/Users/someone/Desktop/pi", {
+    path: "/Users/someone/Desktop/pi",
+    write: true,
+    ok: false,
+    code: "folder-denied",
+    errno: "EPERM",
+    operation: "readdir",
+    source: "scheduler",
+  });
+  store.emit("folder.access_allowed", "/Users/someone/Desktop/pi", {
+    path: "/Users/someone/Desktop/pi",
+    write: true,
+    ok: true,
+    source: "recheck",
+  });
+  const { activeTeamId } = (await (await request("/snapshot")).json()) as any;
+  const timeline = (await (
+    await request(
+      `/inspector/timeline?type=folder.&minSeverity=info&teamId=${encodeURIComponent(activeTeamId)}`,
+    )
+  ).json()) as any;
+  assert.deepEqual(
+    timeline.entries.map((e: any) => [e.type, e.severity, e.agentName]),
+    [
+      ["folder.access_refused", "warn", "System"],
+      ["folder.access_allowed", "info", "System"],
+    ],
+  );
+  assert.match(
+    timeline.entries[0].summary,
+    /The system refused access to .*pi \(EPERM on readdir\)/,
+  );
+});

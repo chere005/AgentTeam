@@ -10,6 +10,7 @@
 // ledger entry, no lease, no turn and no attempt is consumed. The blocker is a `runtime-wait` of
 // reason `capability-missing` (the same record, "Setup required" label and automatic requeue the
 // sandbox blocker already uses), so it needs no second requeue subsystem.
+import { resolve } from "node:path";
 import { AppError, type Agent, type Task } from "./model.ts";
 import {
   effectiveCapabilities,
@@ -26,7 +27,16 @@ import {
   type ContractLike,
   type RoleClass,
 } from "./execution-contract.ts";
-import type { FolderProbeCode, FolderProbeResult } from "./folder-access.ts";
+import {
+  failureFromError,
+  reportsDeniedPath,
+  type FolderLookup,
+  type FolderProbeCode,
+  type FolderProbeFailure,
+  type FolderProbeResult,
+  type ProbeRequest,
+} from "./folder-access.ts";
+import { contains } from "./resources.ts";
 import { taskScope } from "./provider-filesystem.ts";
 import { simpleTaskSupport } from "./simple-task-capabilities.ts";
 import { teamProfile } from "./team-profiles.ts";
@@ -103,9 +113,37 @@ export type ReadinessDecision = {
     ok: boolean;
     checkedAt: string;
     code?: FolderProbeCode;
+    /** The programs AgentTeam starts could not be checked there (the folder itself is usable). */
+    warning?: string;
   }[];
   issues: ReadinessIssue[];
   message: string | null;
+};
+
+/** What the system answered about the folders one launch needs, and the facts to judge it with. */
+export type ProbedFolders = {
+  /** One answer per folder, in the order the launch needs them. */
+  results: FolderProbeResult[];
+  /** Host facts whose folder lookup returns exactly these answers (then the shared ones). */
+  host: HostFacts;
+};
+export type FolderProbeOptions = {
+  task?: TaskTraits;
+  contract?: ContractLike | null;
+  host?: HostFacts;
+  /** Probe again even when a fresh answer exists (Start, Retry, Resume, setup). */
+  force?: boolean;
+  /**
+   * With `force`, probe a folder again only the first time this set sees it, so one action
+   * over many tasks of one project asks the system once per folder.
+   */
+  forced?: Set<string>;
+  /** Which path asks (stored with the answer). */
+  source?: string;
+  /** How long to wait for an answer, counted from when the probe was requested. */
+  waitMs?: number;
+  /** One budget (Date.now() scale) for every probe of a scheduler tick. */
+  deadlineAt?: number;
 };
 
 const VERB: Record<Capability, string> = {
@@ -494,6 +532,12 @@ export class LaunchReadiness {
       contract?: ContractLike | null;
       host?: HostFacts;
       runtime?: (environment: string) => Readiness | undefined;
+      /**
+       * A launch gate (scheduler, chat run, Start): a folder nobody asked the system about is not
+       * assumed fine, it is "not checked yet". Previews leave it out of the judgment because their
+       * answer would be a question they cannot ask (they are synchronous).
+       */
+      strictFolders?: boolean;
     } = {},
   ): ReadinessDecision {
     const host: HostFacts = { ...this.host(), ...options.host };
@@ -514,19 +558,28 @@ export class LaunchReadiness {
           this.describeGap(agent, capability, gap, contract, options.task?.id),
         );
     }
-    // What the system really lets this launch do in its folders: the last probe answer (a folder
-    // never probed is not judged). A grant that the operating system overrules is not a capability;
-    // a refused folder blocks the launch the same way a missing grant does.
+    // What the system really lets this launch do in its folders: the last probe answer. A grant
+    // that the operating system overrules is not a capability; a refused folder blocks the launch
+    // the same way a missing grant does. At a launch gate a folder that was never asked about is
+    // not assumed fine either.
     const folderAccess: NonNullable<ReadinessDecision["folderAccess"]> = [];
     for (const target of this.folderTargets(plan, required)) {
       const answer = host.folderAccess?.(target.path, target.write);
-      if (!answer) continue;
+      if (!answer) {
+        if (options.strictFolders && host.folderAccess)
+          issues.push(this.describeUnasked(agent, target, options.task?.id));
+        continue;
+      }
       folderAccess.push({
         path: answer.path,
         write: answer.write,
         ok: answer.ok,
         checkedAt: answer.checkedAt,
-        ...(answer.ok ? {} : { code: answer.code }),
+        ...(answer.ok
+          ? answer.warning
+            ? { warning: answer.warning.message }
+            : {}
+          : { code: answer.code }),
       });
       if (!answer.ok)
         issues.push(
@@ -641,6 +694,17 @@ export class LaunchReadiness {
     taskId?: string,
   ): ReadinessIssue {
     const capability: Capability = write ? "write" : "read";
+    // An answer that has not come yet is a wait, not a refusal: no repair, only the explanation.
+    if (answer.code === "folder-probe-pending")
+      return {
+        code: answer.code,
+        capability,
+        agentId: agent.id,
+        agentName: agent.name,
+        ...(taskId ? { taskId } : {}),
+        message: `${answer.message} ${answer.fix}`,
+        fix: null,
+      };
     // macOS names the cause and the repair only for a permission refusal in a protected place.
     const system =
       answer.code === "folder-denied" &&
@@ -672,28 +736,66 @@ export class LaunchReadiness {
     };
   }
 
+  /** The question a launch gate leaves open: nobody asked the system about this folder. */
+  private describeUnasked(
+    agent: Agent,
+    target: { path: string; write: boolean },
+    taskId?: string,
+  ): ReadinessIssue {
+    return {
+      code: "folder-probe-pending",
+      capability: target.write ? "write" : "read",
+      agentId: agent.id,
+      agentName: agent.name,
+      ...(taskId ? { taskId } : {}),
+      message: `AgentTeam has not asked the system whether ${agent.name} can use ${target.path} yet; nothing starts before it has.`,
+      fix: null,
+    };
+  }
+
+  /** The attached folder a task's own folder lives in, when it is a folder inside one (not the attachment itself). */
+  private attachedRoot(agent: Agent, path: string) {
+    return agent.workspaces
+      .filter(
+        (w) => contains(w.path, path) && resolve(w.path) !== resolve(path),
+      )
+      .sort((a, b) => b.path.length - a.path.length)[0]?.path;
+  }
   /**
-   * Ask the system about the folders this launch will use, before anything starts, and leave the
-   * answers where `evaluatePlan` reads them. Scheduler, Start, Recovery and project setup call it
-   * (they are asynchronous); the preview paths only read what these calls left behind, so a
-   * preview and the action it offers agree.
+   * One folder a launch needs, asked about with the access the role needs. A task's own output
+   * folder that is not made yet is judged by the attached folder it will be made in (and its
+   * absence is not remembered as a refusal), so the first launch and a retry agree.
    */
-  async probeFolders(
+  private async probeTarget(
+    agent: Agent,
+    target: { path: string; write: boolean },
+    request: Omit<ProbeRequest, "write">,
+  ) {
+    const folders = this.service.folderAccess;
+    const root = this.attachedRoot(agent, target.path);
+    if (!root)
+      return folders.probe(target.path, { ...request, write: target.write });
+    const own = await folders.probe(target.path, {
+      ...request,
+      write: target.write,
+      ignoreMissing: true,
+    });
+    if (own.ok || own.code !== "folder-missing") return own;
+    return folders.probe(root, { ...request, write: target.write });
+  }
+
+  /**
+   * Ask the system about the folders this launch will use, before anything starts, and return the
+   * answers (and the host facts that carry exactly these answers, so the evaluation that follows
+   * cannot read a different, later state). Scheduler, chat runs, Start, Recovery and project setup
+   * call it (they are asynchronous); the preview paths only read what these calls left behind, so
+   * a preview and the action it offers agree.
+   */
+  async probeLaunch(
     agent: Agent,
     plan: PlanFacts,
-    options: {
-      task?: TaskTraits;
-      contract?: ContractLike | null;
-      host?: HostFacts;
-      /** Probe again even when a fresh answer exists (Start, Retry, Resume, setup). */
-      force?: boolean;
-      /**
-       * With `force`, probe a folder again only the first time this set sees it, so one action
-       * over many tasks of one project asks the system once per folder.
-       */
-      forced?: Set<string>;
-    } = {},
-  ) {
+    options: FolderProbeOptions = {},
+  ): Promise<ProbedFolders> {
     const host: HostFacts = { ...this.host(), ...options.host };
     const effective = effectiveCapabilities(plan, host);
     const { required } = requiredFor({
@@ -702,29 +804,42 @@ export class LaunchReadiness {
       tools: plan.tools,
       adapter: effective.adapter,
     });
-    return Promise.all(
-      this.folderTargets(plan, required).map((target) => {
+    const asked = await Promise.all(
+      this.folderTargets(plan, required).map(async (target) => {
         const key = `${target.path}\u0000${target.write}`;
         const force =
           !!options.force && !(options.forced && options.forced.has(key));
         options.forced?.add(key);
-        return this.service.folderAccess.probe(target.path, {
-          write: target.write,
+        const result = await this.probeTarget(agent, target, {
           force,
+          source: options.source,
+          waitMs: options.waitMs,
+          deadlineAt: options.deadlineAt,
         });
+        return { target, result };
       }),
     );
+    const fallback: FolderLookup =
+      host.folderAccess ?? this.service.folderAccess.lookup;
+    return {
+      results: asked.map((entry) => entry.result),
+      host: {
+        ...host,
+        folderAccess: (path, write) =>
+          asked.find(
+            (entry) =>
+              entry.target.path === path && entry.target.write === write,
+          )?.result ?? fallback(path, write),
+      },
+    };
   }
-  /** `probeFolders` for the plan saved configuration gives (no launch plan exists yet). */
+  /** `probeLaunch` for the plan saved configuration gives (no launch plan exists yet). */
   async probeProspective(
     agent: Agent,
-    options: {
+    options: Omit<FolderProbeOptions, "task"> & {
       task?: Partial<TaskTraits>;
-      contract?: ContractLike | null;
-      force?: boolean;
-      forced?: Set<string>;
     } = {},
-  ) {
+  ): Promise<ProbedFolders> {
     let plan: PlanFacts;
     try {
       plan = this.prospectivePlan(
@@ -735,20 +850,142 @@ export class LaunchReadiness {
         options.contract,
       );
     } catch {
-      return []; // a detached or changed folder is reported by the evaluator, not probed
+      // A detached or changed folder is reported by the evaluator, not probed.
+      return { results: [], host: { ...this.host(), ...options.host } };
     }
-    return this.probeFolders(agent, plan, {
+    return this.probeLaunch(agent, plan, {
+      ...options,
       task: options.task as TaskTraits | undefined,
-      contract: options.contract,
-      force: options.force,
-      forced: options.forced,
     });
   }
   /** `probeProspective` for a saved task (Recovery's Retry and Resume). */
-  async probeTask(taskId: string, options: { force?: boolean } = {}) {
+  async probeTask(
+    taskId: string,
+    options: Omit<FolderProbeOptions, "task"> = {},
+  ): Promise<ProbedFolders> {
     const task = this.store.get<Task>("task", taskId);
     const agent = this.store.get<Agent>("agent", task.agentId);
     return this.probeProspective(agent, { task, ...options });
+  }
+  /**
+   * The folders a run looks at before it can be judged at all (resolving the launch plan, the
+   * review baseline): the agent's active folder and every folder it may write. Inside a macOS
+   * protected location even looking at a folder can wait for a prompt nobody has answered, and
+   * the scheduler tick waits for the caller, so those folders (only those) are asked about first,
+   * for reading, bounded: the answer is a result here, not a lookup that hangs.
+   */
+  async probeAttached(
+    agent: Agent,
+    options: Pick<FolderProbeOptions, "source" | "waitMs" | "deadlineAt"> = {},
+  ) {
+    const folders = this.service.folderAccess;
+    const paths = [
+      ...new Set(
+        agent.workspaces
+          .filter((w) => w.active || w.access === "write")
+          .map((w) => w.path)
+          .filter((path) => folders.mayPrompt(path)),
+      ),
+    ];
+    return Promise.all(
+      paths.map(async (path) => ({
+        path,
+        result: await folders.probe(path, { write: false, ...options }),
+      })),
+    );
+  }
+  /**
+   * A run's output reports the system's refusal for a path under a folder it used: ask the system
+   * about that folder now, with the access the role needs (read for a reviewer, write for a
+   * writer), and keep the answer where readiness and Recovery read it. The run itself stays what
+   * it was, with its evidence.
+   */
+  async noteDenial(
+    agent: Agent,
+    plan: PlanFacts,
+    output: string,
+    options: {
+      task?: TaskTraits;
+      contract?: ContractLike | null;
+      source?: string;
+      waitMs?: number;
+    } = {},
+  ) {
+    const effective = effectiveCapabilities(plan, this.host());
+    const { required } = requiredFor({
+      contract: this.contractOf(options),
+      roleClass: roleClassOf(this.service, agent),
+      tools: plan.tools,
+      adapter: effective.adapter,
+    });
+    let asked = 0;
+    for (const target of this.folderTargets(plan, required)) {
+      if (!reportsDeniedPath(output, target.path)) continue;
+      asked++;
+      await this.probeTarget(agent, target, {
+        force: true,
+        source: options.source ?? "post-run",
+        waitMs: options.waitMs ?? 1000,
+      });
+    }
+    return asked;
+  }
+  /**
+   * A task's output folder could not be made (the system refused the `mkdir`, or the folder it
+   * belongs in vanished): the same typed wait as any refused folder, worded by the probe, instead
+   * of a task that stays queued without a word. Returns whether the task was blocked.
+   */
+  async blockForFolderError(
+    task: Task,
+    agent: Agent,
+    error: unknown,
+    options: { deadlineAt?: number } = {},
+  ) {
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    if (error instanceof AppError || typeof code !== "string") return false;
+    if (!/^E[A-Z0-9]+$/.test(code)) return false;
+    const attempted = (error as NodeJS.ErrnoException).path;
+    const declared = attempted ?? task.resourcePaths?.[0];
+    const root = declared
+      ? (agent.workspaces
+          .filter((w) => contains(w.path, declared))
+          .sort((a, b) => b.path.length - a.path.length)[0]?.path ?? declared)
+      : undefined;
+    if (!root) return false;
+    // The probe words the cause (and the macOS repair) when the folder it belongs in is refused;
+    // when that folder passes, the refusal is the error's own and is recorded as such.
+    const probed = await this.service.folderAccess.probe(root, {
+      write: true,
+      force: true,
+      source: "prepare",
+      deadlineAt: options.deadlineAt,
+    });
+    let failure: FolderProbeFailure;
+    if (!probed.ok) failure = probed;
+    else {
+      failure = failureFromError(
+        root,
+        true,
+        error,
+        (error as NodeJS.ErrnoException).syscall ?? "mkdir",
+        { platform: this.service.hostPlatform?.() },
+      );
+      this.service.folderAccess.noteFailure(failure, "prepare");
+    }
+    const issue = this.describeFolderFailure(agent, true, failure, task.id);
+    this.blockTask(task, {
+      ready: false,
+      agentId: agent.id,
+      agentName: agent.name,
+      taskId: task.id,
+      basis: "grants",
+      roleClass: roleClassOf(this.service, agent),
+      required: ["write"],
+      effective: null,
+      issues: [issue],
+      message: issue.message,
+    });
+    return true;
   }
 
   /** Evaluate from saved configuration (synchronous): delegation, resume, setup and previews. */
@@ -879,6 +1116,11 @@ export class LaunchReadiness {
     const sandboxOnly =
       decision.issues.length > 0 &&
       decision.issues.every((issue) => issue.code === "sandbox-unavailable");
+    // Only waiting for the system's answer to a folder question: not a refusal, and it resolves
+    // by itself when the answer arrives (src/folder-access.ts).
+    const pendingOnly =
+      decision.issues.length > 0 &&
+      decision.issues.every((issue) => issue.code === "folder-probe-pending");
     const message =
       decision.message ??
       `${agent.name} is missing a capability this work needs.`;
@@ -888,7 +1130,11 @@ export class LaunchReadiness {
         kind: "task",
         targetId: task.id,
         environment: agent.environment,
-        reason: sandboxOnly ? "sandbox-unavailable" : "capability-missing",
+        reason: sandboxOnly
+          ? "sandbox-unavailable"
+          : pendingOnly
+            ? "folder-probe-pending"
+            : "capability-missing",
         capability: sandboxOnly ? "sandboxed-shell" : "tools-and-folders",
         message,
         issues: decision.issues.slice(0, 6).map((issue) => ({
@@ -967,6 +1213,7 @@ export class LaunchReadiness {
       if (
         wait.kind !== "task" ||
         (wait.reason !== "capability-missing" &&
+          wait.reason !== "folder-probe-pending" &&
           wait.reason !== "check-unconfirmed")
       )
         continue;
@@ -987,14 +1234,24 @@ export class LaunchReadiness {
         continue;
       }
       if (only && !only(task)) continue;
-      if (wait.reason === "capability-missing") {
+      if (wait.reason !== "check-unconfirmed") {
         const decision = this.evaluateProspective(agent, { task });
         if (!decision.ready) {
+          // A question the system has answered since turns "waiting" into a plain refusal.
+          const reason = decision.issues.every(
+            (issue) => issue.code === "folder-probe-pending",
+          )
+            ? "folder-probe-pending"
+            : "capability-missing";
           const refreshed = (decision.message ?? "").slice(0, 2000);
-          if (refreshed && refreshed !== wait.message)
+          if (
+            (refreshed && refreshed !== wait.message) ||
+            reason !== wait.reason
+          )
             this.store.put("runtime-wait", {
               ...wait,
-              message: refreshed,
+              reason,
+              message: refreshed || wait.message,
               issues: decision.issues.slice(0, 6),
             });
           continue;

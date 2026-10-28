@@ -63,6 +63,8 @@ export function classifyEvent(name: string | null): { git: boolean } | null {
   if (!name) return { git: false }; // unknown name: still a change
   const parts = name.split(/[\\/]/);
   if (parts.includes("node_modules")) return null;
+  // The folder-access probe's hidden directory (src/folder-access.ts) is not the user's change.
+  if (parts.some((part) => part.startsWith(".agentteam-probe-"))) return null;
   if (parts[0] === ".git")
     return GIT_STATE.test(name) && !name.endsWith(".lock")
       ? { git: true }
@@ -90,6 +92,7 @@ export async function folderFingerprint(root: string): Promise<string> {
     );
     for (const e of names) {
       if (e.name === ".git" || e.name === "node_modules") continue;
+      if (e.name.startsWith(".agentteam-probe-")) continue;
       if (budget-- <= 0) break;
       const full = join(dir, e.name);
       try {

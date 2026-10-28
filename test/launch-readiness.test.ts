@@ -1195,7 +1195,7 @@ test("a granted folder the system refuses blocks the task before it starts: no p
   // folders are asked again, the answer changed, and the blocked task requeues once.
   control.allow(folder);
   assert.equal(await w.service.folderAccess.recheckFailed(), 1);
-  assert.equal(w.events("folder.access_changed").length, 1);
+  assert.equal(w.events("folder.access_allowed").length, 1);
   assert.equal(w.service.launchReadiness.requeueWaiting().length, 1);
   assert.equal(w.service.launchReadiness.requeueWaiting().length, 0);
   await w.until(

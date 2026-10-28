@@ -7,8 +7,7 @@ import { ensureWorkspaceBaseline } from "./workspace-changes.ts";
 import { prepareTaskResourceFolders } from "./project-worktrees.ts";
 import { noteRuntimeWait } from "./runtime-waits.ts";
 import { launchManifest } from "./capability-context.ts";
-import { reportsDeniedPath } from "./folder-access.ts";
-import type { CheckEvidence } from "./limits.ts";
+import { TICK_PROBE_MS } from "./folder-access.ts";
 import {
   explicitlyReportsIncompleteExecution,
   explicitlyReportsNoWork,
@@ -40,6 +39,8 @@ export class Scheduler {
     // Completed work stays completed; running work becomes interrupted/resumable (or blocked on an
     // uncertain effect) with its checkpoint, and dead processes' leases are released.
     this.service.recovery.recover();
+    // A probe a crash or a kill left half way leaves a hidden directory in a project folder.
+    void this.service.folderAccess.sweepLeftovers().catch(() => {});
     this.service.graphs.recover(); // workflow-graph steps: effect ledger decides command steps
     this.timer = setInterval(() => void this.tick(), 750);
   }
@@ -50,13 +51,15 @@ export class Scheduler {
   async tick() {
     if (this.busy || this.stopped || !this.runs.enabled) return;
     this.busy = true;
+    // One budget for every folder question this tick asks (execution sweep, chat runs, tasks).
+    const probeDeadlineAt = Date.now() + TICK_PROBE_MS;
     try {
       this.service.limits.sweep(); // runtime clock + runtime/token budget trips
       this.service.recovery.sweep(); // automatic retries whose backoff elapsed
       this.service.graphs.sweep(); // workflow-graph steps waiting on gates without an event
       this.service.locks.sweep(); // draining leases whose processes have exited
       this.service.pipelines.sweep(); // pipeline sample: assign stage-5 workers once integration finished
-      await this.service.executionProjects.sweep(); // verified prepared assignments and bounded reviews
+      await this.service.executionProjects.sweep({ probeDeadlineAt }); // verified prepared assignments and bounded reviews
       await this.service.delegations.sweep(); // stopped parents whose delegated results are ready
       // One ordering for tasks and chat run requests (src/queue.ts): Preempt first, then priority plus
       // aging; one clock reading keeps equal-age work FIFO. Entries waiting only for a lease on paths
@@ -82,7 +85,9 @@ export class Scheduler {
         if (candidate.kind === "chat") {
           if (this.stopped || !this.runs.enabled) break;
           try {
-            await this.runs.start(candidate.request.id, true);
+            await this.runs.start(candidate.request.id, true, {
+              probeDeadlineAt,
+            });
           } catch (error) {
             const code = (error as { code?: string }).code;
             if (
@@ -92,6 +97,8 @@ export class Scheduler {
                 "session_busy",
                 "human_control",
                 "runtime_resolving",
+                // The agent's folder waits for the person's answer: asked again next tick.
+                "folder_probe_pending",
               ].includes(code ?? "")
             ) {
               this.service.store.remove("run-request", candidate.request.id);
@@ -147,6 +154,38 @@ export class Scheduler {
         let plan;
         try {
           const agent = this.service.store.get<Agent>("agent", task.agentId);
+          // The folders the task declares are asked about BEFORE anything is made in them: a
+          // folder the system refuses (or has not answered about yet) blocks the task with the
+          // real cause, and the `mkdir` below is never attempted there.
+          if (
+            task.resourcePaths?.length ||
+            agent.workspaces.some((w) =>
+              this.service.folderAccess.mayPrompt(w.path),
+            )
+          ) {
+            const early = await this.service.launchReadiness.probeProspective(
+              agent,
+              {
+                task,
+                source: "scheduler",
+                waitMs: TICK_PROBE_MS,
+                deadlineAt: probeDeadlineAt,
+              },
+            );
+            if (early.results.some((result) => !result.ok)) {
+              const decision = this.service.launchReadiness.evaluateProspective(
+                agent,
+                {
+                  task,
+                  host: { ...early.host, platform: this.runs.runtimePlatform },
+                },
+              );
+              if (!decision.ready) {
+                this.service.launchReadiness.blockTask(task, decision);
+                continue;
+              }
+            }
+          }
           try {
             await prepareTaskResourceFolders(
               this.service.store,
@@ -165,6 +204,17 @@ export class Scheduler {
               )
             )
               continue;
+            // So does a folder the system would not let AgentTeam make: the same typed wait as
+            // a refused probe, never a task that stays queued and is retried for ever.
+            if (
+              await this.service.launchReadiness.blockForFolderError(
+                task,
+                agent,
+                error,
+                { deadlineAt: probeDeadlineAt },
+              )
+            )
+              continue;
             throw error;
           }
           if (this.stopped || !this.runs.enabled) break;
@@ -179,17 +229,27 @@ export class Scheduler {
           // Finalizing saved provider output makes no provider call and needs no capability.
           const replaying = this.service.recovery.willReplayRun(task);
           // Ask the system what it lets this launch do in its folders (macOS folder privacy,
-          // read-only disks) before anything starts: a grant it overrules is not a capability.
-          if (!replaying)
-            await this.service.launchReadiness.probeFolders(agent, plan, {
-              task,
-              host,
-            });
+          // read-only disks) before anything starts: a grant it overrules is not a capability,
+          // and a folder nobody asked about is not assumed fine. An answer that has not come yet
+          // (an unanswered prompt) leaves the task waiting, not the tick.
+          const probed = replaying
+            ? null
+            : await this.service.launchReadiness.probeLaunch(agent, plan, {
+                task,
+                host,
+                source: "scheduler",
+                waitMs: TICK_PROBE_MS,
+                deadlineAt: probeDeadlineAt,
+              });
           if (this.stopped || !this.runs.enabled) break;
           const decision = this.service.launchReadiness.evaluatePlan(
             agent,
             plan,
-            { task, host },
+            {
+              task,
+              host: probed?.host ?? host,
+              strictFolders: !replaying,
+            },
           );
           if (!decision.ready && !replaying) {
             this.service.launchReadiness.blockTask(task, decision);
@@ -228,35 +288,25 @@ export class Scheduler {
   }
   /**
    * A run whose output reports the operating system's refusal ("Operation not permitted", EPERM,
-   * EACCES, "Permission denied") for a path under the task folder and then failed (its file checks
+   * EACCES, "Permission denied") for a path under a folder it used and then failed (its checks
    * failed, or it said outright that it could not do the work): ask the system about that folder
-   * now. The answer is kept where readiness reads it, so Recovery names the cause (setup, with the
-   * fix) instead of offering another attempt that would fail the same way. The failed attempt
-   * itself stays failed with its evidence.
+   * now, with the access the role needs (read for a reviewer, write for a writer). The answer is
+   * kept where readiness reads it, so Recovery names the cause (setup, with the fix) instead of
+   * offering another attempt that would fail the same way. The failed attempt itself stays failed
+   * with its evidence.
    */
   private async noteDeniedAccess(
+    task: Task,
     plan: Awaited<ReturnType<TeamService["launchPlan"]>>,
-    evidence: CheckEvidence | null,
     output: string,
   ) {
-    const root = plan.cwd;
-    if (
-      !root ||
-      (evidence &&
-        !evidence.results.some(
-          (entry) =>
-            !entry.passed &&
-            [
-              "artifact-exists",
-              "artifact-matches",
-              "execution-verified",
-            ].includes(entry.check.type),
-        )) ||
-      !reportsDeniedPath(output, root)
-    )
-      return;
     try {
-      await this.service.folderAccess.probe(root, { write: true, force: true });
+      await this.service.launchReadiness.noteDenial(
+        this.service.store.get<Agent>("agent", task.agentId),
+        plan,
+        output,
+        { task, source: "post-run" },
+      );
     } catch {
       // The probe never throws; the failed attempt is reported either way.
     }
@@ -398,7 +448,7 @@ export class Scheduler {
         explicitlyReportsIncompleteExecution(task, result) ||
         explicitlyReportsUnapprovedReview(task, result)
       ) {
-        await this.noteDeniedAccess(plan, null, result);
+        await this.noteDeniedAccess(task, plan, result);
         this.service.transitionTask(task.id, {
           status: "failed",
           result: result.slice(0, 100000),
@@ -414,7 +464,7 @@ export class Scheduler {
         plan.cwd ?? this.runs.cwd,
       );
       if (evidence && !evidence.passed) {
-        await this.noteDeniedAccess(plan, evidence, result);
+        await this.noteDeniedAccess(task, plan, result);
         throw new Error(this.service.limits.failedChecksText(evidence));
       }
       // A required check a model invented is not enforced as pass/fail, but it keeps its slot: the
