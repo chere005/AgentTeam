@@ -1169,8 +1169,16 @@ export function Workflows(p: PaneProps) {
                                 ?.name}
                         </small>
                         {t.runtimeBlocker && (
-                          <small className="err">
-                            Setup required: {t.runtimeBlocker.message}
+                          <small
+                            className={
+                              t.runtimeBlocker.code === "folder_probe_pending"
+                                ? "quiet"
+                                : "err"
+                            }
+                          >
+                            {t.runtimeBlocker.code === "folder_probe_pending"
+                              ? t.runtimeBlocker.message
+                              : `Setup required: ${t.runtimeBlocker.message}`}
                           </small>
                         )}
                         {taskResultPreview(t) && (

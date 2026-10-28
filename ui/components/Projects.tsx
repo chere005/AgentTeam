@@ -143,20 +143,55 @@ export function AssignProject({
     [tasks, setTasks] = useState<DraftTask[]>([]),
     [sequential, setSequential] = useState(true),
     [error, setError] = useState(""),
-    // What the system said about the typed or chosen folder (Start asks again before anything runs).
-    [folderProblem, setFolderProblem] = useState(""),
+    // What the system said about the typed or chosen folder (Start asks again before anything runs),
+    // and for which folder: an answer for a folder that is no longer in the field is never shown.
+    [folderProblem, setFolderProblem] = useState<{
+      path: string;
+      text: string;
+      /** A refusal is an alert; waiting for the person and a warning are quiet notes. */
+      kind: "refused" | "waiting" | "warning";
+    } | null>(null),
     [waitingForExecution, setWaitingForExecution] = useState(false),
     [busy, setBusy] = useState(false);
-  const checkFolder = async (path: string) => {
-    setFolderProblem("");
-    if (!path.trim()) return;
+  const pendingTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(pendingTimer.current), []);
+  // The folder now in the field: a repeated question for another folder is dropped.
+  const fieldWorkspace = useRef(workspace);
+  fieldWorkspace.current = workspace;
+  /**
+   * Ask the system about the folder. The backend decides the access level from the team's roles
+   * (a folder is not written in just to look at it); an answer that has not come yet is shown as
+   * waiting and asked about again.
+   */
+  const checkFolder = async (path: string, attempt = 0) => {
+    const target = path.trim();
+    clearTimeout(pendingTimer.current);
+    setFolderProblem(null);
+    if (!target) return;
     try {
       const result: FolderProbeResult = await api(
         "/folder-access/probe",
         "POST",
-        { path: path.trim(), write: true },
+        { path: target, teamId, waitMs: 1500 },
       );
-      setFolderProblem(result.ok ? "" : `${result.message} ${result.fix}`);
+      if (attempt > 0 && fieldWorkspace.current.trim() !== target) return;
+      if (!result.ok && result.code === "folder-probe-pending" && attempt < 150)
+        pendingTimer.current = setTimeout(
+          () => void checkFolder(target, attempt + 1),
+          2000,
+        );
+      setFolderProblem(
+        result.ok
+          ? result.warning
+            ? { path: target, text: result.warning.message, kind: "warning" }
+            : null
+          : {
+              path: target,
+              text: `${result.message} ${result.fix}`,
+              kind:
+                result.code === "folder-probe-pending" ? "waiting" : "refused",
+            },
+      );
     } catch {
       // Not a usable path at all: creating the project says why.
     }
@@ -457,7 +492,8 @@ export function AssignProject({
             value={workspace}
             onChange={(e) => {
               setWorkspace(e.target.value);
-              setFolderProblem("");
+              setFolderProblem(null);
+              clearTimeout(pendingTimer.current);
             }}
             // A typed path stays possible; the system is asked when the field is left.
             onBlur={() => void checkFolder(workspace)}
@@ -466,7 +502,8 @@ export function AssignProject({
             type="button"
             disabled={busy || !!createdId}
             onClick={async () => {
-              // The native picker: a folder chosen in the system dialog is opened to the app.
+              // The native picker: a folder chosen in the system dialog is normally allowed for the
+              // app; the probe below confirms it before anything runs.
               const p = await window.agentteam.chooseFolder();
               if (p) {
                 setWorkspace(p);
@@ -478,13 +515,15 @@ export function AssignProject({
           </button>
         </span>
       </label>
-      {folderProblem && (
+      {folderProblem && folderProblem.path === workspace.trim() && (
         <p
-          className="assign-folder-problem"
-          role="alert"
+          className={`assign-folder-problem${
+            folderProblem.kind === "refused" ? "" : " waiting"
+          }`}
+          role={folderProblem.kind === "refused" ? "alert" : "status"}
           data-testid="assign-folder-check"
         >
-          {folderProblem}
+          {folderProblem.text}
         </p>
       )}
       {mode === "project" && (

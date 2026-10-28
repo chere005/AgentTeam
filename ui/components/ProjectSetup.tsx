@@ -88,9 +88,19 @@ export function ProjectSetupCard({
       off?.();
     };
   }, [load]);
-  /** Ask the system about a folder (the backend probes the app process and a child shell). */
-  const probe = async (path: string, force = false) => {
+  const pendingTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(pendingTimer.current), []);
+  // The folder now in the field: a repeated question for another folder is dropped.
+  const fieldFolder = useRef(folder);
+  fieldFolder.current = folder;
+  /**
+   * Ask the system about a folder (the backend probes the app process and a child program). The
+   * backend decides the access level from this project's approved roles; an answer that has not
+   * come yet (an unanswered macOS prompt) is shown as waiting and asked about again until it has.
+   */
+  const probe = async (path: string, force = false, attempt = 0) => {
     const target = path.trim();
+    clearTimeout(pendingTimer.current);
     if (!target) {
       setCheck(null);
       return null;
@@ -99,9 +109,15 @@ export function ProjectSetupCard({
       const result: FolderProbeResult = await api(
         "/folder-access/probe",
         "POST",
-        { path: target, write: true, force },
+        { path: target, workflowId, force, waitMs: 1500 },
       );
+      if (attempt > 0 && fieldFolder.current.trim() !== target) return null;
       setCheck({ path: target, result });
+      if (!result.ok && result.code === "folder-probe-pending" && attempt < 150)
+        pendingTimer.current = setTimeout(
+          () => void probe(target, false, attempt + 1).then(() => load()),
+          2000,
+        );
       return result;
     } catch {
       setCheck(null); // not a usable path at all: Apply says why
@@ -138,10 +154,11 @@ export function ProjectSetupCard({
         try {
           await fn();
         } catch (e) {
-          // A folder the system refuses is explained once, beside the field; anything else here.
-          const refused = folder.trim() ? await probe(folder) : null;
-          if (!refused || refused.ok)
-            setError(e instanceof Error ? e.message : String(e));
+          // The real error is always shown (a refused folder's text is shown once, beside the
+          // field, so it is left out here when the field already says it); the folder is asked
+          // about again so the field shows today's answer.
+          setError(e instanceof Error ? e.message : String(e));
+          if (folder.trim()) void probe(folder);
         }
       });
       await load();
@@ -228,7 +245,7 @@ export function ProjectSetupCard({
                               issue.fix?.kind === "choose-project-folder"
                             )
                               // The native picker: a folder chosen in the system dialog is
-                              // opened to the app by macOS.
+                              // normally allowed for the app; the probe confirms it.
                               void run(chooseNative);
                             else if (issue.fix?.kind === "allow-folder-access")
                               // After allowing it in System Settings: ask the system again.
@@ -328,8 +345,14 @@ export function ProjectSetupCard({
             </datalist>
             {check && check.path === folder.trim() && !check.result.ok && (
               <div
-                className="setup-folder-problem"
-                role="alert"
+                className={`setup-folder-problem${
+                  check.result.code === "folder-probe-pending" ? " waiting" : ""
+                }`}
+                role={
+                  check.result.code === "folder-probe-pending"
+                    ? "status"
+                    : "alert"
+                }
                 data-testid="setup-folder-check"
               >
                 <p>{check.result.message}</p>
@@ -374,6 +397,18 @@ export function ProjectSetupCard({
                 AgentTeam can use this folder.
               </small>
             )}
+            {check &&
+              check.path === folder.trim() &&
+              check.result.ok &&
+              check.result.warning && (
+                <small
+                  className="setup-folder-warning"
+                  role="status"
+                  data-testid="setup-folder-warning"
+                >
+                  {check.result.warning.message}
+                </small>
+              )}
             {view.proposal.createsFolder &&
               folder.trim() === view.proposal.folder && (
                 <small>AgentTeam creates this folder when you apply.</small>
@@ -500,11 +535,17 @@ export function ProjectSetupCard({
         </div>
       )}
       {outcome && <p role="status">{outcome}</p>}
-      {error && (
-        <p className="bad-text" role="alert">
-          {error}
-        </p>
-      )}
+      {error &&
+        !(
+          check &&
+          check.path === folder.trim() &&
+          !check.result.ok &&
+          error.includes(check.result.message)
+        ) && (
+          <p className="bad-text" role="alert">
+            {error}
+          </p>
+        )}
     </section>
   );
 }

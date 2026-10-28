@@ -140,3 +140,8 @@
   font-size: 12px;
   overflow-wrap: anywhere;
 }
+.assign-folder-problem.waiting {
+  border-color: var(--line);
+  background: transparent;
+  color: inherit;
+}
