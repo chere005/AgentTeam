@@ -47,10 +47,16 @@ echo "preflight: https://github.com/${REPO}/actions/runs/${run}"
 # Wait for the deciding jobs only; optional ones (Windows, Linux) can take far longer and are
 # left to finish on their own (never cancelled: a cancelled run is mailed like a failed one, and
 # every job is continue-on-error, so the bot's run ends green whatever they do).
+# A queued run has no jobs yet: "no unfinished deciding job" is not a pass until the deciding jobs exist.
 while :; do
-  pending="$(gh run view "$run" --repo "$REPO" --json jobs \
-    --jq '[.jobs[] | select((.name | test("optional") | not) and .status != "completed")] | length')"
-  [ "$pending" = "0" ] && break
+  state="$(gh run view "$run" --repo "$REPO" --json status,jobs \
+    --jq '[.status, ([.jobs[] | select(.name | test("optional") | not)] | length), ([.jobs[] | select((.name | test("optional") | not) and .status != "completed")] | length)] | @tsv')"
+  IFS=$'\t' read -r status deciding pending <<< "$state"
+  if [ "$deciding" != "0" ] && [ "$pending" = "0" ]; then break; fi
+  if [ "$status" = "completed" ] && [ "$deciding" = "0" ]; then
+    echo "preflight: FAIL (the bot's run finished without a deciding job)" >&2
+    exit 1
+  fi
   sleep 30
 done
 
