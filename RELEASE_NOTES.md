@@ -1,4 +1,16 @@
-# AgentTeam 0.6.0
+# AgentTeam 0.7.0
+
+Folders macOS protects no longer fail work silently. Before any provider call, AgentTeam checks that it can really read or write each project folder, from the app and from the processes it launches.
+
+- **Folder check before launch:** every path that starts work (chat, delegated work, project Start, setup, Retry and Resume, Team Assistant apply) checks the folder first. A refused folder blocks the work with the fix and spends no provider call. Answers survive a restart. A system prompt nobody has answered yet shows as waiting and never holds up other work.
+- **Default project folder:** with nothing attached, the setup card proposes `~/AgentTeam Projects/<request>`, which macOS does not protect. Choose project folder and Browse use the system folder picker. The app now explains its folder use when macOS asks for Desktop, Documents, Downloads, removable or network volumes.
+- **Recovery:** a run that reports a permission error makes AgentTeam check that folder and offers the folder fix instead of another identical attempt. A correction round refused by its folder keeps the reviewers' findings and goes on when the folder is allowed.
+- **Quieter failures:** one failure wave posts one message instead of one per sweep. Unexpected backend errors are recorded with secrets redacted, at most once a minute per route, and listed under System in every team's Inspector.
+- **Diagnostics:** `node src/cli.ts folder-probe <path> [--write]` prints what the app would see for a folder.
+
+Installers are unsigned unless signing credentials are configured. An unsigned Mac build is a new app to macOS after each update, so macOS asks again about protected folders.
+
+## Earlier release notes: 0.6.0
 
 Program requests now prepare an implementation, execution and review plan before starting providers. Choose one project folder, inspect the output precision and reviewers, then start the saved assignment.
 
