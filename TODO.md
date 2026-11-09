@@ -123,7 +123,6 @@ References: [ACP protocol](https://agentclientprotocol.com/protocol/overview), [
 
 ## 6 Real agent-to-agent orchestration — P1
 
-- [ ] Make specialist/required-review file evidence independent of the invoking agent: today `changedFiles` is declared on the task or reported in the result JSON, not measured from Git; a task that omits it can dodge a files-only rule (text/tag/catch-all rules still match).
 - [ ] Test direct-chat and task MCP handoffs with live Claude/Codex accounts after explicit user approval; current tests use provider fixtures and do not establish authentication or subscription compatibility. ACP and native provider subagents are not covered.
 - [ ] Enforce directed/bidirectional communication permissions on notifications (invocation, result reads and required/specialist reviews are enforced and tested; notifications are not routed through the new action).
 - [ ] Surface cancellation propagation, `delegation.returned` events and partial results in the UI/canvas, and deliver a child's partial result back into the parent's context (backend propagation and persistence are done).

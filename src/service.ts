@@ -1120,6 +1120,7 @@ export class TeamService {
         this.pipelines.assertStart(task); // adjudication/assignment/read-only gates of the pipeline sample
         this.resources.acquire(task.id, task.agentId, task.workflowId);
         this.limits.recordTurn(task);
+        this.orchestration.onTaskStarted(task);
         const scopeHash = (
           context.launchManifest as { scopeHash?: string } | undefined
         )?.scopeHash;
