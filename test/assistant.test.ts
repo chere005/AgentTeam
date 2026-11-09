@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { controlFolders } from "./fixtures/folder-probe.ts";
 import { projectsRoot } from "../src/folder-access.ts";
+import { filesystemPolicy } from "../src/filesystem-policy.ts";
 import { Store } from "../src/store.ts";
 import { SkillCatalog } from "../src/skills.ts";
 import { TeamService } from "../src/service.ts";
@@ -1704,27 +1705,62 @@ test("a new folder in AgentTeam's projects folder can be proposed: it exists onl
       t.store.get<Agent>("agent", t.lead.id).workspaces[0].path,
       await realpath(folder),
     );
-    // A path outside the projects folder that does not exist is still an invalid proposal.
-    await assert.rejects(
+  } finally {
+    await t.close();
+  }
+});
+
+test("a proposal may attach a missing folder outside the projects folder: previewing creates nothing, applying makes it after the access check", async () => {
+  const t = await setup();
+  try {
+    const control = controlFolders(t.service);
+    const dir = await t.dir();
+    const folder = join(dir, "new", "pi-program");
+    const propose = (path: string) =>
       t.proposals.create(
         {
-          title: "Elsewhere",
+          title: "Attach",
           ops: [
             {
               op: "resource.assign",
               agentId: t.lead.id,
               action: "add",
-              workspace: {
-                path: join(await t.dir(), "missing"),
-                access: "read",
-              },
+              workspace: { path, access: "write", active: true },
             },
           ],
         },
         { type: "assistant", agentId: t.assistant.id },
-      ),
-      { code: "proposal_invalid" },
+      );
+    const p = await propose(folder);
+    assert.ok(!existsSync(folder), "previewing created nothing");
+    t.proposals.approve(p.id, { type: "user" });
+    await t.proposals.apply(p.id, { type: "user" });
+    assert.ok(existsSync(folder), "applying created the folder");
+    assert.equal(
+      t.store.get<Agent>("agent", t.lead.id).workspaces[0].path,
+      await realpath(folder),
     );
+    // A protected parent refuses before anything is created.
+    const refused = join(dir, "desktop-like");
+    await mkdir(refused);
+    control.refuse(refused);
+    const denied = join(refused, "pi-program");
+    const q = await propose(denied);
+    t.proposals.approve(q.id, { type: "user" });
+    await assert.rejects(t.proposals.apply(q.id, { type: "user" }), {
+      code: "folder-denied",
+    });
+    assert.ok(!existsSync(denied), "a refused path is not created");
+    // A globally blocked path is refused without creating it.
+    const blocked = join(dir, "blocked");
+    await mkdir(blocked);
+    filesystemPolicy(t.store).add({
+      paths: [blocked],
+      acknowledgePermanent: true,
+    });
+    const inBlocked = join(blocked, "pi-program");
+    await assert.rejects(propose(inBlocked));
+    assert.ok(!existsSync(inBlocked), "a blocked path is not created");
   } finally {
     await t.close();
   }

@@ -1,7 +1,8 @@
+import { existsSync } from "node:fs";
 import { Approvals } from "./approvals.ts";
 import { randomUUID } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { z } from "zod";
 import { ResourceCoordinator, overlaps } from "./resources.ts";
 import { normalizeRules, normalizeRelPath } from "./access.ts";
@@ -120,6 +121,8 @@ export class TeamService {
    * the probe results every launch path reads (src/folder-access.ts).
    */
   folderAccess: FolderAccess;
+  /** Dry-run services only: a missing absolute workspace folder is kept as written, not an ENOENT. */
+  allowPlannedFolders = false;
   /**
    * Whether a provider runtime is installed and signed in, as the app currently knows it. Wired by
    * the RunManager; the setup and notice views report it, the launch has its own path for it.
@@ -247,7 +250,17 @@ export class TeamService {
         "Workspace paths must be absolute",
         400,
       );
-      ws.path = await realpath(ws.path);
+      try {
+        ws.path = await realpath(ws.path);
+      } catch (error) {
+        // A proposal dry run plans folders the user's apply will create; a real save never does.
+        if (
+          !this.allowPlannedFolders ||
+          (error as NodeJS.ErrnoException)?.code !== "ENOENT"
+        )
+          throw error;
+        ws.path = resolve(ws.path);
+      }
       if (ws.rules) ws.rules = normalizeRules(ws.rules);
       if (
         ws.sharing?.scope === "selected" ||
@@ -289,7 +302,8 @@ export class TeamService {
           400,
         );
       assert(
-        (await stat(ws.path)).isDirectory(),
+        (this.allowPlannedFolders && !existsSync(ws.path)) ||
+          (await stat(ws.path)).isDirectory(),
         "invalid_path",
         "Workspace must be a directory",
         400,
@@ -336,7 +350,9 @@ export class TeamService {
     };
     await Promise.all(
       agent.workspaces.map((workspace) =>
-        ensureWorkspaceBaseline(this.store, agent, workspace.path),
+        this.allowPlannedFolders && !existsSync(workspace.path)
+          ? undefined
+          : ensureWorkspaceBaseline(this.store, agent, workspace.path),
       ),
     );
     const saved = this.store.transaction(() => {
