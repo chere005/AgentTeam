@@ -27,6 +27,7 @@ import { assistantContext } from "./assistant-context.ts";
 import { ToolSessions } from "./tool-endpoint.ts";
 import { GroupChats } from "./group-chat.ts";
 import { ensureWorkspaceBaseline } from "./workspace-changes.ts";
+import { recordLaunch } from "./launch-record.ts";
 import { nodeReadRoots } from "./node-runtime.ts";
 import { codexTaskPermissions } from "./provider-filesystem.ts";
 import { assertProviderCapabilities } from "./provider-capabilities.ts";
@@ -1134,6 +1135,14 @@ export class RunManager {
           plan.workspaces.some((w) => w.access === "write"),
         ref: { messageId: message.id },
       }).effect.id;
+      recordLaunch(
+        store,
+        "session",
+        id,
+        command,
+        plan,
+        store.get<Session>("session", id).providerSessionId,
+      );
       await this.execute(
         command,
         plan.environment,

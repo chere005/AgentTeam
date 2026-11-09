@@ -19,6 +19,7 @@ import type { TeamService } from "./service.ts";
 /**
  * Run inspector API (behind the bearer-token check in http.ts):
  *   GET  /inspector/timeline?agentId&workflowId&teamId&taskId&severity&minSeverity&type&q&file&after&limit
+ *   GET  /inspector/tasks/:id/launch, /inspector/sessions/:id/launch   recorded effective launches (redacted)
  *   GET  /inspector/tasks/:id/waiting      structured "why is this waiting?" reasons
  *   GET  /inspector/agents/:id/waiting     same reason list for an agent (all its pending work)
  *   GET  /inspector/waiting?teamId         headline per queued/interrupted/blocked task
@@ -62,6 +63,21 @@ export function createInspector(
     if (method === "GET" && path === "/inspector/timeline") {
       const filter = timelineFilterSchema.parse(query);
       return { data: buildTimeline(service, filter, redactor()) };
+    }
+    if (
+      method === "GET" &&
+      (m = path.match(/^\/inspector\/(tasks|sessions)\/([^/]+)\/launch$/))
+    ) {
+      const subject = id(m[2]);
+      const kind = m[1] === "tasks" ? "task" : "session";
+      service.store.get(kind, subject);
+      return {
+        data: service.store.eventsOf(`${kind}.launch`, subject).map((e) => ({
+          seq: e.seq,
+          at: e.createdAt,
+          ...(redactor().value(e.data) as object),
+        })),
+      };
     }
     if (
       method === "GET" &&

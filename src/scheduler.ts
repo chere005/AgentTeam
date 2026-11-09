@@ -6,6 +6,7 @@ import type { Agent, Task } from "./model.ts";
 import { ensureWorkspaceBaseline } from "./workspace-changes.ts";
 import { prepareTaskResourceFolders } from "./project-worktrees.ts";
 import { noteRuntimeWait } from "./runtime-waits.ts";
+import { recordLaunch } from "./launch-record.ts";
 import { launchManifest } from "./capability-context.ts";
 import { TICK_PROBE_MS } from "./folder-access.ts";
 import {
@@ -403,6 +404,14 @@ export class Scheduler {
       }
       if (run.replay !== null) result = run.replay;
       else {
+        recordLaunch(
+          this.service.store,
+          "task",
+          task.id,
+          command,
+          plan,
+          run.sessionId,
+        );
         try {
           await this.executeProvider(
             command,
