@@ -44,15 +44,15 @@ for _ in $(seq 1 60); do
 done
 if [ -z "$run" ]; then echo "preflight: the bot's run did not appear (the Actions tab shows why the handoff failed)" >&2; exit 1; fi
 echo "preflight: https://github.com/${REPO}/actions/runs/${run}"
-# Wait for the deciding jobs only; optional ones (Windows, Linux) can take far longer and
-# are cancelled once the verdict is in (the bot's run: nobody is mailed).
+# Wait for the deciding jobs only; optional ones (Windows, Linux) can take far longer and are
+# left to finish on their own (never cancelled: a cancelled run is mailed like a failed one, and
+# every job is continue-on-error, so the bot's run ends green whatever they do).
 while :; do
   pending="$(gh run view "$run" --repo "$REPO" --json jobs \
     --jq '[.jobs[] | select((.name | test("optional") | not) and .status != "completed")] | length')"
   [ "$pending" = "0" ] && break
   sleep 30
 done
-gh run cancel "$run" --repo "$REPO" > /dev/null 2>&1 || true
 
 jobs="$(gh run view "$run" --repo "$REPO" --json jobs --jq '.jobs[] | [.name, .conclusion] | @tsv')"
 echo "$jobs" | sed 's/^/  /'
