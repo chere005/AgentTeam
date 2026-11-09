@@ -10,6 +10,7 @@ type SnapshotLike = {
   workflows: {
     id: string;
     name: string;
+    kind?: string;
     paused: boolean;
     lifecycle?: { state: string };
     tasks: {
@@ -141,6 +142,10 @@ export function buildInbox(input: InboxInput): InboxItem[] {
         workflowId: w.id,
         target: "workflows",
       });
+    // A project started from chat is hidden from Projects; its setup card and Recovery live in
+    // the chat of the agent the task belongs to, so its items open that chat.
+    const fromChat = w.kind === "conversation" || w.name.startsWith("Chat: ");
+    const taskTarget: InboxTarget = fromChat ? "chat" : "workflows";
     for (const t of w.tasks) {
       if (inactive && !uncertain.has(t.id)) continue;
       const who = agentName(t.agentId);
@@ -152,7 +157,7 @@ export function buildInbox(input: InboxInput): InboxItem[] {
           detail: `${who} in ${w.name}`,
           agentId: t.agentId,
           workflowId: w.id,
-          target: "workflows",
+          target: taskTarget,
         });
       else if (t.status === "interrupted")
         items.push({
@@ -162,7 +167,7 @@ export function buildInbox(input: InboxInput): InboxItem[] {
           detail: `${who} in ${w.name}; resume from its checkpoint.`,
           agentId: t.agentId,
           workflowId: w.id,
-          target: "workflows",
+          target: taskTarget,
         });
       else if (t.status === "blocked" && t.delegation?.state !== "waiting")
         items.push({
@@ -178,7 +183,7 @@ export function buildInbox(input: InboxInput): InboxItem[] {
             `${who} in ${w.name}: review the task's blocker before continuing.`,
           agentId: t.agentId,
           workflowId: w.id,
-          target: "workflows",
+          target: taskTarget,
         });
       else if (t.status === "completed") {
         const reviewer = data.edges.find(

@@ -12,6 +12,7 @@ import type { FolderProbeResult } from "../../src/folder-access";
 import type { LaunchReadiness } from "../../src/launch-readiness";
 import type { SetupAction } from "../../src/launch-readiness";
 import { api, type Snapshot } from "../api";
+import { setupCardPlacement } from "../setup-placement";
 import "./project-setup.css";
 import { ExecutionProjectCard } from "./ExecutionProject";
 
@@ -611,18 +612,23 @@ export function AgentSetupCards({
   data,
   act,
   repair,
+  placement,
 }: {
   agentId: string;
   data: Snapshot;
   act: Act;
   repair?: (action: SetupAction) => void;
+  /** "active": unfinished work, shown after the messages; "history": finished, above them. */
+  placement: "active" | "history";
 }) {
   return (
     <>
       {data.workflows
         .filter(
           (w) =>
-            w.ownerId === agentId || w.tasks.some((t) => t.agentId === agentId),
+            (w.ownerId === agentId ||
+              w.tasks.some((t) => t.agentId === agentId)) &&
+            setupCardPlacement(w) === placement,
         )
         .map((w) => (
           <ProjectSetupCard

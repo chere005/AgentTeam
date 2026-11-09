@@ -458,6 +458,7 @@ export function Chat(p: PaneProps) {
           data={p.data}
           act={p.act}
           repair={(action) => openSetupRepair(p, action)}
+          placement="history"
         />
         <InvocationPanel
           agent={agent}
@@ -628,6 +629,14 @@ export function Chat(p: PaneProps) {
                 {failureMessage}
               </div>
             )}
+            {/* Unfinished project setup sits under the newest reply, which asks for it. */}
+            <AgentSetupCards
+              agentId={agent.id}
+              data={p.data}
+              act={p.act}
+              repair={(action) => openSetupRepair(p, action)}
+              placement="active"
+            />
             <NewBelow n={scroll.below} jump={scroll.toBottom} />
           </div>
         )}

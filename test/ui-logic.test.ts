@@ -18,6 +18,7 @@ import {
   renameLayout,
 } from "../ui/workspace.ts";
 import { buildInbox } from "../ui/inbox.ts";
+import { setupCardPlacement } from "../ui/setup-placement.ts";
 import { middleClickProps } from "../ui/middle-click.ts";
 import {
   FEATURES,
@@ -334,4 +335,61 @@ test("middle click closes a tab and suppresses autoscroll; other buttons do not"
   handlers.onAuxClick(up.event);
   assert.equal(up.prevented(), 1);
   assert.equal(closed, 1);
+});
+
+test("a chat-started project's blocked or failed task opens that chat, not Projects (where chat projects are hidden)", () => {
+  const data = {
+    agents: [
+      { id: "ta", name: "Team Assistant" },
+      { id: "w", name: "Worker" },
+    ],
+    edges: [],
+    activity: [],
+    workflows: [
+      {
+        id: "c",
+        name: "Chat: make a program",
+        kind: "conversation",
+        paused: false,
+        tasks: [
+          {
+            id: "1",
+            title: "make a program",
+            status: "blocked",
+            agentId: "ta",
+          },
+          { id: "2", title: "Implement pi.py", status: "failed", agentId: "w" },
+        ],
+      },
+      {
+        id: "p",
+        name: "Project",
+        paused: false,
+        tasks: [{ id: "3", title: "Build", status: "failed", agentId: "w" }],
+      },
+    ],
+  };
+  const items = buildInbox({ data });
+  const by = (id: string) => items.find((i) => i.id === id)!;
+  assert.deepEqual(
+    [by("blocked:1").target, by("blocked:1").agentId],
+    ["chat", "ta"],
+  );
+  assert.deepEqual(
+    [by("failed:2").target, by("failed:2").agentId],
+    ["chat", "w"],
+  );
+  assert.equal(by("failed:3").target, "workflows");
+});
+
+test("setup cards: unfinished work goes under the messages, finished above, a cancelled preparation nowhere", () => {
+  const card = (...statuses: string[]) =>
+    setupCardPlacement({ tasks: statuses.map((status) => ({ status })) });
+  assert.equal(card(), "active");
+  assert.equal(card("blocked"), "active");
+  assert.equal(card("cancelled", "running", "queued"), "active");
+  assert.equal(card("cancelled", "failed"), "active");
+  assert.equal(card("cancelled", "completed", "completed"), "history");
+  assert.equal(card("cancelled"), null);
+  assert.equal(card("cancelled", "cancelled"), null);
 });

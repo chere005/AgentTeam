@@ -545,6 +545,74 @@ test("production chat preparation spends no planner call and waits for explicit 
   assert.equal(c.w.store.get<Task>("task", root.id).status, "cancelled");
 });
 
+test("a program request sent to the Team Assistant is prepared on the active team's lead: workers, reviewers and the folder question are all there", async (t) => {
+  const w = await world(t);
+  w.runs.prepareExecutableChats = true;
+  let calls = 0;
+  w.setProvider(async () => {
+    calls++;
+  });
+  const team = w.insertPipeline({ implementationWorkers: 3, fixWorkers: 1 });
+  const assistant = await w.service.saveAgent({
+    name: "Team Assistant",
+    kind: "team-assistant",
+    environment: "codex",
+  });
+  const request =
+    "make a program in python, c++, and typescript that computes pi to 500 significant digits without using any libraries";
+  const session = await w.chat(assistant.id, request);
+  const workflow = w.workflows().find((wf) => wf.kind === "conversation")!;
+  assert.equal(calls, 0);
+  // The team's lead owns it (the assistant has no team, so its own project had no workers).
+  assert.equal(workflow.ownerId, team.planner.id);
+  assert.equal(workflow.teamId, team.teamId);
+  const plan = w.service.executionProjects.plan(workflow.id);
+  assert.deepEqual(
+    plan.outputs.map((o) => [o.language, o.agentId]),
+    [
+      ["python", team.workers[0].id],
+      ["cpp", team.workers[1].id],
+      ["typescript", team.workers[2].id],
+    ],
+  );
+  assert.equal(plan.reviewers.length, 2);
+  assert.deepEqual(plan.issues, ["Choose the project folder before starting."]);
+  // The setup card has a folder to ask for and the roles to grant it to.
+  const proposal = w.service.setups.proposal(workflow.id);
+  assert.ok(
+    team.workers.every((worker) =>
+      proposal.participants.some((p) => p.agentId === worker.id),
+    ),
+  );
+  // The conversation (and so the setup card) stays in the assistant's chat.
+  const root = w.tasks().find((task) => task.workflowId === workflow.id)!;
+  assert.equal(root.agentId, assistant.id);
+  assert.equal(root.status, "blocked");
+  assert.ok(
+    w
+      .messages(session.id)
+      .some((m) => m.role === "assistant" && /choose Start/.test(m.text)),
+  );
+  await w.service.setups.apply(workflow.id, { folder: await w.folder() });
+  assert.deepEqual(w.service.executionProjects.plan(workflow.id).issues, []);
+});
+
+test("a Team Assistant request that is not a program stays the assistant's own conversation", async (t) => {
+  const w = await world(t);
+  w.runs.prepareExecutableChats = true;
+  w.insertPipeline();
+  const assistant = await w.service.saveAgent({
+    name: "Team Assistant",
+    kind: "team-assistant",
+    environment: "codex",
+  });
+  await w.chat(assistant.id, "Which agents on this team review code?");
+  for (const workflow of w
+    .workflows()
+    .filter((wf) => wf.kind === "conversation"))
+    assert.equal(workflow.ownerId, assistant.id);
+});
+
 // ---- one failure wave is announced once (fix F7) -----------------------------------------------
 
 /** Chat messages the coordinator posted about a failure. */

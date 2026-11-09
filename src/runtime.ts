@@ -15,8 +15,10 @@ import {
   type Session,
   type Message,
   type Task,
+  type Workflow,
 } from "./model.ts";
 import { TeamService, type LaunchPlan } from "./service.ts";
+import { defaultLead } from "./projects.ts";
 export type { RuntimeEvent, Command } from "./runtime-types.ts";
 import type { RuntimeEvent, Command, RuntimeHooks } from "./runtime-types.ts";
 import { acpAdapter, acpSessionPrefix } from "./acp.ts";
@@ -863,6 +865,24 @@ export class RunManager {
             text: request,
             origin: { sessionId, messageId: message.id },
           });
+        // The Team Assistant belongs to no team, so a program it prepared would find no workers,
+        // no reviewers and no folder to ask about: a setup card with nothing to set and Start
+        // disabled. The active team's lead owns it instead, exactly as if the request had been
+        // sent to that lead; the conversation (and its setup card) stays in the assistant's chat.
+        if (
+          !prepared &&
+          agent.kind === "team-assistant" &&
+          this.prepareExecutableChats &&
+          this.service.executionProjects.canStart(workflow.id)
+        ) {
+          const teamId = this.service.teamSpaces.active();
+          const lead = defaultLead(this.service, teamId);
+          if (lead)
+            store.transaction(() => {
+              const current = store.get<Workflow>("workflow", workflow.id);
+              store.put("workflow", { ...current, ownerId: lead, teamId });
+            });
+        }
         if (!canDelegate)
           this.service.contracts.seedTask({
             task: conversationTask,
