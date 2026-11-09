@@ -89,6 +89,8 @@ test("task roots replace enclosing and other-project attachments, including ever
   assert.ok(settings.includes(`${JSON.stringify(w.other)}="write"`));
   assert.ok(!settings.includes(`${JSON.stringify(w.root)}=`));
   assert.ok(!settings.includes('":root"'));
+  if (process.platform === "darwin" || process.platform === "linux")
+    assert.ok(settings.includes('="deny"') && settings.includes("tmp"));
   assert.ok(
     command.args.includes("permissions.agentteam-task.network.enabled=false"),
   );

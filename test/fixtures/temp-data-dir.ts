@@ -11,3 +11,8 @@ process.env.AGENTTEAM_DATA_DIR = tempDataDir;
 // that applies such a proposal must never create one in the developer's real home.
 process.env.AGENTTEAM_PROJECTS_DIR = join(tempDataDir, "AgentTeam Projects");
 process.on("exit", () => rmSync(tempDataDir, { recursive: true, force: true }));
+// Scoped Codex launches are refused where the read boundary was never verified (src/provider-filesystem.ts
+// `codexReadBoundaryIssue`: everywhere but macOS). Fixture tests of the generated launch config opt in;
+// test/provider-boundary.test.ts exercises the refusal itself.
+if (process.platform !== "darwin")
+  process.env.AGENTTEAM_UNVERIFIED_SANDBOX ??= "1";

@@ -27,7 +27,11 @@ import { assistantContext } from "./assistant-context.ts";
 import { ToolSessions } from "./tool-endpoint.ts";
 import { GroupChats } from "./group-chat.ts";
 import { ensureWorkspaceBaseline } from "./workspace-changes.ts";
-import { codexTaskPermissions } from "./provider-filesystem.ts";
+import {
+  codexReadBoundaryIssue,
+  codexTaskPermissions,
+  runtimeReadPaths,
+} from "./provider-filesystem.ts";
 import { assertProviderCapabilities } from "./provider-capabilities.ts";
 import { noteRuntimeWait } from "./runtime-waits.ts";
 import { classifyRequest } from "./execution-contract.ts";
@@ -187,6 +191,10 @@ export function commandFor(
         : {}),
     };
   }
+  if (plan.taskScoped) {
+    const issue = codexReadBoundaryIssue();
+    assert(!issue, "provider_access_unsupported", issue ?? "", 409);
+  }
   const writable = workspaceCapabilities(plan).write;
   const args = [
     "exec",
@@ -198,10 +206,12 @@ export function commandFor(
       ? [
           "--strict-config",
           "--ephemeral",
-          ...codexTaskPermissions(roots, plan.tools).flatMap((setting) => [
-            "-c",
-            setting,
-          ]),
+          ...codexTaskPermissions(
+            roots,
+            plan.tools,
+            process.platform,
+            runtimeReadPaths(),
+          ).flatMap((setting) => ["-c", setting]),
         ]
       : [
           "-c",
