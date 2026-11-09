@@ -3,6 +3,23 @@ import type { ExecutionProjects } from "../../src/execution-projects";
 import { api } from "../api";
 
 type View = ReturnType<ExecutionProjects["view"]>;
+const LANGUAGE_NAMES: Record<string, string> = {
+  "c++": "cpp",
+  js: "javascript",
+  ts: "typescript",
+};
+/** The configure body for one answered planner question. */
+const answerPayload = (id: string, text: string) =>
+  id === "digits"
+    ? { digits: Number(text) }
+    : id === "languages"
+      ? {
+          languages: text
+            .split(/[,\s]+/)
+            .filter(Boolean)
+            .map((l) => LANGUAGE_NAMES[l.toLowerCase()] ?? l.toLowerCase()),
+        }
+      : { expectedStdout: text };
 export function ExecutionProjectCard({
   workflowId,
   act,
@@ -11,7 +28,7 @@ export function ExecutionProjectCard({
   act: (fn: () => Promise<unknown>) => Promise<void>;
 }) {
   const [view, setView] = useState<View | null>(null);
-  const [expected, setExpected] = useState("");
+  const [answers, setAnswers] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const load = useCallback(
@@ -79,28 +96,40 @@ export function ExecutionProjectCard({
           ? `Required reviewers: ${view.plan.reviewers.map((r) => r.name).join(", ")}`
           : "Independent execution verification is required."}
       </p>
-      {!project &&
-        view.plan.verification.kind === "literal" &&
-        view.plan.verification.stdout === undefined && (
-          <div>
-            <label>
-              Exact expected output
-              <textarea
-                aria-label="Exact expected program output"
-                value={expected}
-                onChange={(e) => setExpected(e.target.value)}
-              />
-            </label>
-            <button
-              disabled={busy || !expected}
-              onClick={() =>
-                void perform("configure", { expectedStdout: expected })
+      <p data-testid="planner-reading">
+        {(project?.reading ?? view.plan.reading).summary}
+      </p>
+      {(project?.reading ?? view.plan.reading).questions.map((q) => (
+        <div key={q.id} data-testid={`planner-question-${q.id}`}>
+          <label>
+            {q.prompt}
+            <input
+              aria-label={q.prompt}
+              disabled={!!project || !!q.answer}
+              placeholder={q.suggestion ?? ""}
+              value={q.answer ?? answers[q.id] ?? ""}
+              onChange={(e) =>
+                setAnswers({ ...answers, [q.id]: e.target.value })
               }
-            >
-              Confirm expected output
-            </button>
-          </div>
-        )}
+            />
+          </label>
+          {!project && !q.answer && (
+            <>
+              <button
+                disabled={busy || !(answers[q.id] ?? q.suggestion)}
+                onClick={() =>
+                  void perform(
+                    "configure",
+                    answerPayload(q.id, answers[q.id] ?? q.suggestion!),
+                  )
+                }
+              >
+                {answers[q.id] ? "Answer" : "Use suggestion"}
+              </button>
+            </>
+          )}
+        </div>
+      ))}
       {!project && view.plan.issues.length > 0 && (
         <ul>
           {view.plan.issues.map((issue) => (

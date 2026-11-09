@@ -32,6 +32,8 @@ const optionsSchema = z
     expectedStdout: z.string().max(50_000).optional(),
     entry: z.string().min(1).max(500).optional(),
     maxCorrectionRounds: z.number().int().min(0).max(10).optional(),
+    /** Answer to the planner's "how many digits" question (pi requests that name none). */
+    digits: z.number().int().min(2).max(1000).optional(),
   })
   .strict();
 type Options = z.infer<typeof optionsSchema>;
@@ -46,6 +48,19 @@ type Review = {
   reviewerId: string;
   evidenceIds: string[];
   identity: string;
+};
+/** One thing the request leaves open; Start stays refused until the person answers it. */
+export type ReadingQuestion = {
+  id: "digits" | "languages" | "output";
+  prompt: string;
+  /** What is used if the person just confirms (shown, never silently applied). */
+  suggestion?: string;
+  answer?: string;
+};
+/** The planner's interpretation of the request plus the questions it could not settle from the text. */
+export type Reading = {
+  summary: string;
+  questions: ReadingQuestion[];
 };
 export type ExecutionProject = {
   id: string;
@@ -77,6 +92,8 @@ export type ExecutionProject = {
     pendingFindings?: string;
   }[];
   origin?: ExecutionContract["origin"];
+  /** The planner's reading of the request as confirmed at Start (answers included). */
+  reading?: Reading;
   message?: string;
   /**
    * Why the project is waiting for the person when it is not about the work itself: the system
@@ -204,16 +221,20 @@ export class ExecutionProjects {
     const writers = writerIds.map((key) => this.agent(key));
     const options = this.options(id);
     const text = contract?.userIntent ?? workflow.goal;
-    const asked =
-      options.languages ??
-      LANGUAGES.filter((language) =>
-        language === "cpp"
-          ? /c\+\+|\bcpp\b/i.test(text)
-          : new RegExp(`\\b${language}\\b`, "i").test(text),
-      );
+    const mentioned = LANGUAGES.filter((language) =>
+      language === "cpp"
+        ? /c\+\+|\bcpp\b/i.test(text)
+        : new RegExp(`\\b${language}\\b`, "i").test(text),
+    );
+    const asked = options.languages ?? mentioned;
+    // "languages"/"developers" without names means the team's three: the request says so.
+    const implied =
+      !asked.length &&
+      /\blanguages\b|\bdevelopers\b/i.test(text) &&
+      writers.length >= 3;
     const languages: Language[] = asked.length
       ? [...asked]
-      : /\blanguages\b|\bdevelopers\b/i.test(text) && writers.length >= 3
+      : implied
         ? ["python", "cpp", "typescript"]
         : ["python"];
     const needsReview =
@@ -292,7 +313,9 @@ export class ExecutionProjects {
     const precision = text.match(
       /\b(\d{1,4})\s*(?:(significant|decimal|fractional)\s+)?digits\b|\b(\d{1,4})\s*decimal places\b/i,
     );
-    const digits = precision ? Number(precision[1] ?? precision[3]) : 500;
+    const digits = precision
+      ? Number(precision[1] ?? precision[3])
+      : (options.digits ?? 500);
     const mode =
       precision?.[2] === "decimal" ||
       precision?.[2] === "fractional" ||
@@ -306,15 +329,39 @@ export class ExecutionProjects {
     );
     const stdout =
       options.expectedStdout ?? (quoted ? quoted[1] + "\n" : undefined);
-    if (!pi && stdout === undefined)
-      issues.push(
-        "Confirm the program's exact expected output before starting verification.",
-      );
     const extensions: Record<Language, string> = {
       python: "py",
       cpp: "cpp",
       javascript: "js",
       typescript: "ts",
+    };
+    const questions: ReadingQuestion[] = [];
+    if (pi && !precision)
+      questions.push({
+        id: "digits",
+        prompt: "How many digits of pi should each program print?",
+        suggestion: "500",
+        ...(options.digits !== undefined && {
+          answer: String(options.digits),
+        }),
+      });
+    if (!mentioned.length && !implied)
+      questions.push({
+        id: "languages",
+        prompt: "Which programming languages should be used?",
+        ...(options.languages
+          ? { answer: languages.join(", ") }
+          : { suggestion: languages.join(", ") }),
+      });
+    if (!pi && !quoted)
+      questions.push({
+        id: "output",
+        prompt: "What exact output should the program print?",
+        ...(stdout !== undefined && { answer: stdout }),
+      });
+    const reading: Reading = {
+      summary: `${pi ? "Print pi" : "Write a program"} in ${languages.join(", ")}${pi ? ` to ${digits} ${mode === "significant" ? "significant digits" : "decimal places"}` : ""}; ${contract?.projectFolder ? `files go in ${contract.projectFolder}` : "the project folder is not chosen yet"}; AgentTeam independently runs and verifies each program.`,
+      questions,
     };
     const outputs: Output[] = languages.map((language, index) => {
       const explicit =
@@ -346,8 +393,9 @@ export class ExecutionProjects {
     return {
       workflowId: id,
       supported: this.canStart(id),
-      ready: !issues.length,
+      ready: !issues.length && reading.questions.every((q) => q.answer),
       issues,
+      reading,
       folder: contract?.projectFolder ?? null,
       outputs,
       reviewers: reviewers.map((a) => ({ id: a.id, name: a.name })),
@@ -392,6 +440,15 @@ export class ExecutionProjects {
     if (first.folder) await this.assertFolderWritable(first.folder);
     // Planned again: a refusal the probe just cleared is not held against Start.
     const plan = this.plan(id);
+    assert(
+      plan.reading.questions.every((q) => q.answer),
+      "execution_questions_open",
+      "Answer the planner's open questions before starting: " +
+        plan.reading.questions
+          .filter((q) => !q.answer)
+          .map((q) => q.prompt)
+          .join(" "),
+    );
     assert(
       plan.ready && plan.folder,
       "execution_setup_required",
@@ -488,6 +545,7 @@ export class ExecutionProjects {
         reviews: [],
         rounds: [],
         origin: contract.origin,
+        reading: plan.reading,
         createdAt: at(),
         updatedAt: at(),
       };
