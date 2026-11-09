@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { escapeRegExp } from "./fixtures/regexp.ts";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, realpath } from "node:fs/promises";
@@ -569,7 +570,7 @@ test("applying the setup asks the system first: a refused folder is refused with
     (error) => {
       assert.equal((error as { code?: string }).code, "folder-denied");
       assert.match((error as Error).message, MAC_FIX);
-      assert.match((error as Error).message, new RegExp(desktopLike));
+      assert.match((error as Error).message, new RegExp(escapeRegExp(desktopLike)));
       return true;
     },
   );

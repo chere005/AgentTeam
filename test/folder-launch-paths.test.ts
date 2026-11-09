@@ -1,4 +1,5 @@
 import "./fixtures/temp-data-dir.ts";
+import { escapeRegExp } from "./fixtures/regexp.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
@@ -627,7 +628,7 @@ test("a refusal survives a restart: preview and action agree on setup, and a fre
   assert.equal(write.code, "folder-denied");
   assert.equal(write.errno, "EPERM");
   assert.equal(write.operation, "readdir");
-  assert.match(write.message, new RegExp(folder));
+  assert.match(write.message, new RegExp(escapeRegExp(folder)));
   assert.match(write.fix, MAC_FIX);
   assert.match(write.at, /^\d{4}-\d\d-\d\dT/);
   assert.equal(write.source, "post-run");

@@ -25,7 +25,7 @@ export function canonicalPolicyPath(path: string): string {
   const tail: string[] = [];
   for (;;) {
     try {
-      return join(realpathSync(current), ...tail.reverse());
+      return join(realpathSync.native(current), ...tail.reverse());
     } catch {
       const parent = dirname(current);
       if (parent === current) return resolve(path);

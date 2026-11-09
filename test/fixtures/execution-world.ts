@@ -28,6 +28,9 @@ export type Provider = (
   emit: (event: RuntimeEvent) => void,
 ) => Promise<void>;
 
+/** Every store opened on a shared base (a simulated restart reopens the same file). */
+const storesByBase = new Map<string, Set<Store>>();
+
 export async function world(
   t: { after: (fn: () => unknown) => void },
   options: {
@@ -41,6 +44,9 @@ export async function world(
     options.base ??
     (await realpath(await mkdtemp(join(tmpdir(), "agentteam-execution-"))));
   const store = new Store(options.storePath ?? ":memory:");
+  const sharing = storesByBase.get(base) ?? new Set<Store>();
+  sharing.add(store);
+  storesByBase.set(base, sharing);
   const service = new TeamService(store, new SkillCatalog([]));
   const runs = new RunManager(service, true, base);
   // A supported, sandboxed host: no native process ever runs here.
@@ -67,7 +73,22 @@ export async function world(
     } catch {
       /* already closed by a simulated restart */
     }
-    if (!options.base) await rm(base, { recursive: true, force: true });
+    if (options.base) return;
+    // Windows cannot unlink a database file that a restarted world still holds open.
+    for (const other of storesByBase.get(base) ?? []) {
+      try {
+        other.close();
+      } catch {
+        /* already closed */
+      }
+    }
+    storesByBase.delete(base);
+    await rm(base, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
   });
   /** Tick until nothing runs and `done()` holds (bounded). */
   const until = async (done: () => boolean, ticks = 400) => {

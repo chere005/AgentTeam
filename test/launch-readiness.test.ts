@@ -1,5 +1,6 @@
 import { checkSlot } from "../src/execution-contract.ts";
 import { test } from "node:test";
+import { escapeRegExp } from "./fixtures/regexp.ts";
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -1159,7 +1160,7 @@ test("a granted folder the system refuses blocks the task before it starts: no p
     [["folder-denied", "write", "allow-folder-access", folder]],
   );
   assert.match(wait.message ?? "", MAC_FIX);
-  assert.match(wait.message ?? "", new RegExp(folder));
+  assert.match(wait.message ?? "", new RegExp(escapeRegExp(folder)));
   assert.equal(w.service.limits.state(workflow.id).counters.turns, 0);
   assert.equal(w.store.list("lease").length, 0);
   assert.equal(w.service.recovery.ledger.list().length, 0);

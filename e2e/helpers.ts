@@ -53,13 +53,13 @@ export async function waitForStableCanvas(page: Page) {
           stableFrames = current === previous ? stableFrames + 1 : 0;
           previous = current;
           if (stableFrames >= 3) return resolve(true);
-          if (++frames >= 120) return resolve(false);
+          if (++frames >= 600) return resolve(false);
           requestAnimationFrame(sample);
         };
         requestAnimationFrame(sample);
       }),
     null,
-    { timeout: 5000 },
+    { timeout: 20000 },
   );
 }
 

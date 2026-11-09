@@ -1,4 +1,5 @@
 import "./fixtures/temp-data-dir.ts";
+import { escapeRegExp } from "./fixtures/regexp.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -144,7 +145,7 @@ test(
     assert.equal(unreadable.errno, "EACCES");
     assert.equal(unreadable.operation, "readdir");
     assert.equal(unreadable.actor, "app");
-    assert.match(unreadable.message, new RegExp(locked.replace(/\//g, "\\/")));
+    assert.match(unreadable.message, new RegExp(escapeRegExp(locked)));
     assert.match(unreadable.message, /readdir/);
     assert.match(unreadable.message, /EACCES/);
     assert.match(
