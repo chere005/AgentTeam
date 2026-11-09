@@ -1,19 +1,62 @@
 name: Desktop checks
-# A failed run mails the repository owner, so nothing is checked here that has not passed a
-# preflight first (scripts/preflight.sh): CI runs on main pushes and on preflight/** branches
-# only. On a preflight branch a failing job does not fail the run (job-level continue-on-error),
-# so no mail goes out; the script reads each job's own conclusion and says pass or fail.
-# .githooks/pre-push refuses main or a v* tag whose commit has not passed preflight.
+# CI runs on main pushes and on preflight/** branches (scripts/preflight.sh pushes one, reads each
+# job's own conclusion and says pass or fail); .githooks/pre-push refuses main or a v* tag whose
+# commit has not passed preflight.
+#
+# QUIET CI (AgentSuite's ci.md and tools/check-workflows.py in Sean's checkout). GitHub mails a run's outcome to whoever
+# TRIGGERED it. So a run a person starts (a push, `gh workflow run`, a re-run) only runs `handoff`, which re-dispatches this
+# workflow as github-actions[bot] (GITHUB_TOKEN); the bot's run does the work, and nobody is mailed whatever happens to it - a
+# red test, a timeout, a runner GitHub never provides. Every job is also `continue-on-error`, so even the bot's run stays
+# green; scripts/preflight.sh reads each job.
 on:
   push:
     branches: [main, "preflight/**"]
+  workflow_dispatch:
 permissions:
   contents: read
+# A person's run (handoff only) gets a group of its own: it must never queue behind, or be cancelled by, the bot's run.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.triggering_actor != 'github-actions[bot]' && format('handoff-{0}', github.run_id) || format('ci-{0}', github.ref) }}
+  cancel-in-progress: false
 jobs:
+  # A person's run does only this: hand the same work to the bot (see QUIET CI above). Identical in every workflow.
+  handoff:
+    name: Hand off to the bot
+    if: github.triggering_actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      actions: write
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      INPUTS: ${{ toJSON(inputs) }}
+      # What a push hands over: a tag push releases that tag.
+      PUSH_INPUTS: ${{ github.ref_type == 'tag' && format('{{"tag":"{0}"}}', github.ref_name) || '{}' }}
+    steps:
+      - name: Dispatch this workflow as github-actions[bot]
+        shell: bash
+        run: |
+          set -euo pipefail
+          wf="${GITHUB_WORKFLOW_REF%%@*}"; wf="${wf##*/}"
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then json="$INPUTS"; else json="$PUSH_INPUTS"; fi
+          [ -n "$json" ] && [ "$json" != null ] || json='{}'
+          json=$(jq -c 'with_entries(select(.value != null) | .value |= tostring)' <<< "$json")
+          echo "dispatching $wf at $GITHUB_REF_NAME with $json"
+          for i in 1 2 3 4 5; do
+            if gh workflow run "$wf" --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" --json <<< "$json"; then
+              echo "### Handed off to github-actions[bot]" >> "$GITHUB_STEP_SUMMARY"
+              echo "The work runs in the bot's run of $wf on $GITHUB_REF_NAME (Actions tab)." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep $((i * 10))
+          done
+          echo "::error title=Handoff failed::could not dispatch $wf; nothing was built"
+          exit 1
+
   check:
+    if: github.triggering_actor == 'github-actions[bot]'
     # macOS decides. Windows and Linux are informational (optional) until their known
     # failures are fixed (TODO.md): they run and report but never fail the run.
     name: check (${{ matrix.os }}${{ matrix.optional && ', optional' || '' }})
@@ -29,7 +72,7 @@ jobs:
             optional: true
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
-    continue-on-error: ${{ matrix.optional || startsWith(github.ref, 'refs/heads/preflight/') }}
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

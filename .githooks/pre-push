@@ -6,6 +6,13 @@
 # the commit. Installed by `npm ci`/`npm install` (scripts/install-hooks.mjs).
 set -uo pipefail
 
+# Quiet CI first (no override): every workflow must hand a person's run to github-actions[bot] and never go red, or a
+# failed run mails whoever triggered it. The checker lives in Sean's sibling AgentSuite checkout; skipped when absent.
+suite="$(git rev-parse --show-toplevel)/../AgentSuite/tools/check-workflows.py"
+if [ -f "$suite" ]; then
+  python3 "$suite" "$(git rev-parse --show-toplevel)" || { echo "pre-push: refused - a workflow breaks the quiet-CI contract" >&2; exit 1; }
+fi
+
 [ "${AGENTTEAM_SKIP_PREFLIGHT:-}" = "1" ] && exit 0
 mark="$(git rev-parse --git-common-dir)/preflight"
 zero="0000000000000000000000000000000000000000"

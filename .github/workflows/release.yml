@@ -13,13 +13,16 @@
 # Nothing here uses the artifact upload or download actions: the account's Actions artifact storage quota fills up and then
 # every upload fails. Release assets do not count against it.
 #
-# Preflight (workflow_dispatch with preflight=true, started by scripts/preflight.sh): the same jobs, but every job is
-# continue-on-error (a red job does not make the run red, so GitHub sends no failed-run mail), nothing is created, uploaded or
-# published, and the run summary lists each job's result. The tag input is optional then: the expected tag is derived from the
-# version in the files.
+# Preflight (workflow_dispatch with preflight=true): the same jobs, but nothing is created, uploaded or published, and the run
+# summary lists each job's result. The tag input is optional then: the expected tag is derived from the version in the files.
 #
-# A failed job on a real run leaves the release a DRAFT that nobody sees: fix it and re-run the failed jobs
-# (gh run rerun <id> --failed), or release an existing tag by hand: gh workflow run release.yml -f tag=v<version>.
+# QUIET CI (AgentSuite's ci.md and tools/check-workflows.py in Sean's checkout). GitHub mails a run's outcome to whoever
+# TRIGGERED it. So a run a person starts (a push, `gh workflow run`, a re-run) only runs `handoff`, which re-dispatches this
+# workflow as github-actions[bot] (GITHUB_TOKEN); the bot's run does the work, and nobody is mailed whatever happens to it - a
+# red test, a timeout, a runner GitHub never provides. Every job is also `continue-on-error`, so even the bot's run stays
+# green; scripts/preflight.sh reads each job. A release run that ends with a file missing re-dispatches itself (input `attempt`, at most 3 runs);
+# after the third it leaves the draft. Release a tag again (or an existing tag by hand):
+#   gh workflow run release.yml --ref v<version> -f tag=v<version>     (never `gh run rerun`: a re-run is yours, so it only hands off)
 # README.md ("Releases") says how to cut one.
 name: Release
 
@@ -37,12 +40,18 @@ on:
         required: false
         default: false
         type: boolean
+      attempt:
+        description: "Set by the release itself when it retries a missing file (1 = the first run)"
+        required: false
+        default: "1"
+        type: string
 
 permissions:
   contents: write
 
+# A person's run (handoff only) gets a group of its own: it must never queue behind, or be cancelled by, the bot's run.
 concurrency:
-  group: release-${{ github.event_name == 'push' && github.ref_name || inputs.tag || github.ref_name }}
+  group: ${{ github.triggering_actor != 'github-actions[bot]' && format('handoff-{0}', github.run_id) || format('{0}{1}', inputs.preflight && 'preflight-' || 'release-', inputs.tag || github.ref_name) }}
   cancel-in-progress: false
 
 env:
@@ -51,11 +60,48 @@ env:
   GH_REPO: ${{ github.repository }}
 
 jobs:
+  # A person's run does only this: hand the same work to the bot (see QUIET CI above). Identical in every workflow.
+  handoff:
+    name: Hand off to the bot
+    if: github.triggering_actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      actions: write
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      INPUTS: ${{ toJSON(inputs) }}
+      # What a push hands over: a tag push releases that tag.
+      PUSH_INPUTS: ${{ github.ref_type == 'tag' && format('{{"tag":"{0}"}}', github.ref_name) || '{}' }}
+    steps:
+      - name: Dispatch this workflow as github-actions[bot]
+        shell: bash
+        run: |
+          set -euo pipefail
+          wf="${GITHUB_WORKFLOW_REF%%@*}"; wf="${wf##*/}"
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then json="$INPUTS"; else json="$PUSH_INPUTS"; fi
+          [ -n "$json" ] && [ "$json" != null ] || json='{}'
+          json=$(jq -c 'with_entries(select(.value != null) | .value |= tostring)' <<< "$json")
+          echo "dispatching $wf at $GITHUB_REF_NAME with $json"
+          for i in 1 2 3 4 5; do
+            if gh workflow run "$wf" --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" --json <<< "$json"; then
+              echo "### Handed off to github-actions[bot]" >> "$GITHUB_STEP_SUMMARY"
+              echo "The work runs in the bot's run of $wf on $GITHUB_REF_NAME (Actions tab)." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep $((i * 10))
+          done
+          echo "::error title=Handoff failed::could not dispatch $wf; nothing was built"
+          exit 1
+
   prepare:
     name: Tag, notes and the draft release
+    if: github.triggering_actor == 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    continue-on-error: ${{ inputs.preflight == true }}
+    continue-on-error: true
     outputs:
       tag: ${{ steps.version.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
@@ -174,7 +220,7 @@ jobs:
         arch: [arm64, x64]
     runs-on: macos-latest
     timeout-minutes: 60
-    continue-on-error: ${{ inputs.preflight == true }}
+    continue-on-error: true
     env:
       RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
       VERSION: ${{ needs.prepare.outputs.version }}
@@ -232,7 +278,7 @@ jobs:
             files: AgentTeam-VERSION-linux-x86_64.AppImage AgentTeam-VERSION-linux-amd64.deb
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
-    continue-on-error: ${{ inputs.preflight == true }}
+    continue-on-error: true
     defaults:
       run:
         shell: bash
@@ -271,18 +317,27 @@ jobs:
           # shellcheck disable=SC2086
           gh release upload "$RELEASE_TAG" $FILES --clobber
 
+  # always(): a build GitHub never gave a runner must not skip this. A prepare that failed produced no version: nothing to
+  # publish, nothing worth retrying.
   publish:
     name: publish
-    if: inputs.preflight != true
+    if: ${{ always() && github.triggering_actor == 'github-actions[bot]' && inputs.preflight != true && needs.prepare.outputs.version != '' }}
     needs: [prepare, mac, other]
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    continue-on-error: true
+    permissions:
+      contents: write
+      actions: write
     env:
       RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
       VERSION: ${{ needs.prepare.outputs.version }}
+      ATTEMPT: ${{ inputs.attempt || '1' }}
+      MAX_ATTEMPTS: "3"
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Every expected file is on the draft
+        id: files
         run: |
           set -euo pipefail
           have="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
@@ -297,11 +352,31 @@ jobs:
             printf '%s\n' "$have" | grep -Fxq "$f" || missing="$missing $f"
           done
           if [ -n "$missing" ]; then
-            echo "::error title=Release incomplete::Missing:${missing}. The release stays a draft."
+            echo "Missing:${missing}"
+            echo "complete=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "complete=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # A file is missing: dispatch this workflow again for the same tag (as the bot, so a retry mails nobody either).
+      # After MAX_ATTEMPTS runs the draft stays.
+      - name: Retry what is missing
+        if: steps.files.outputs.complete != 'true'
+        run: |
+          set -euo pipefail
+          wf="${GITHUB_WORKFLOW_REF%%@*}"; wf="${wf##*/}"
+          if [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]; then
+            next=$((ATTEMPT + 1))
+            gh workflow run "$wf" --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_TAG" -f "tag=$RELEASE_TAG" -f "attempt=$next"
+            echo "### Run $ATTEMPT of $MAX_ATTEMPTS left a file missing; run $next builds again" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ${RELEASE_TAG} is still missing a file after ${MAX_ATTEMPTS} runs: it stays a draft" >> "$GITHUB_STEP_SUMMARY"
+            echo "::error title=Release incomplete::${RELEASE_TAG} is missing a file after ${MAX_ATTEMPTS} runs; the release stays a draft."
             exit 1
           fi
 
       - name: Checksums
+        if: steps.files.outputs.complete == 'true'
         run: |
           set -euo pipefail
           mkdir assets
@@ -310,6 +385,7 @@ jobs:
           gh release upload "$RELEASE_TAG" assets/SHA256SUMS.txt --clobber
 
       - name: Publish the release
+        if: steps.files.outputs.complete == 'true'
         run: |
           set -euo pipefail
           case "$VERSION" in
@@ -318,10 +394,10 @@ jobs:
           esac
           gh release view "$RELEASE_TAG" --json url --jq .url
 
-  # Preflight only: what each job concluded (job-level continue-on-error keeps the run itself green).
+  # Preflight only: what each job concluded.
   summary:
     name: summary (optional in preflight)
-    if: always() && inputs.preflight == true
+    if: always() && github.triggering_actor == 'github-actions[bot]' && inputs.preflight == true
     needs: [prepare, mac, other, publish]
     runs-on: ubuntu-latest
     timeout-minutes: 5

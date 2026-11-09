@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # PREFLIGHT: run the "Desktop checks" jobs (macOS, Windows, Linux) on GitHub against the commit
-# about to go to main or a release tag, without a failing job failing the run, so no failure mail
-# is sent. It pushes HEAD to preflight/<branch>, where .github/workflows/ci.yml marks every job
-# continue-on-error, waits for the run, reads each job's conclusion and deletes that branch.
+# about to go to main or a release tag. It pushes HEAD to preflight/<branch>; the push's run hands
+# the jobs to github-actions[bot] (so nothing can mail anyone), and this waits for the bot's run,
+# reads each job's conclusion and deletes that branch.
 #
 #   scripts/preflight.sh        the current branch's HEAD (commit first)
 #
@@ -33,18 +33,19 @@ git push -q --force origin "HEAD:refs/heads/${target}"
 cleanup() { git push -q origin --delete "${target}" > /dev/null 2>&1 || true; }
 trap cleanup EXIT
 
+# The push starts a run of ours that only hands the work to github-actions[bot] (quiet CI: GitHub mails the person who
+# triggered a run, and the bot's run is nobody's). The bot's run is the one to read.
 run=""
-for _ in $(seq 1 45); do
-  run="$(gh run list --repo "$REPO" --workflow "$WORKFLOW" --branch "$target" --limit 5 \
-    --json databaseId,headSha,createdAt \
-    --jq "[.[] | select(.headSha == \"${sha}\" and .createdAt >= \"${before}\")][0].databaseId // empty")"
+for _ in $(seq 1 60); do
+  run="$(gh api "repos/${REPO}/actions/workflows/ci.yml/runs?head_sha=${sha}&per_page=20" \
+    --jq "[.workflow_runs[] | select(.triggering_actor.login == \"github-actions[bot]\" and .head_branch == \"${target}\" and .created_at >= \"${before}\")][0].id // empty")"
   [ -n "$run" ] && break
-  sleep 4
+  sleep 5
 done
-if [ -z "$run" ]; then echo "preflight: the run did not appear" >&2; exit 1; fi
+if [ -z "$run" ]; then echo "preflight: the bot's run did not appear (the Actions tab shows why the handoff failed)" >&2; exit 1; fi
 echo "preflight: https://github.com/${REPO}/actions/runs/${run}"
 # Wait for the deciding jobs only; optional ones (Windows, Linux) can take far longer and
-# are cancelled once the verdict is in, which never mails.
+# are cancelled once the verdict is in (the bot's run: nobody is mailed).
 while :; do
   pending="$(gh run view "$run" --repo "$REPO" --json jobs \
     --jq '[.jobs[] | select((.name | test("optional") | not) and .status != "completed")] | length')"
