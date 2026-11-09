@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { wouldExceed } from "./effective-limits.ts";
 import { open, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { createContext, runInContext } from "node:vm";
@@ -453,7 +454,7 @@ export class LimitsService {
     const state = this.state(task.workflowId);
     if (state.trip) this.blocked(state.trip);
     const l = state.limits;
-    if (l.maxAgentTurns !== null && state.counters.turns + 1 > l.maxAgentTurns)
+    if (wouldExceed(state.counters.turns, l.maxAgentTurns))
       this.blocked(
         this.trip(
           task.workflowId,
@@ -655,7 +656,7 @@ export class LimitsService {
         l.maxDelegationDepth,
         "depth_limit",
       );
-    if (l.maxHandoffs !== null && state.counters.handoffs + 1 > l.maxHandoffs)
+    if (wouldExceed(state.counters.handoffs, l.maxHandoffs))
       tripAndThrow(
         "handoffs",
         `Maximum of ${l.maxHandoffs} handoffs reached.`,
@@ -663,10 +664,7 @@ export class LimitsService {
         l.maxHandoffs,
         "limit_exceeded",
       );
-    if (
-      l.maxSpawnedAgents !== null &&
-      state.counters.spawned + 1 > l.maxSpawnedAgents
-    )
+    if (wouldExceed(state.counters.spawned, l.maxSpawnedAgents))
       tripAndThrow(
         "spawned",
         `Maximum of ${l.maxSpawnedAgents} spawned agent invocations reached.`,

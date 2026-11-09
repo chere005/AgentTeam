@@ -1,3 +1,4 @@
+import { EffectiveLimits } from "./EffectiveLimits";
 import { WorktreeManager } from "./Worktrees";
 import {
   RuleOptionsFields,
@@ -1070,6 +1071,7 @@ export function Workflows(p: PaneProps) {
                 </div>
               </div>
               <ProjectLifecycle workflow={w} act={p.act} />
+              <EffectiveLimits workflowId={w.id} openFeature={p.openFeature} />
               <SampleSetup workflow={w} act={p.act} />
               <WorkflowGateSummary tasks={w.tasks} />
               {w.tasks.length === 0 ? (
