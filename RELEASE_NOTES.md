@@ -6,7 +6,7 @@ Codex reviewers can read their assigned task folders without receiving write acc
 - **Clean reviews:** a review can report no findings without failing its output contract; its verdict still determines whether it approves.
 - **Local development servers:** on macOS, eligible task-scoped Codex shell runs can use loopback while other network access remains blocked.
 
-Task-scoped Codex remains refused on platforms whose read boundary has not been verified. Installers are unsigned unless signing credentials are configured.
+Task-scoped Codex remains refused on platforms whose read boundary has not been verified. Installers are unsigned unless signing credentials are configured; macOS may ask you to approve an unsigned build and grant protected-folder access again.
 
 ## Earlier release notes: 0.8.0
 
