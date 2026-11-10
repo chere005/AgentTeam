@@ -28,6 +28,21 @@ function codexSetting(args: string[], key: string) {
   return undefined;
 }
 
+/** "loopback-only" only for the exact managed-proxy bundle; enabled=true without it is open. */
+function codexNetwork(args: string[]) {
+  const enabled = codexSetting(
+    args,
+    "permissions.agentteam-task.network.enabled",
+  );
+  if (enabled === undefined) return "provider-default";
+  if (enabled !== "true") return "disabled";
+  return codexSetting(args, "features.network_proxy") === "true" &&
+    codexSetting(args, "permissions.agentteam-task.network.domains") ===
+      '{"localhost"="allow"}'
+    ? "loopback-only"
+    : "enabled";
+}
+
 export function launchRecord(
   command: Command,
   plan: PlanFacts & {
@@ -66,13 +81,7 @@ export function launchRecord(
         ? "permission-profile:agentteam-task"
         : (codexSetting(args, "sandbox_mode")?.replace(/"/g, "") ??
           "provider-default"),
-      network:
-        codexSetting(args, "permissions.agentteam-task.network.enabled") ===
-        "true"
-          ? "loopback-only"
-          : codexSetting(args, "permissions.agentteam-task.network.enabled")
-            ? "disabled"
-            : "provider-default",
+      network: codexNetwork(args),
       shellTool: codexSetting(args, "features.shell_tool") !== "false",
     };
   } else if (plan.environment === "claude" && transport !== "acp") {

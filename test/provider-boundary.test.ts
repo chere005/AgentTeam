@@ -1,7 +1,8 @@
 import "./fixtures/temp-data-dir.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
+import { promisify } from "node:util";
 import {
   mkdtemp,
   mkdir,
@@ -19,6 +20,8 @@ import {
   codexTaskPermissions,
 } from "../src/provider-filesystem.ts";
 import { findExecutable } from "../src/discovery.ts";
+
+const execFileAsync = promisify(execFile);
 import { nodeReadRoots } from "../src/node-runtime.ts";
 
 const ws = (path: string, access: "read" | "write" = "write") => ({
@@ -186,10 +189,25 @@ s.on("error", async (e) => { out.bind = e.code; out.public = await hit("1.1.1.1"
 s.listen(0, "127.0.0.1", async () => {
   out.bind = "ok";
   out.loopback = await hit("127.0.0.1", s.address().port);
+  out.foreign = await hit("127.0.0.1", Number(process.argv[1]));
   out.public = await hit("1.1.1.1", 443);
   console.log(JSON.stringify(out));
   process.exit(0);
 });`;
+    // A listener owned by ANOTHER process outside the sandbox (stands in for any local service,
+    // including AgentTeam's own loopback API): documents that loopback access is not per-port.
+    const foreign = spawn(
+      process.execPath,
+      [
+        "-e",
+        `require("node:net").createServer((c)=>c.end()).listen(0,"127.0.0.1",function(){console.log(this.address().port)})`,
+      ],
+      { stdio: ["ignore", "pipe", "ignore"] },
+    );
+    t.after(() => foreign.kill());
+    const foreignPort = await new Promise<string>((resolve) =>
+      foreign.stdout.once("data", (d) => resolve(String(d).trim())),
+    );
     const settings = codexTaskPermissions(
       [ws(root)],
       ["read", "edit", "write", "shell"],
@@ -201,7 +219,7 @@ s.listen(0, "127.0.0.1", async () => {
       encoding: "utf8",
     }).stdout.trim();
     assert.ok(node, "no node on PATH");
-    const r = spawnSync(
+    const r = await execFileAsync(
       codex,
       [
         "sandbox",
@@ -210,11 +228,16 @@ s.listen(0, "127.0.0.1", async () => {
         node,
         "-e",
         script,
+        foreignPort,
       ],
       { encoding: "utf8", timeout: 60_000 },
     );
-    assert.equal(r.status, 0, r.stderr);
     const result = JSON.parse(r.stdout.trim().split("\n").pop()!);
+    assert.equal(
+      result.foreign,
+      "connected",
+      "any loopback listener is reachable (documented, not a goal)",
+    );
     assert.equal(result.bind, "ok", "bind on 127.0.0.1");
     assert.equal(result.loopback, "connected", "connect to 127.0.0.1");
     assert.notEqual(result.public, "connected", "public host must be refused");
