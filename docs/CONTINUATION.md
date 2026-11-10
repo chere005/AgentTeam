@@ -1,12 +1,12 @@
 # AgentTeam continuation handoff
 
-## Pause: Apple Silicon work (2026-11-10)
+## Apple Silicon only, merged; installed acceptance passed (2026-11-10)
 
-Continue from branch `fix/apple-silicon-only`, based on main `a175910`. macOS builds and releases are restricted to arm64, including packaged native dependencies; Windows and Linux x64 remain supported. The local arm64 installer gate and hidden smoke passed, and all 16 packaged Mach-O files inspected were arm64. Typecheck, backend tests (839 passed, 10 skipped), and release audit passed. Run the complete `npm run preflight` for the final candidate before merging and pushing main; the branch is a work in progress, not a release.
+`fix/apple-silicon-only` is merged: `origin/main` is `8b73461` (preflight run 42912382483: macOS check and arm64 installer jobs green). macOS builds and releases are arm64 only, including packaged native dependencies; Windows and Linux x64 remain supported. Intel Mac DMGs and ZIPs were removed from the 11 historical releases and their checksum manifests updated; do not reintroduce them.
 
-AgentTeam 0.9.0 is published, but its public artifacts are unsigned. A separately signed, notarized and Gatekeeper-verified arm64 build is installed and its DMG is in `~/Downloads/Notarized Mac Builds/`. CI signing credentials remain outstanding (#46). Intel Mac DMGs and ZIPs were removed from the 11 historical releases and their checksum manifests updated; do not reintroduce them. Other platforms' x64 assets remain.
+AgentTeam 0.9.0 is published, but its public artifacts are unsigned. A separately signed, notarized arm64 build is installed and its DMG is in `~/Downloads/Notarized Mac Builds/`. CI signing credentials remain outstanding (#46).
 
-The live acceptance pipeline in `~/GIT/AgentTeam-Acceptance-0.8.0/pipeline-5G3Tpt` hit a Claude provider session limit resetting at 4 p.m. America/Chicago; live acceptance for #196 and #41/#45 remains open. A macOS view-shortcut desktop test failed intermittently in earlier preflight attempts before a later pass; investigate if it recurs. The untracked `node_modules` in this worktree is a symlink to the main checkout and must not be committed.
+Installed 0.9.0 acceptance (harness `~/GIT/AgentTeam-Acceptance-0.8.0/Tools/acceptance.mjs`, disposable seed copies, hidden) passed in all modes: smoke, ACP (Claude haiku and Codex gpt-6.1-sol) and the full 7-stage pipeline (evidence `~/GIT/AgentTeam-Acceptance-0.8.0/pipeline-qZ5EyU`). That clears #196, #41 and #45. Optional Windows `npm test` failed once on `team-settings.test.ts` "worker changes keep paused projects' verification" (parallel resource paths overlap); it also failed at aaea900, so it looks intermittent: investigate if it recurs. A macOS view-shortcut desktop test failed intermittently earlier (#203).
 
 ## Version 0.8.0 checkpoint for Windows (November 10, 2026)
 
