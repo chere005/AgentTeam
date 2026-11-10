@@ -145,3 +145,51 @@ test("secret-looking args, long args and env values are masked; only env names a
   });
   assert.equal(record.stdin?.chars, 11);
 });
+
+test("network is loopback-only only for the exact managed-proxy bundle; a bare enabled=true is reported as enabled", () => {
+  const net = (...settings: string[]) =>
+    (
+      launchRecord(
+        {
+          executable: "codex",
+          args: ["exec", ...settings.flatMap((s) => ["-c", s])],
+          stdin: "",
+          cwd: "/w",
+        } as any,
+        {
+          environment: "codex",
+          taskScoped: true,
+          workspaces: [{ path: "/w", access: "write", active: true }],
+        } as any,
+      ).sandbox as any
+    ).network;
+  const fsTable = 'permissions.agentteam-task.filesystem={":minimal"="read"}';
+  const enabled = "permissions.agentteam-task.network.enabled=true";
+  const domains =
+    'permissions.agentteam-task.network.domains={"localhost"="allow"}';
+  assert.equal(
+    net(fsTable, "features.network_proxy=true", enabled, domains),
+    "loopback-only",
+  );
+  assert.equal(net(fsTable, enabled), "enabled", "open internet");
+  assert.equal(net(fsTable, enabled, domains), "enabled", "no proxy feature");
+  assert.equal(
+    net(fsTable, "features.network_proxy=true", enabled),
+    "enabled",
+    "no domain restriction",
+  );
+  assert.equal(
+    net(
+      fsTable,
+      "features.network_proxy=true",
+      enabled,
+      'permissions.agentteam-task.network.domains={"localhost"="allow","example.com"="allow"}',
+    ),
+    "enabled",
+  );
+  assert.equal(
+    net(fsTable, "permissions.agentteam-task.network.enabled=false"),
+    "disabled",
+  );
+  assert.equal(net(fsTable), "provider-default");
+});
