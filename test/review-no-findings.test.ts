@@ -108,6 +108,23 @@ test("a Codex reader on a writable folder without a shell grant stays shell-less
   assert.ok(
     hasShellOff(commandFor(writableFolder, null, "go", "/work/a").args),
   );
+  // Mixed roots (one read, one write) with a write tool: a writable root must never get an ungranted shell.
+  for (const tools of [
+    ["read", "edit"],
+    ["read", "write"],
+  ])
+    for (const cwd of ["/work/a", "/work/b"]) {
+      const mixed = reviewer({
+        tools,
+        cwd,
+        workspaces: [
+          { path: "/work/a", access: "read", active: cwd === "/work/a" },
+          { path: "/work/b", access: "write", active: cwd === "/work/b" },
+        ],
+      });
+      assert.equal(codexShellMode(mixed), "off", `${tools} ${cwd}`);
+      assert.ok(hasShellOff(commandFor(mixed, null, "go", cwd).args));
+    }
   // File-only withholds the shell by design.
   const fileOnly = reviewer({ executionMode: "file-only" });
   assert.equal(codexShellMode(fileOnly), "off");
