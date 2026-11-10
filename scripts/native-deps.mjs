@@ -9,5 +9,8 @@ try {
 } catch {
   process.exit(0);
 }
-for (const helper of ensureSpawnHelper(entry))
+// A Mac can package either target architecture regardless of the Node host.
+const architectures =
+  process.platform === "darwin" ? ["arm64", "x64"] : undefined;
+for (const helper of ensureSpawnHelper(entry, architectures))
   console.log("node-pty spawn-helper ready: " + helper);
