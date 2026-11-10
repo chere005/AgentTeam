@@ -1,10 +1,13 @@
-import { realpath, stat } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import { pathModule } from "./runtime-spawn.ts";
 import { canonicalPolicyPath } from "./filesystem-policy.ts";
 import { assert, type Agent, type Task } from "./model.ts";
 import { hasRestrictions } from "./access.ts";
 import { contains } from "./resources.ts";
 import type { Store } from "./store.ts";
+
+const WORKSPACE_CHANGED =
+  "Task folder target changed; reattach it and reassign the task";
 
 /**
  * The synchronous part of a task's filesystem scope: the folders a task that declares paths runs
@@ -32,7 +35,7 @@ export function taskScope(
       canonicalPolicyPath(attachment.path) === attachment.path &&
         canonicalPolicyPath(path) === path,
       "workspace_changed",
-      "Task folder target changed; reattach it and reassign the task",
+      WORKSPACE_CHANGED,
       409,
     );
     // A directory-wide CLI grant cannot represent per-file or nested attachment overrides.
@@ -83,15 +86,27 @@ export async function taskFilesystem(
       `${agent.name} no longer has a folder containing ${path}, which this task declares; attach it again or change the task`,
       409,
     );
+    // Check each entry before following it so a substituted symlink or junction is rejected
+    // independently of realpath's canonical name.
+    const attachmentEntry = await lstat(attachment.path);
     assert(
-      (await realpath(attachment.path)) === attachment.path &&
+      !attachmentEntry.isSymbolicLink(),
+      "workspace_changed",
+      WORKSPACE_CHANGED,
+      409,
+    );
+    const entry =
+      path === attachment.path ? attachmentEntry : await lstat(path);
+    assert(
+      !entry.isSymbolicLink() &&
+        (await realpath(attachment.path)) === attachment.path &&
         (await realpath(path)) === path,
       "workspace_changed",
-      "Task folder target changed; reattach it and reassign the task",
+      WORKSPACE_CHANGED,
       409,
     );
     assert(
-      (await stat(path)).isDirectory(),
+      entry.isDirectory(),
       "resource_path_not_directory",
       `Task resource paths must be directories to isolate provider access; "${path}" is a file`,
       400,
