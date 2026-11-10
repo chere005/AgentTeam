@@ -1,3 +1,4 @@
+import "./fixtures/temp-data-dir.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, symlink, writeFile } from "node:fs/promises";

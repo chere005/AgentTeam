@@ -683,10 +683,25 @@ test("playground: fixture-only isolated runs, expectations, saved examples and r
       },
     });
     assert.equal(playground.examples().length, 1);
-    const run1 = await playground.execute({
-      exampleId: example.id,
-      label: "baseline",
-    });
+    // The run's temporary workspace goes into a private temp folder: test files run in parallel
+    // processes, and another file's playground run in the shared temp folder is not a leftover.
+    const privateTmp = await t.dir();
+    const tmpEnv = ["TMPDIR", "TMP", "TEMP"].map(
+      (k) => [k, process.env[k]] as const,
+    );
+    for (const [k] of tmpEnv) process.env[k] = privateTmp;
+    let run1;
+    try {
+      assert.equal(tmpdir(), privateTmp);
+      run1 = await playground.execute({
+        exampleId: example.id,
+        label: "baseline",
+      });
+    } finally {
+      for (const [k, v] of tmpEnv)
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+    }
     assert.equal(run1.mode, "fixture");
     assert.equal(run1.workflowStatus, "completed");
     assert.equal(run1.stalled, false);
@@ -720,7 +735,7 @@ test("playground: fixture-only isolated runs, expectations, saved examples and r
     assert.equal(t.store.list("task").length, before.tasks);
     assert.equal(t.store.list("lease").length, before.leases);
     assert.deepEqual(await readdir(liveDir), before.files);
-    const leftovers = (await readdir(tmpdir())).filter((n) =>
+    const leftovers = (await readdir(privateTmp)).filter((n) =>
       n.startsWith("agentteam-playground-"),
     );
     assert.deepEqual(leftovers, []);

@@ -524,6 +524,22 @@ test("provider file tools are limited to the attached workspace and assigned acc
     scopedPlan.providerRoots.map((r) => r.path),
     [root, secondRoot],
   );
+  // A task-scoped Codex launch needs a verified read-restricting sandbox: refused off macOS
+  // (src/provider-filesystem.ts codexReadBoundaryIssue) unless explicitly opted in.
+  const savedOptIn = process.env.AGENTTEAM_UNVERIFIED_SANDBOX;
+  t.after(() => {
+    if (savedOptIn === undefined) delete process.env.AGENTTEAM_UNVERIFIED_SANDBOX;
+    else process.env.AGENTTEAM_UNVERIFIED_SANDBOX = savedOptIn;
+  });
+  delete process.env.AGENTTEAM_UNVERIFIED_SANDBOX;
+  if (process.platform !== "darwin") {
+    assert.throws(
+      () => commandFor(scopedPlan, null, "Write", process.cwd()),
+      (e: any) => e.code === "provider_access_unsupported",
+    );
+    // The generated profile itself is checked with the explicit opt-in.
+    process.env.AGENTTEAM_UNVERIFIED_SANDBOX = "1";
+  }
   const scopedCommand = commandFor(scopedPlan, null, "Write", process.cwd());
   const scopedGrants = scopedCommand.args.find((arg) =>
     arg.startsWith("permissions.agentteam-task.filesystem="),
