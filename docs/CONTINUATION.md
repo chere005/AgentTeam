@@ -1,5 +1,21 @@
 # AgentTeam continuation handoff
 
+## Version 0.8.0: the board's AgentTeam tickets (November 9–10, 2026)
+
+Sean: "address all todos in taskmind with sonnet developers and review it all at the end yourself". Nine Sonnet developers each worked a ticket group in its own worktree (`agent/at-*`); the lead reviewed every diff, merged them on `release-0.8`, resolved the overlaps and fixed what review found.
+
+- **#116 planner reading** (`src/execution-projects.ts`, `ui/components/ExecutionProject.tsx`): the Team Assistant program path has no LLM planner call (the plan is deterministic), so the reading lives in `plan().reading` `{summary, questions}`; open questions (pi digits, languages, expected output) keep `ready` false and `startPrepared` throws `execution_questions_open`; answers go through `/projects/:id/execution/configure` (new `digits`). Sean's own wording (languages and 500 significant digits named) asks nothing. The LLM coordinator and pipeline "Stage 1: Opus plan" are not gated (TODO.md).
+- **#91/#93/#99 Codex boundary** (`src/provider-filesystem.ts`, `src/node-runtime.ts`): the permission profile now denies `/private/tmp` and `/private/var/tmp` (`/tmp`, `/var/tmp` on Linux), grants the Node install read-only when the shell tool is on (Homebrew: the whole prefix), and a scoped Codex launch off macOS is refused unless `AGENTTEAM_UNVERIFIED_SANDBOX=1`. `AGENTTEAM_BOUNDARY_PROBE=1 node --test test/provider-boundary.test.ts` runs the profile through the installed Codex's `sandbox` subcommand (passed on the merged tree). Loopback stays blocked (`network.enabled=false`; `true` opens the internet), so the prompt says to report localhost checks as unrun. Claude's boundary (`--restricted`, Bash sandbox) is not live-probed: no model-free probe exists.
+- **#113 launch record** (`src/launch-record.ts`): `task.launch` / `session.launch` events, redacted, Inspector "Launch" section, `GET /inspector/{tasks|sessions}/:id/launch`.
+- **#47 changed files** (`src/changed-files.ts`): start HEAD + dirty-file hashes per repo at task start; routing uses declared ∪ measured; stored as `task-changed-files`.
+- **#165** proposals create a missing folder at apply after probing its nearest existing parent; **#42** auto worktrees for `assignProject` and the Wolfram sample.
+- **#98/#102** `src/effective-limits.ts` + `ui/components/EffectiveLimits.tsx`; `ui/run-status.ts` + `ui/components/RunStatus.tsx` (one vocabulary; the project bar shows only when a project is current). Chat delivery states, graph run states and `invocationTaskState` labels were not converted.
+- **#107** `scripts/installer-gates.mjs`, shared by `release.yml` and the new `installers` jobs of `ci.yml` (preflight branches only; macOS arm64/x64 decide). Found: electron-builder strips Electron/Chromium notices from the macOS app (reported as a note, not a failure).
+- **#103** `ui/editor-languages.ts` (lazy legacy-mode grammars). **#164/#88/#97/#101** Windows path/EBUSY fixes and longer non-mac CI waits; Linux `example-teams` card overlap left as is. **#117/#108** the specs were 15/15 locally before and 30/30 after; the one real failure was Claude refused on native Windows (spec now uses Codex there).
+- **#44** the real-kernel Wolfram smoke test passes now that the Wolfram Engine is activated.
+
+Verification: typecheck; backend **832 tests, 830 pass, 0 fail, 2 opt-in skips**; build; preflight (installers included) below. Windows items (#90, #123, Windows halves of the CI tickets, scoped Codex on Windows) went to the PC's "Windows-specific TaskMind todos" session on `release-0.8`. Not done: #41/#45 live ACP and pipeline runs, #46 signing.
+
 ## Version 0.7.0: the chat pi request works from the Team Assistant (November 9, 2026)
 
 `fix/folder-access-probe` was rebased onto `origin/main` (the two quiet-CI commits), bumped to 0.7.0 and merged to `main` at `1cc7b50` (tag `v0.7.0` on that commit). Besides the folder-access work below, this release fixes what the owner actually hit on October 27, found by reading his profile (a copy, read-only):
