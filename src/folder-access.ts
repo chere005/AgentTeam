@@ -1545,6 +1545,10 @@ export function insideProjectsRoot(path: string) {
  */
 export async function createProjectsFolder(path: string) {
   if (!insideProjectsRoot(path)) return false;
+  return createFolder(path);
+}
+/** `mkdir -p` with the typed refusal; callers decide whether the path may be created at all. */
+export async function createFolder(path: string) {
   try {
     await mkdir(resolve(path), { recursive: true });
   } catch (error) {

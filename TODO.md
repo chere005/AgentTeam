@@ -43,7 +43,7 @@ Current check results are recorded in docs/CONTINUATION.md (fixture and desktop 
 
 ### Automatic worktree setup
 
-- [ ] Auto-create setting (`/worktrees/settings`, global toggle in the Git pane, per-repository overrides API-only) runs only for tasks created through `POST /tasks`; tasks created by templates/samples/service calls, a per-project UI, and an HTTP-level test of the auto path remain.
+- [ ] Auto-create setting (`/worktrees/settings`, global toggle in the Git pane, per-repository overrides API-only) now covers `POST /tasks`, team-space project assignment and the Wolfram sample route (HTTP-tested in `test/projects.test.ts`); tasks created internally by running work (execution projects with explicit output folders, pipelines which manage their own worktrees, delegated children, review tasks) deliberately do not auto-create. A per-project UI toggle remains optional.
 - [ ] Test creation, attachment, failure recovery, and cleanup on macOS, Windows, and Linux (verified on macOS only; `/dev/null`-style and permission assumptions are untested elsewhere).
 
 ### Development server and preview
@@ -125,7 +125,6 @@ References: [ACP protocol](https://agentclientprotocol.com/protocol/overview), [
 
 ## 6 Real agent-to-agent orchestration — P1
 
-- [ ] Make specialist/required-review file evidence independent of the invoking agent: today `changedFiles` is declared on the task or reported in the result JSON, not measured from Git; a task that omits it can dodge a files-only rule (text/tag/catch-all rules still match).
 - [ ] Test direct-chat and task MCP handoffs with live Claude/Codex accounts after explicit user approval; current tests use provider fixtures and do not establish authentication or subscription compatibility. ACP and native provider subagents are not covered.
 - [ ] Enforce directed/bidirectional communication permissions on notifications (invocation, result reads and required/specialist reviews are enforced and tested; notifications are not routed through the new action).
 - [ ] Surface cancellation propagation, `delegation.returned` events and partial results in the UI/canvas, and deliver a child's partial result back into the parent's context (backend propagation and persistence are done).

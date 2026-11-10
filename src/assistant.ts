@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { rmdir } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { completionCheckSchema, limitsPatchSchema } from "./limits-schema.ts";
 import { assignProject } from "./projects.ts";
@@ -12,6 +12,7 @@ import { SkillCatalog } from "./skills.ts";
 import { canonical, issueLines, sha256 } from "./shared-common.ts";
 import { canonicalPolicyPath, filesystemPolicy } from "./filesystem-policy.ts";
 import {
+  createFolder,
   createProjectsFolder,
   folderRefusal,
   insideProjectsRoot,
@@ -929,6 +930,7 @@ async function dryRun(service: TeamService, ops: Op[]) {
     catalog.items = new Map(service.skills.items);
     catalog.warnings = [...service.skills.warnings];
     const sandbox = new TeamService(sandboxStore, catalog);
+    sandbox.allowPlannedFolders = true;
     // Stop at the first failure: later ops usually depend on earlier ones.
     let index = 0;
     try {
@@ -1079,10 +1081,27 @@ export class AssistantProposals {
    * that does not exist yet is created, as the setup card does.
    */
   private async checkFolders(ops: Op[]) {
+    const start = new Set(
+      ops.flatMap((op) => (op.op === "project.start" ? [op.workspace] : [])),
+    );
     for (const [path, write] of this.foldersOf(ops, true)) {
-      if (insideProjectsRoot(path) && !existsSync(path)) {
+      if (!existsSync(path)) {
         filesystemPolicy(this.store).assertPath(path);
-        await createProjectsFolder(path);
+        if (insideProjectsRoot(path)) await createProjectsFolder(path);
+        else if (!start.has(path)) {
+          // Applying is the user's consent to create the folder, but the system is asked about
+          // the nearest existing parent first: a protected parent refuses before anything is made.
+          let parent = dirname(resolve(path));
+          while (!existsSync(parent) && dirname(parent) !== parent)
+            parent = dirname(parent);
+          const gate = await this.service.folderAccess.probe(parent, {
+            write: true,
+            force: true,
+            source: "assistant",
+          });
+          if (!gate.ok) throw folderRefusal(gate);
+          await createFolder(path);
+        }
       }
       const result = await this.service.folderAccess.probe(path, {
         write,

@@ -365,8 +365,18 @@ export async function createFreeFormProject(
   return service.workflowStatus(id);
 }
 
-/** Assign a project to the team according to its project type. */
+/** Assign a project to the team according to its project type, honoring the worktree auto-create setting. */
 export async function assignProject(
+  service: TeamService,
+  teamId: string,
+  input: unknown,
+  provenance: { confirmedChecks?: boolean; trustedRequest?: string } = {},
+) {
+  const status = await assignProjectTasks(service, teamId, input, provenance);
+  const autoWorktrees = await service.autoWorktreesFor(status.id);
+  return autoWorktrees.length ? { ...status, autoWorktrees } : status;
+}
+async function assignProjectTasks(
   service: TeamService,
   teamId: string,
   input: unknown,

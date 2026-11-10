@@ -8,6 +8,12 @@
 // task completes with passing completion-check evidence (output fields, via LimitsService) and an
 // "approve" verdict bound to the exact hash of the reviewed result. Prompt text, an explicit
 // recipient, or a manually created task cannot satisfy it.
+import {
+  captureGitBases,
+  measureGitChanges,
+  type ChangedFilesEvidence,
+  type GitBase,
+} from "./changed-files.ts";
 import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve } from "node:path";
 import { z } from "zod";
@@ -1200,6 +1206,71 @@ export class Orchestration {
     }
     return out;
   }
+  /** Folders a task can change: its declared resource folders, else the agent's writable attachments. */
+  private measuredDirs(task: Task) {
+    const agent = this.store.get<Agent>("agent", task.agentId);
+    return task.resourcePaths?.length
+      ? task.resourcePaths
+      : agent.workspaces.filter((w) => w.access === "write").map((w) => w.path);
+  }
+  /** Hook (inside transitionTask, status running): remember each repository's starting state. */
+  onTaskStarted(task: Task) {
+    const bases = captureGitBases(this.measuredDirs(task));
+    if (bases.length) this.store.put("task-git-base", { id: task.id, bases });
+    else this.store.remove("task-git-base", task.id);
+  }
+  /**
+   * The files used for specialist/required-review routing: the union of what Git measured in the
+   * task's repositories and what the task or its result declared. Without a Git workspace only the
+   * declared files exist, and the stored evidence says so. `fresh` measures now; otherwise the
+   * measurement stored at completion is reused (a retry must not see later edits).
+   */
+  private changedFilesOf(task: Task, declaredExtra: string[], fresh: boolean) {
+    const declared = [
+      ...new Set([...(task.changedFiles ?? []), ...declaredExtra]),
+    ];
+    let previous: ChangedFilesEvidence | undefined;
+    try {
+      previous = this.store.get<ChangedFilesEvidence>(
+        "task-changed-files",
+        task.id,
+      );
+    } catch {}
+    let measured: string[] | null = null;
+    let roots: string[] = [];
+    if (fresh || !previous) {
+      try {
+        const bases = this.store.get<{ bases: GitBase[] }>(
+          "task-git-base",
+          task.id,
+        ).bases;
+        measured = measureGitChanges(bases);
+        roots = bases.map((b) => b.root);
+      } catch {} // never started through the service: nothing to measure against
+    } else if (previous.source === "git") {
+      measured = previous.measured;
+      roots = previous.roots;
+    }
+    const evidence: ChangedFilesEvidence = {
+      id: task.id,
+      source: measured ? "git" : "declared",
+      files: [...new Set([...(measured ?? []), ...declared])].slice(0, 1000),
+      measured: measured ?? [],
+      declared,
+      roots,
+      measuredAt:
+        previous && !fresh ? previous.measuredAt : new Date().toISOString(),
+    };
+    if (fresh || !previous) {
+      this.store.put("task-changed-files", evidence);
+      this.store.emit("task.changed_files", task.id, {
+        source: evidence.source,
+        measured: evidence.measured.length,
+        declared: evidence.declared.length,
+      });
+    }
+    return evidence.files;
+  }
   /** Hook (inside TeamService.task's transaction): record the plan, including required reviews. */
   onTaskCreated(task: Task) {
     if (this.suppress) return;
@@ -1208,7 +1279,10 @@ export class Orchestration {
   /** Hook (inside transitionTask's transaction): invoke the planned reviewers for the final result. */
   onTaskCompleted(task: Task) {
     if (this.suppress) return;
-    this.plan(task, changedFilesFromResult(task.result));
+    this.plan(
+      task,
+      this.changedFilesOf(task, changedFilesFromResult(task.result), true),
+    );
     this.invokePlanned(task);
   }
   private latestReview(t: Trigger, hash: string) {
@@ -1334,7 +1408,10 @@ export class Orchestration {
   retry(taskId: string) {
     const task = this.store.get<Task>("task", taskId);
     return this.store.transaction(() => {
-      this.plan(task, changedFilesFromResult(task.result));
+      this.plan(
+        task,
+        this.changedFilesOf(task, changedFilesFromResult(task.result), false),
+      );
       for (const t of this.triggers(taskId))
         if (t.status === "error") {
           t.status = "planned";

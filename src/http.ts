@@ -118,6 +118,8 @@ export function createApi(
   );
   // The scheduler sweep assigns the pipeline's fix workers (worktrees) without any route call.
   service.pipelines.worktrees = development.worktrees;
+  service.autoWorktree = (agentId, taskId) =>
+    development.worktrees.autoForTask(agentId, taskId);
   const reviews = new ReviewService(service, workspaces);
   const extras = new WorkspaceExtras(
     store,
@@ -1164,8 +1166,17 @@ export function createApi(
         return;
       }
       if (method === "GET" && path === "/samples") return send(sampleCatalog());
-      if (method === "POST" && path === "/samples/wolfram-validated-reasoning")
-        return send(createWolframSample(service, await body(req)), 201);
+      if (
+        method === "POST" &&
+        path === "/samples/wolfram-validated-reasoning"
+      ) {
+        const sample = createWolframSample(service, await body(req));
+        const autoWorktrees = await service.autoWorktreesFor(sample.id);
+        return send(
+          autoWorktrees.length ? { ...sample, autoWorktrees } : sample,
+          201,
+        );
+      }
       if (
         method === "POST" &&
         (match = path.match(/^\/samples\/workflows\/([^/]+)\/verify-models$/))
