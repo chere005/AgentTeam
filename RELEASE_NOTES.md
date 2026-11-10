@@ -1,4 +1,14 @@
-# AgentTeam 0.8.0
+# AgentTeam 0.9.0
+
+Codex reviewers can read their assigned task folders without receiving write access, and an empty findings list can satisfy a review contract.
+
+- **Read-only reviewers:** task-scoped Codex reviewers receive a read-only shell limited to their assigned folders, with network disabled. Mixed read and write folders do not gain an ungranted shell.
+- **Clean reviews:** a review can report no findings without failing its output contract; its verdict still determines whether it approves.
+- **Local development servers:** on macOS, eligible task-scoped Codex shell runs can use loopback while other network access remains blocked.
+
+Task-scoped Codex remains refused on platforms whose read boundary has not been verified. Installers are unsigned unless signing credentials are configured.
+
+## Earlier release notes: 0.8.0
 
 The lead confirms what a request leaves open before any work starts, task-scoped Codex runs can execute Node inside a read boundary, and every provider run records how it was launched.
 
