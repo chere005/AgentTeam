@@ -1,3 +1,5 @@
+import { RunStatusBadge } from "./RunStatus";
+import { taskRunStatus } from "../run-status";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import type { RecoveryDecision } from "../../src/recovery-decision";
@@ -117,9 +119,12 @@ export function WorkflowRecovery({
         >
           <div className="row between">
             <span>{r.task.title}</span>
-            <span className={"badge recovery-" + r.task.status}>
-              {r.task.status}
-            </span>
+            <RunStatusBadge
+              status={taskRunStatus({
+                status: r.task.status,
+                waitReason: (r.task as { waitReason?: string }).waitReason,
+              })}
+            />
           </div>
           {r.rootCause && (
             <div className="recovery-cause">

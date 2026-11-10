@@ -62,6 +62,7 @@ import { middleClickProps } from "./middle-click";
 import { TeamChatView } from "./components/TeamChatView";
 import { HelpMenu } from "./components/HelpMenu";
 import { ProjectTrace } from "./components/ProjectTrace";
+import { ProjectContextBar } from "./components/RunStatus";
 import { UsageAndLimits } from "./components/UsageAndLimits";
 import { TerminalView } from "./components/Terminal";
 import { shellOwnsKey } from "./terminal-theme";
@@ -94,6 +95,16 @@ const loadTabs = (teamId: string) =>
     };
   })();
 
+/** Feature tabs that show the shared project-context header (the core work views). */
+const CONTEXT_FEATURES: ReadonlySet<string> = new Set([
+  "projects",
+  "inspector",
+  "trace",
+  "review",
+  "files",
+  "recovery",
+  "graphs",
+]);
 export default function App() {
   const [data, setData] = useState<Snapshot>(empty),
     [events, setEvents] = useState<TeamEvent[]>([]),
@@ -1144,6 +1155,10 @@ export default function App() {
                       : "tab-" + tabs.active
             }
           >
+            {ready &&
+              (tabs.active === CANVAS || CONTEXT_FEATURES.has(tabs.active)) && (
+                <ProjectContextBar project={currentProject} />
+              )}
             {ready ? (
               mainView === "team-chat" ? (
                 <TeamChatView

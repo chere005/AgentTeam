@@ -248,7 +248,7 @@ export function resolveEffectiveLimits(input: LimitInputs): EffectiveLimits {
     : undefined;
   binding ??= ranked.find((r) => r.state === "reached");
   if (!binding) {
-    let best = -1;
+    let best = 0; // nothing consumed yet: nothing binds
     for (const r of ranked) {
       const ratio = r.used! / r.max!;
       if (ratio > best) {

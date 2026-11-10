@@ -84,7 +84,7 @@ test("recovery: interrupted task shows its checkpoint, pending approval survives
     const wf = page.locator(".workflow", { hasText: "Crash demo" });
     const panel = wf.getByTestId("recovery-panel");
     await expect(panel).toContainText("Write notes");
-    await expect(panel.locator(".badge")).toHaveText("interrupted");
+    await expect(panel.locator(".badge")).toHaveText("waiting for you");
     await panel.getByText("Checkpoint and history", { exact: true }).click();
     await expect(panel.getByTestId("recovery-checkpoint")).toContainText(
       "task.interrupted",

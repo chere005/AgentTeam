@@ -12,7 +12,21 @@ import { MessageMarkdown } from "./Markdown";
 import { AgentAvatar } from "./AgentAvatar";
 import { agentDisplayName, agentSelectorLabel } from "../agent-identity";
 import { explicitlyReportsNoWork } from "../../src/task-results";
+import { RunStatusBadge } from "./RunStatus";
+import { taskRunStatus, type RunStatus } from "../run-status";
 import "./runtime-ui.css";
+
+/** Shared status for an invocation row; `label` only distinguishes "waiting for delegated work". */
+const invocationRunStatus = (
+  noWork: boolean,
+  state: { status: string; label: string },
+): RunStatus =>
+  noWork
+    ? "failed"
+    : taskRunStatus({
+        status: state.status,
+        delegationWaiting: state.label === "Waiting for delegated work",
+      });
 
 type InvocationRecord = {
   id: string;
@@ -345,7 +359,20 @@ export function InvocationPanel({
                 {names[record.toAgentId] ?? "Teammate"}: {record.request.title}
               </b>
               <small className={`invocation-status ${displayedStatus}`}>
-                {noWork ? "didn’t complete" : (state?.label ?? displayedStatus)}
+                <RunStatusBadge
+                  status={invocationRunStatus(
+                    noWork,
+                    state ?? {
+                      status: displayedStatus,
+                      label: displayedStatus,
+                    },
+                  )}
+                />{" "}
+                {noWork
+                  ? "didn’t complete"
+                  : state && state.label !== state.status
+                    ? state.label
+                    : ""}
               </small>
               {state?.detail && (
                 <p className="notice invocation-waiting">{state.detail}</p>
@@ -431,7 +458,12 @@ export function InvocationPanel({
                   : {task.title}
                 </b>
                 <small className={`invocation-status ${displayedStatus}`}>
-                  {noWork ? "didn’t complete" : state.label}
+                  <RunStatusBadge status={invocationRunStatus(noWork, state)} />{" "}
+                  {noWork
+                    ? "didn’t complete"
+                    : state.label !== state.status
+                      ? state.label
+                      : ""}
                 </small>
                 {state.detail && (
                   <p className="notice invocation-waiting">{state.detail}</p>
