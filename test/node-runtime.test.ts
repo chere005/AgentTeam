@@ -86,7 +86,11 @@ test("a task-scoped Codex launch with shell states the loopback/network limit; f
   assert.deepEqual(shell.limitations, [CODEX_TASK_SANDBOX_NOTE]);
   assert.ok(!shell.args.join(" ").includes("danger-full-access"));
   assert.ok(
-    shell.args.includes("permissions.agentteam-task.network.enabled=false"),
+    shell.args.includes(
+      process.platform === "darwin"
+        ? "permissions.agentteam-task.network.enabled=true"
+        : "permissions.agentteam-task.network.enabled=false",
+    ),
   );
   const fileOnly = commandFor(
     { ...plan, executionMode: "file-only" },
@@ -96,4 +100,30 @@ test("a task-scoped Codex launch with shell states the loopback/network limit; f
   );
   assert.ok(!fileOnly.stdin.includes(CODEX_TASK_SANDBOX_NOTE));
   assert.equal(fileOnly.limitations, undefined);
+  assert.ok(
+    fileOnly.args.includes("permissions.agentteam-task.network.enabled=false"),
+    "no shell, no loopback",
+  );
+});
+test("loopback-only networking is the managed-proxy bundle on macOS and nothing elsewhere", () => {
+  const ws = [{ path: "/work/a", access: "write" as const, active: true }];
+  const tools = ["read", "write", "shell"];
+  const mac = codexTaskPermissions(ws, tools, "darwin", [], true);
+  for (const s of [
+    "features.network_proxy=true",
+    "permissions.agentteam-task.network.enabled=true",
+    'permissions.agentteam-task.network.domains={"localhost"="allow"}',
+    "permissions.agentteam-task.network.allow_local_binding=true",
+  ])
+    assert.ok(mac.includes(s), s);
+  assert.ok(mac[1].startsWith("permissions.agentteam-task.filesystem="));
+  for (const platform of ["linux", "win32"] as const) {
+    const other = codexTaskPermissions(ws, tools, platform, [], true).join();
+    assert.ok(!other.includes("network_proxy"));
+    assert.ok(other.includes("network.enabled=false"));
+  }
+  const off = codexTaskPermissions(ws, tools, "darwin").join();
+  assert.ok(
+    off.includes("network.enabled=false") && !off.includes("enabled=true"),
+  );
 });

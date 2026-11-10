@@ -151,6 +151,16 @@ export function codexTaskPermissions(
   platform = process.platform,
   /** Read-only roots needed to execute Node (src/node-runtime.ts); never added over a task root. */
   extraReadRoots: string[] = [],
+  /**
+   * Loopback-only networking for runs with the shell tool (macOS only). Verified with codex-cli
+   * 0.167 (`codex sandbox` and a real `codex exec` turn): with the experimental `network_proxy`
+   * feature the seatbelt profile allows only 127.0.0.1 (the managed proxy, which denies every
+   * domain but `localhost`, plus the task's own loopback binds) and refuses all other outbound
+   * connections. `network.enabled=true` WITHOUT that feature opens the whole internet, so the
+   * settings are always emitted together; an unknown `features.*` key fails the launch under
+   * `--strict-config` instead of silently widening it.
+   */
+  loopback = false,
 ) {
   const writable =
     tools.includes("read") &&
@@ -175,7 +185,14 @@ export function codexTaskPermissions(
   return [
     'default_permissions="agentteam-task"',
     `permissions.agentteam-task.filesystem=${table}`,
-    "permissions.agentteam-task.network.enabled=false",
+    ...(loopback && platform === "darwin"
+      ? [
+          "features.network_proxy=true",
+          "permissions.agentteam-task.network.enabled=true",
+          'permissions.agentteam-task.network.domains={"localhost"="allow"}',
+          "permissions.agentteam-task.network.allow_local_binding=true",
+        ]
+      : ["permissions.agentteam-task.network.enabled=false"]),
     "agents.enabled=false",
     "project_doc_max_bytes=0",
     ...(platform === "win32" ? ['windows.sandbox="mxc"'] : []),

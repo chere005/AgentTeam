@@ -66,9 +66,13 @@ export function launchRecord(
         ? "permission-profile:agentteam-task"
         : (codexSetting(args, "sandbox_mode")?.replace(/"/g, "") ??
           "provider-default"),
-      network: codexSetting(args, "permissions.agentteam-task.network.enabled")
-        ? "disabled"
-        : "provider-default",
+      network:
+        codexSetting(args, "permissions.agentteam-task.network.enabled") ===
+        "true"
+          ? "loopback-only"
+          : codexSetting(args, "permissions.agentteam-task.network.enabled")
+            ? "disabled"
+            : "provider-default",
       shellTool: codexSetting(args, "features.shell_tool") !== "false",
     };
   } else if (plan.environment === "claude" && transport !== "acp") {
