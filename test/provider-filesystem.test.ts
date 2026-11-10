@@ -2,6 +2,7 @@ import "./fixtures/temp-data-dir.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  lstat,
   mkdtemp,
   mkdir,
   realpath,
@@ -174,6 +175,7 @@ test("launch revalidates all directories, ownership, detached attachments, rules
     w.b,
     process.platform === "win32" ? "junction" : "dir",
   );
+  assert.equal((await lstat(w.b)).isSymbolicLink(), true);
   await assert.rejects(w.service.launchPlan(w.agent.id, task.id), {
     code: "workspace_changed",
   });
@@ -181,6 +183,23 @@ test("launch revalidates all directories, ownership, detached attachments, rules
   await writeFile(file, "test");
   await assert.rejects(w.service.launchPlan(w.agent.id, w.task([file]).id), {
     code: "resource_path_not_directory",
+  });
+
+  const nested = w.task([w.a]);
+  await rename(w.root, join(w.base, "original-attachment"));
+  await mkdir(join(w.other, "a"));
+  await symlink(
+    w.other,
+    w.root,
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  assert.equal((await lstat(w.root)).isSymbolicLink(), true);
+  await assert.rejects(w.service.launchPlan(w.agent.id, nested.id), {
+    code: "workspace_changed",
+  });
+  await rename(w.other, join(w.base, "removed-target"));
+  await assert.rejects(w.service.launchPlan(w.agent.id, nested.id), {
+    code: "workspace_changed",
   });
 });
 
