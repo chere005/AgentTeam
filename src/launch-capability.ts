@@ -88,7 +88,13 @@ export function codexShellMode(plan: PlanFacts): "full" | "read-only" | "off" {
   if (plan.tools.includes("shell")) return "full";
   if (!plan.taskScoped) return "off";
   const access = workspaceCapabilities(plan);
-  return access.read && !access.write ? "read-only" : "off";
+  // codexTaskPermissions marks any root "write" when a write tool meets a write-access folder,
+  // even if other roots are read-only (workspaceCapabilities.write needs EVERY root writable).
+  // An ungranted shell must never sit next to a writable root.
+  const anyWritableRoot =
+    (plan.tools.includes("edit") || plan.tools.includes("write")) &&
+    (plan.workspaces ?? []).some((ws) => ws.access === "write");
+  return access.read && !access.write && !anyWritableRoot ? "read-only" : "off";
 }
 
 /** The Claude built-in tools a launch names (`--tools`), in the order the command line uses. */
