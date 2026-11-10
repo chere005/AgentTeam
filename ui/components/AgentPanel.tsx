@@ -30,6 +30,7 @@ import {
   resolveModelState,
 } from "../../src/model-choices";
 import { InvocationPanel } from "./InvocationPanel";
+import { EffectiveLimits } from "./EffectiveLimits";
 import { usePersistedDetails } from "./persisted-details";
 import { RoleTypeSelect } from "./RoleType";
 import { RulesEditor } from "./AccessUi";
@@ -771,6 +772,10 @@ export function AgentFormSections({
       </details>
 
       {talksTo}
+
+      {agent && (
+        <EffectiveLimits agentId={agent.id} openFeature={openFeature} />
+      )}
 
       {agent && (
         <InvocationPanel

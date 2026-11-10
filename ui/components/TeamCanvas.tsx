@@ -1,3 +1,5 @@
+import { RunStatusBadge } from "./RunStatus";
+import { agentRunStatus } from "../run-status";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ReactFlow,
@@ -160,12 +162,10 @@ function Card({ data }: NodeProps) {
             {(state !== "idle" || failed || resume) && (
               <>
                 {" "}
-                <span
-                  className={"badge " + (state === "processing" ? "green" : "")}
-                >
-                  {state}
+                <RunStatusBadge status={agentRunStatus(state, failed)} />
+                <span>
                   {failed
-                    ? " · failed"
+                    ? ""
                     : blocked
                       ? " · needs attention"
                       : resume
@@ -204,13 +204,7 @@ function Card({ data }: NodeProps) {
         <span className="card-model" title={a.environment + " · " + a.model}>
           {a.environment} · {a.model}
         </span>
-        <span
-          className={
-            "badge " + (activity?.state === "processing" ? "green" : "")
-          }
-        >
-          {activity?.state ?? "idle"}
-        </span>
+        <RunStatusBadge status={agentRunStatus(state, failed)} />
       </div>
       <div
         className="card-details"

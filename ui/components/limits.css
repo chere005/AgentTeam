@@ -38,3 +38,43 @@
   background: #4a2f2f;
   color: #f0b4b4;
 }
+
+.effective-limits {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 8px 0;
+  font-size: 12px;
+}
+.effective-limits h4 {
+  margin: 0 0 4px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+.effective-limits-source {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--muted);
+  margin-top: 6px;
+}
+.effective-limits ul {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
+}
+.effective-limits li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 1px 0;
+}
+.effective-limits li.binding {
+  color: var(--accent);
+  font-weight: 600;
+}
+.effective-limits li[data-state="reached"] {
+  color: var(--accent);
+}

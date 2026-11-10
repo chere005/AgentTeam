@@ -136,7 +136,7 @@ test("pipeline team then project: configure the team, assign a project, verify b
 
     const wf = page.locator(".workflow").first();
     await expect(wf).toContainText("Add a greeting feature");
-    await expect(wf.locator(".badge").first()).toHaveText("paused");
+    await expect(wf.locator(".badge").first()).toHaveText("waiting for you");
     await wf.locator("details.project-more > summary").click();
     const pipeline = wf.getByLabel("Pipeline", { exact: true });
     await expect(pipeline).toContainText("not verified");

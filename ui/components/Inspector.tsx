@@ -1,3 +1,5 @@
+import { RunStatusBadge } from "./RunStatus";
+import { primaryWaitReason, taskRunStatus } from "../run-status";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type Agent, type Snapshot, type TeamEvent } from "../api";
 import "./inspector.css";
@@ -498,7 +500,13 @@ function Waiting(p: Props) {
           <li key={t.taskId} data-testid="waiting-task">
             <div className="row between">
               <span>
-                {t.title} <span className="badge">{t.status}</span>
+                {t.title}{" "}
+                <RunStatusBadge
+                  status={taskRunStatus({
+                    status: t.status,
+                    waitReason: primaryWaitReason(t.codes),
+                  })}
+                />
               </span>
               <button
                 onClick={() => setTarget({ kind: "tasks", id: t.taskId })}

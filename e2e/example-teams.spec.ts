@@ -268,7 +268,7 @@ test("example teams: listed with shape and org preview, inserted as teams (no pr
         await expect(project).toContainText(
           "Build matching local socket clients",
         );
-        await expect(project.locator(".badge").first()).toHaveText("paused");
+        await expect(project.locator(".badge").first()).toHaveText("waiting for you");
         const quickstartAgents = await api(page, "GET", "/agents");
         const quickstartTeamId = (await api(page, "GET", "/snapshot"))
           .activeTeamId;
@@ -363,7 +363,7 @@ test("example teams: listed with shape and org preview, inserted as teams (no pr
     await expect(form).toHaveCount(0);
     const project = page.locator(".workflow").first();
     await expect(project).toContainText("Add a dark mode toggle");
-    await expect(project.locator(".badge").first()).toHaveText("paused");
+    await expect(project.locator(".badge").first()).toHaveText("waiting for you");
     await expect(project.getByLabel("Model mapping")).toContainText(
       "not verified",
     );

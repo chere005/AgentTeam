@@ -1,3 +1,6 @@
+import { RunStatusBadge } from "./RunStatus";
+import { taskRunStatus, projectRunStatus, runStatusLabel } from "../run-status";
+import { EffectiveLimits } from "./EffectiveLimits";
 import { WorktreeManager } from "./Worktrees";
 import {
   RuleOptionsFields,
@@ -836,9 +839,7 @@ export function Workflows(p: PaneProps) {
       (workflow as { lifecycle?: { state: string } }).lifecycle?.state ?? "",
     )
       ? "No tasks assigned"
-      : workflow.status === "needs-attention"
-        ? "Needs attention"
-        : workflow.status;
+      : runStatusLabel(projectRunStatus(workflow.status));
   return (
     <div className="scroll section">
       <div className="section-title">
@@ -876,15 +877,6 @@ export function Workflows(p: PaneProps) {
             Choose a project to see its progress, tasks, blockers, and run
             report.
           </p>
-          <div className="projects-current-context">
-            <span>Current project</span>
-            <b>{currentProject?.name ?? "None selected"}</b>
-            <small>
-              {currentProject
-                ? "Files and reports follow this project."
-                : "Choose a project below and make it current to keep the app in context."}
-            </small>
-          </div>
         </>
       )}
       {assigning && (
@@ -1070,6 +1062,7 @@ export function Workflows(p: PaneProps) {
                 </div>
               </div>
               <ProjectLifecycle workflow={w} act={p.act} />
+              <EffectiveLimits workflowId={w.id} openFeature={p.openFeature} />
               <SampleSetup workflow={w} act={p.act} />
               <WorkflowGateSummary tasks={w.tasks} />
               {w.tasks.length === 0 ? (
@@ -1197,11 +1190,14 @@ export function Workflows(p: PaneProps) {
                         )}
                       </span>
                       <GateBadge task={t} />
-                      <span className="badge">
-                        {taskViewStatus(t) === "superseded"
-                          ? "superseded"
-                          : (taskResultProblem(t) ?? t.status)}
-                      </span>
+                      <RunStatusBadge
+                        status={taskRunStatus({
+                          ...t,
+                          problem: !!taskResultProblem(t),
+                          delegationWaiting: t.delegation?.state === "waiting",
+                        })}
+                        title={taskResultProblem(t) ?? undefined}
+                      />
                     </summary>
                     <details className="task-brief">
                       <summary>Full task brief</summary>
@@ -1997,11 +1993,6 @@ export function Workspace(
       </div>
       {preview?.isNew && tab !== "files" ? (
         <div className="scroll section workspace-body">
-          {p.currentProject && (
-            <p className="workspace-project-context">
-              Current project: <b>{p.currentProject.name}</b>
-            </p>
-          )}
           <TextEditor
             key={agent.id + "new-file"}
             agentId={agent.id}
@@ -2065,10 +2056,8 @@ export function Workspace(
           ) : tab === "files" ? (
             <>
               <div className="workspace-project-context">
-                <span>
-                  {p.currentProject ? "Current project" : "Workspace"}
-                </span>
-                <b>{p.currentProject?.name ?? "Scratch files"}</b>
+                <span>Folder</span>
+                <b>{root ? folderName(root) : "Scratch files"}</b>
                 <small>
                   {root
                     ? `${folderName(root)}${path === "." ? "" : ` / ${path}`}`
@@ -2949,11 +2938,10 @@ export function ProjectPanels(p: PaneProps & { kind: "recovery" | "shared" }) {
         <section className="workflow" key={w.id}>
           <div className="row between">
             <b>{w.name}</b>
-            <span
-              className={"badge " + (w.status === "running" ? "green" : "")}
-            >
-              {w.status}
-            </span>
+            <RunStatusBadge
+              status={projectRunStatus(w.status)}
+              title={w.status}
+            />
           </div>
           {p.kind === "recovery" && (
             <WorkflowRecovery

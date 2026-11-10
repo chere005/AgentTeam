@@ -93,7 +93,7 @@ test("an agent's Chat pane leads with its result and tucks full instructions beh
     await expect(panel).toContainText("Manager → Python Builder");
     await expect(panel).toContainText("Manager’s instructions");
     await expect(panel).toContainText("Create python/pi.py");
-    await expect(panel).toContainText("completed");
+    await expect(panel).toContainText("done");
     await expect(panel).toContainText(
       "Created python/pi.py and verified the 300 digit output.",
     );

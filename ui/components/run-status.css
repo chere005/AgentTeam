@@ -1,0 +1,44 @@
+.run-status-waiting-you {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+.run-status-blocked {
+  background: #4a3a1f;
+  color: #f0cf8a;
+}
+.run-status-failed {
+  background: #4a2f2f;
+  color: #f0a3a3;
+}
+.run-status-done {
+  background: #224539;
+  color: #9bdfc1;
+}
+.run-status-cancelled,
+.run-status-superseded,
+.run-status-idle {
+  opacity: 0.8;
+}
+.project-context-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  min-width: 0;
+}
+.project-context-bar > span:first-child {
+  color: var(--muted);
+}
+.project-context-bar > b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-context-bar > small {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

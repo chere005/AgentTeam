@@ -1,5 +1,10 @@
 import { existsSync } from "node:fs";
 import { Approvals } from "./approvals.ts";
+import {
+  resolveEffectiveLimits,
+  slotsAvailable,
+  type ProjectLimitsInput,
+} from "./effective-limits.ts";
 import { randomUUID } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
@@ -1429,8 +1434,50 @@ export class TeamService {
       limit,
       running,
       queued: tasks.filter((t) => t.status === "queued").length,
-      available: limit === null || running < limit,
+      available: slotsAvailable(limit, running),
     };
+  }
+  /** What limits a run: project stop limits, the agent's invocation cap, shared-folder concurrency, team caps (none) and provider quota (unknown). */
+  effectiveLimits(q: { workflowId?: string; agentId?: string }) {
+    const agent = q.agentId
+      ? this.store.get<Agent>("agent", q.agentId)
+      : undefined;
+    let project: ProjectLimitsInput | null = null;
+    if (q.workflowId) {
+      const wf = this.store.get<
+        Workflow & {
+          coordination?: { enabled: boolean; maxConcurrent: number };
+        }
+      >("workflow", q.workflowId);
+      const st = this.limits.status(q.workflowId);
+      project = {
+        workflowId: q.workflowId,
+        limits: st.limits,
+        counters: st.counters,
+        tokensUsed: st.usage.totalTokens,
+        trip: st.trip,
+        sharedConcurrency: wf.coordination?.enabled
+          ? {
+              max: wf.coordination.maxConcurrent,
+              active: this.store
+                .list<{ workflowId: string | null }>("lease")
+                .filter((l) => l.workflowId === q.workflowId).length,
+            }
+          : null,
+      };
+    }
+    const cap = agent ? this.capacity(agent.id) : null;
+    return resolveEffectiveLimits({
+      project,
+      agent: cap
+        ? {
+            agentId: cap.agentId,
+            maxConcurrentInvocations: cap.limit,
+            running: cap.running,
+          }
+        : null,
+      provider: agent ? { environment: agent.environment } : null,
+    });
   }
   control(id: string, control: "team" | "human") {
     return this.store.transaction(() => {

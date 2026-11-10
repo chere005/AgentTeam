@@ -871,6 +871,15 @@ export function createApi(
         (match = path.match(/^\/tasks\/([^/]+)\/cancel$/))
       )
         return send(runs.cancel("task:" + id(match[1])), 202);
+      if (method === "GET" && path === "/limits/effective") {
+        const qs = url.searchParams;
+        return send(
+          service.effectiveLimits({
+            workflowId: qs.get("workflowId") || undefined,
+            agentId: qs.get("agentId") || undefined,
+          }),
+        );
+      }
       if ((match = path.match(/^\/workflows\/([^/]+)\/limits$/))) {
         if (method === "GET") return send(service.limits.status(id(match[1])));
         if (method === "PUT")

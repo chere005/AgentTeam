@@ -72,7 +72,7 @@ test("validation gate: Wolfram team project, model verification, panel, cancel, 
     await form.getByRole("button", { name: "Create paused project" }).click();
     const wf = page.locator(".workflow").first();
     await expect(wf).toContainText("Sin^2 + Cos^2 equals 1");
-    await expect(wf.locator(".badge").first()).toHaveText("paused");
+    await expect(wf.locator(".badge").first()).toHaveText("waiting for you");
     // Gate summary lists every validation-required step as blocked.
     await expect(wf.getByTestId("gate-line").first()).toContainText(
       "no validation record yet",
