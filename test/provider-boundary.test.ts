@@ -152,3 +152,71 @@ test(
     assert.equal(await readFile(join(root, "w.txt"), "utf8"), "x\n");
   },
 );
+
+// Opt-in, model-free, macOS: the shell-tool profile allows binding and connecting on 127.0.0.1
+// (#176) while a public host stays refused. Both halves must hold, or the proxy bundle in
+// `codexTaskPermissions` no longer enforces anything and the launch must go back to disabled.
+test(
+  "REAL CODEX SANDBOX LOOPBACK PROBE (opt-in, AGENTTEAM_BOUNDARY_PROBE=1)",
+  {
+    skip:
+      process.env.AGENTTEAM_BOUNDARY_PROBE !== "1" ||
+      process.platform !== "darwin",
+  },
+  async (t) => {
+    const codex = await findExecutable("codex");
+    assert.ok(codex, "no Codex installation found");
+    const base = await realpath(
+      await mkdtemp(join(homedir(), ".agentteam-probe-")),
+    );
+    t.after(() => rm(base, { recursive: true, force: true }));
+    const root = join(base, "root");
+    await mkdir(root);
+    const script = `
+const net = require("node:net");
+const out = {};
+const hit = (host, port) => new Promise((r) => {
+  const c = net.connect({ host, port, timeout: 4000 });
+  c.on("connect", () => { c.destroy(); r("connected"); });
+  c.on("error", (e) => r(e.code));
+  c.on("timeout", () => { c.destroy(); r("timeout"); });
+});
+const s = net.createServer((c) => { c.on("error", () => {}); c.end(); });
+s.on("error", async (e) => { out.bind = e.code; out.public = await hit("1.1.1.1", 443); console.log(JSON.stringify(out)); process.exit(0); });
+s.listen(0, "127.0.0.1", async () => {
+  out.bind = "ok";
+  out.loopback = await hit("127.0.0.1", s.address().port);
+  out.public = await hit("1.1.1.1", 443);
+  console.log(JSON.stringify(out));
+  process.exit(0);
+});`;
+    const settings = codexTaskPermissions(
+      [ws(root)],
+      ["read", "edit", "write", "shell"],
+      "darwin",
+      nodeReadRoots(),
+      true,
+    );
+    const node = spawnSync("which", ["node"], {
+      encoding: "utf8",
+    }).stdout.trim();
+    assert.ok(node, "no node on PATH");
+    const r = spawnSync(
+      codex,
+      [
+        "sandbox",
+        ...settings.flatMap((s) => ["-c", s]),
+        "--",
+        node,
+        "-e",
+        script,
+      ],
+      { encoding: "utf8", timeout: 60_000 },
+    );
+    assert.equal(r.status, 0, r.stderr);
+    const result = JSON.parse(r.stdout.trim().split("\n").pop()!);
+    assert.equal(result.bind, "ok", "bind on 127.0.0.1");
+    assert.equal(result.loopback, "connected", "connect to 127.0.0.1");
+    assert.notEqual(result.public, "connected", "public host must be refused");
+  },
+);

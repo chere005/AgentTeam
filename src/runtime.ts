@@ -214,6 +214,7 @@ export function commandFor(
             plan.tools,
             process.platform,
             shellOn ? nodeReadRoots() : [],
+            shellOn,
           ).flatMap((setting) => ["-c", setting]),
         ]
       : [
@@ -245,13 +246,17 @@ export function commandFor(
   };
 }
 /**
- * Verified with codex-cli 0.167 on macOS (`codex sandbox`): `network.enabled=false` also blocks
- * binding or connecting to 127.0.0.1, and the only switch that allows it (`network.enabled=true`)
- * opens the whole internet; `network.allow_local_binding` / `domains` / `mode` are not enforced
- * outside the managed proxy. AgentTeam does not widen the sandbox for this.
+ * macOS, codex-cli 0.167 (`codex sandbox`, plus one real `codex exec` turn): `network.enabled=false`
+ * also blocks binding or connecting to 127.0.0.1, and `network.enabled=true` alone opens the whole
+ * internet (`allow_local_binding` / `domains` / `mode` are ignored without the managed proxy).
+ * With the experimental `network_proxy` feature added, the seatbelt profile allows only loopback
+ * and public hosts fail with EPERM / a 403 from the proxy; see `codexTaskPermissions`. Other
+ * platforms keep everything blocked.
  */
 export const CODEX_TASK_SANDBOX_NOTE =
-  "Sandbox limits: commands can run node and read/write only the assigned task folders, but all network access, including binding or connecting to localhost, is blocked. Report any check that needs a local server or network as not run; do not claim it passed.";
+  process.platform === "darwin"
+    ? "Sandbox limits: commands can run node and read/write only the assigned task folders. You may bind and connect to 127.0.0.1 (for example a local test server), but every other network connection, including public hosts and package registries, is blocked. Report any check that needs the internet as not run; do not claim it passed."
+    : "Sandbox limits: commands can run node and read/write only the assigned task folders, but all network access, including binding or connecting to localhost, is blocked. Report any check that needs a local server or network as not run; do not claim it passed.";
 export function decodeEvent(environment: string, event: any): RuntimeEvent[] {
   const events: RuntimeEvent[] = [];
   if (environment === "wolfram") {
