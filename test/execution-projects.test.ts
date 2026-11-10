@@ -155,8 +155,11 @@ async function fixture(
     script?: Script;
     /** One implementation worker per language (default: Python only). */
     languages?: ("python" | "cpp" | "typescript")[];
+    /** The chat request (default: the original ordinary-chat request). */
+    goal?: string;
   } = {},
 ) {
+  const goal = options.goal ?? original;
   const w = await world(t, { storePath: options.storePath });
   mockVerification(w);
   const folder = await w.folder();
@@ -197,12 +200,12 @@ async function fixture(
   for (const target of [...workers, ...reviewers])
     w.service.saveEdge({ from: planner.id, to: target.id, kind: "delegate" });
   const session = w.service.session(planner.id),
-    message = w.service.message(session.id, { text: original });
+    message = w.service.message(session.id, { text: goal });
   message.status = "delivered";
   w.store.put("message", message);
   const workflow = w.service.workflow({
     name: "Original chat assignment",
-    goal: original,
+    goal,
     ownerId: planner.id,
     kind: "conversation",
     completionCriteria: "Implement and review the requested programs",
@@ -210,7 +213,7 @@ async function fixture(
   w.service.contracts.prepareConversation({
     workflowId: workflow.id,
     agent: planner,
-    text: original,
+    text: goal,
     origin: { sessionId: session.id, messageId: message.id },
   });
   w.service.contracts.authorizeFolder(workflow.id, folder);
@@ -521,6 +524,10 @@ test("production chat preparation spends no planner call and waits for explicit 
     false,
   );
   await c.w.service.setups.apply(workflow.id, { folder: c.folder });
+  // "the languages they are experts in" names none: the planner's question, answered here.
+  c.w.service.executionProjects.configure(workflow.id, {
+    languages: ["python"],
+  });
   c.w.service.launchReadiness.requeueWaiting();
   await c.w.scheduler.tick();
   assert.equal(calls, 0);
@@ -1056,4 +1063,89 @@ test("Start and a retry that find the folder question unanswered answer with the
   await assert.rejects(retryRoute(c), { code: "folder_probe_pending" });
   assert.equal(c.w.tasks().length, tasks);
   assert.equal(c.w.service.executionProjects.get(c.id)!.round, 0);
+});
+
+// ---- the planner's reading and open questions (ticket #116) --------------------------------------
+
+const ambiguous = "write a program that prints pi in python";
+
+test("a request with an open question records the reading, refuses Start and creates no delegation", async (t) => {
+  const c = await fixture(t, { goal: ambiguous });
+  const projects = c.w.service.executionProjects;
+  const plan = projects.plan(c.id);
+  assert.deepEqual(
+    plan.reading.questions.map((q) => [q.id, q.answer]),
+    [["digits", undefined]],
+  );
+  assert.match(plan.reading.summary, /python/);
+  assert.equal(plan.ready, false);
+  const tasks = c.w.tasks().length;
+  await assert.rejects(projects.startPrepared(c.id), {
+    code: "execution_questions_open",
+  });
+  assert.equal(c.w.tasks().length, tasks, "no delegation task was created");
+  assert.equal(projects.get(c.id), null);
+  // Over the API the card sees the same reading.
+  const view = projects.view(c.id);
+  assert.equal(view.plan.reading.questions.length, 1);
+});
+
+test("answering the question re-plans with the answer and delegation is then created and recorded", async (t) => {
+  const c = await fixture(t, { goal: ambiguous });
+  const projects = c.w.service.executionProjects;
+  const replanned = projects.configure(c.id, { digits: 50 });
+  assert.equal(replanned.reading.questions[0].answer, "50");
+  assert.equal(replanned.ready, true);
+  assert.equal(replanned.verification.kind, "pi");
+  assert.equal(
+    replanned.verification.kind === "pi" && replanned.verification.digits,
+    50,
+  );
+  await projects.startPrepared(c.id);
+  const record = projects.get(c.id)!;
+  assert.equal(record.outputs.length, 1);
+  assert.equal(record.reading?.questions[0].answer, "50");
+  await c.w.until(() => projects.get(c.id)?.phase === "completed");
+});
+
+test("a request with no open questions starts as before and still records its reading", async (t) => {
+  const c = await fixture(t, {
+    goal: "write a program that prints pi to 500 digits in python",
+  });
+  const projects = c.w.service.executionProjects;
+  const plan = projects.plan(c.id);
+  assert.deepEqual(plan.reading.questions, []);
+  assert.equal(plan.ready, true);
+  await projects.startPrepared(c.id);
+  assert.deepEqual(projects.get(c.id)!.reading?.questions, []);
+  assert.ok(projects.get(c.id)!.reading?.summary);
+});
+
+test("an unanswered question survives a restart and the answer after it still starts delegation", async (t) => {
+  const { mkdtemp, realpath, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const base = await realpath(
+    await mkdtemp(join(tmpdir(), "agentteam-reading-restart-")),
+  );
+  t.after(() => rm(base, { recursive: true, force: true }));
+  const storePath = join(base, "fixture.sqlite");
+  const c = await fixture(t, { goal: ambiguous, storePath });
+  assert.equal(c.w.service.executionProjects.plan(c.id).ready, false);
+  c.w.store.close();
+  const restored = await world(t, { storePath, base: c.w.base });
+  mockVerification(restored);
+  providers(restored, c.id);
+  const projects = restored.service.executionProjects;
+  assert.deepEqual(
+    projects.plan(c.id).reading.questions.map((q) => q.id),
+    ["digits"],
+  );
+  await assert.rejects(projects.startPrepared(c.id), {
+    code: "execution_questions_open",
+  });
+  projects.configure(c.id, { digits: 20 });
+  await projects.startPrepared(c.id);
+  assert.equal(projects.get(c.id)!.outputs.length, 1);
+  restored.scheduler.stop();
+  restored.store.close();
 });
