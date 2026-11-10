@@ -8,13 +8,18 @@ import { chmodSync, existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 /** `entry` is require.resolve("node-pty"); returns the helpers that are (now) executable. */
-export function ensureSpawnHelper(entry: string): string[] {
+export function ensureSpawnHelper(
+  entry: string,
+  architectures: readonly string[] = [process.arch],
+): string[] {
   if (process.platform === "win32") return [];
   const root = dirname(dirname(entry)).replace("app.asar", "app.asar.unpacked");
   const fixed: string[] = [];
   for (const dir of [
     join(root, "build", "Release"),
-    join(root, "prebuilds", `${process.platform}-${process.arch}`),
+    ...architectures.map((arch) =>
+      join(root, "prebuilds", `${process.platform}-${arch}`),
+    ),
   ]) {
     const helper = join(dir, "spawn-helper");
     if (!existsSync(helper)) continue;

@@ -127,6 +127,7 @@
     "icon": "build/icon.png",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "npmRebuild": false,
+    "afterExtract": "./scripts/preserve-mac-notices.mjs",
     "asarUnpack": [
       "node_modules/node-pty/**"
     ]

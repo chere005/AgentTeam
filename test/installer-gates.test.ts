@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
+import preserveMacNotices from "../scripts/preserve-mac-notices.mjs";
 import {
   allInstallerFiles,
   installerFiles,
@@ -80,21 +81,20 @@ function fixture(
     writeFileSync(p, body);
   };
   for (const rel of requiredResources) put(join(resources, rel));
-  if (platform === "linux") {
-    put(join(app, "LICENSE"));
-    put(join(app, "LICENSES.chromium.html"));
-  }
+  const notices = platform === "mac" ? resources : app;
+  put(join(notices, "LICENSE.electron.txt"));
+  put(join(notices, "LICENSES.chromium.html"));
   const pty = join(
     resources,
     "app.asar.unpacked",
     "node_modules",
     "node-pty",
-    "prebuilds",
+    platform === "mac" ? "prebuilds/darwin-x64" : "build/Release",
   );
-  put(join(pty, platform === "mac" ? "darwin-x64" : "linux-x64", "pty.node"));
+  put(join(pty, "pty.node"));
   if (platform === "mac") {
-    put(join(pty, "darwin-x64", "spawn-helper"));
-    chmodSync(join(pty, "darwin-x64", "spawn-helper"), 0o755);
+    put(join(pty, "spawn-helper"));
+    chmodSync(join(pty, "spawn-helper"), 0o755);
   }
   const files = ["/package.json", "/dist/desktop/main.js", "/dist/index.html"];
   const run = {
@@ -140,6 +140,35 @@ test("verify passes a complete linux package and a complete unsigned mac package
     } finally {
       rmSync(f.dir, { recursive: true, force: true });
     }
+  }
+});
+
+test("the mac packaging hook preserves the extracted Electron and Chromium notices inside the app", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gates-notices-"));
+  try {
+    const resources = join(dir, "Electron.app", "Contents", "Resources");
+    mkdirSync(resources, { recursive: true });
+    writeFileSync(join(dir, "LICENSE"), "Electron distribution notice");
+    writeFileSync(
+      join(dir, "LICENSES.chromium.html"),
+      "Chromium distribution notice",
+    );
+    await preserveMacNotices({
+      appOutDir: dir,
+      electronPlatformName: "darwin",
+    });
+    rmSync(join(dir, "LICENSE"));
+    rmSync(join(dir, "LICENSES.chromium.html"));
+    assert.equal(
+      readFileSync(join(resources, "LICENSE.electron.txt"), "utf8"),
+      "Electron distribution notice",
+    );
+    assert.equal(
+      readFileSync(join(resources, "LICENSES.chromium.html"), "utf8"),
+      "Chromium distribution notice",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 

@@ -61,14 +61,6 @@ export const requiredResources = [
   "assets/skills",
   "assets/team-templates",
 ];
-export function nodePtyPrebuild(platform, arch) {
-  return platform === "mac"
-    ? `darwin-${arch}`
-    : platform === "windows"
-      ? "win32-x64"
-      : "linux-x64";
-}
-
 /** Run every check and return the list of failures (empty = pass). Pure of side effects except reading files / small probes. */
 export function verify({
   platform,
@@ -95,20 +87,15 @@ export function verify({
   }
   for (const rel of requiredResources)
     if (!existsSync(join(resources, rel))) fail(`resources lack ${rel}`);
-  // Electron/Chromium notices ship in the Windows and Linux packages. electron-builder strips them from the macOS app
-  // (observed on 0.7.0: no LICENSE* or LICENSES.chromium.html anywhere in AgentTeam.app), so there it can only be reported.
-  if (platform === "mac")
-    ok.push(
-      "note: macOS app carries no Electron/Chromium notice files (electron-builder removes them); not gated",
-    );
-  else {
-    if (!existsSync(join(app, "LICENSES.chromium.html")))
-      fail("Chromium notice LICENSES.chromium.html not in the package");
-    if (
-      !["LICENSE", "LICENSE.electron.txt"].some((n) => existsSync(join(app, n)))
+  const notices = platform === "mac" ? resources : app;
+  if (!existsSync(join(notices, "LICENSES.chromium.html")))
+    fail("Chromium notice LICENSES.chromium.html not in the package");
+  if (
+    !["LICENSE", "LICENSE.electron.txt"].some((n) =>
+      existsSync(join(notices, n)),
     )
-      fail("Electron LICENSE not in the package");
-  }
+  )
+    fail("Electron LICENSE not in the package");
   // asar: the compiled app and the right version.
   const asarPath = join(resources, "app.asar");
   if (existsSync(asarPath)) {
@@ -135,18 +122,24 @@ export function verify({
   const pty = join(resources, "app.asar.unpacked", "node_modules", "node-pty");
   if (!existsSync(pty))
     fail("node-pty is not unpacked next to the asar (asarUnpack)");
-  else if (!existsSync(join(pty, "prebuilds", nodePtyPrebuild(platform, arch))))
-    fail(`node-pty lacks prebuilds/${nodePtyPrebuild(platform, arch)}`);
-  else if (platform === "mac") {
-    const helper = join(
-      pty,
-      "prebuilds",
-      nodePtyPrebuild(platform, arch),
-      "spawn-helper",
-    );
-    if (!existsSync(helper)) fail("node-pty spawn-helper missing");
-    else if ((statSync(helper).mode & 0o111) === 0)
-      fail("node-pty spawn-helper is not executable");
+  else {
+    const nodePlatform = { mac: "darwin", windows: "win32", linux: "linux" }[
+      platform
+    ];
+    const prebuild = `prebuilds/${nodePlatform}-${arch}`;
+    // node-pty currently compiles from source on Linux. Prefer its normal load order there.
+    const locations =
+      platform === "linux" ? ["build/Release", prebuild] : [prebuild];
+    if (
+      !locations.some((location) => existsSync(join(pty, location, "pty.node")))
+    )
+      fail(`node-pty lacks pty.node in ${locations.join(" or ")}`);
+    if (platform === "mac") {
+      const helper = join(pty, prebuild, "spawn-helper");
+      if (!existsSync(helper)) fail("node-pty spawn-helper missing");
+      else if ((statSync(helper).mode & 0o111) === 0)
+        fail("node-pty spawn-helper is not executable");
+    }
   }
   if (platform === "mac") {
     const plist = run.cmd("/usr/libexec/PlistBuddy", [
