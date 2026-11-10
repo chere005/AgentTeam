@@ -8,7 +8,7 @@ Work through this before tagging. A configured workflow, a version bump or a gre
 - [ ] `npm ci && npm run typecheck && npm test && npm run build`
 - [ ] `npm run test:ui` (Linux: `xvfb-run --auto-servernum npm run test:ui`)
 - [ ] `npx prettier --check` on the files you changed (`npm run format` rewrites the whole tree; avoid it for small patches).
-- [ ] `npm run preflight` passed for the exact commit (Desktop checks and the Release workflow in preflight mode).
+- [ ] `npm run preflight` passed for the exact commit (Desktop checks including the `installers` jobs, which run the same `scripts/installer-gates.mjs` the release runs).
 - [ ] The `Desktop checks` workflow is green on macOS, Windows and Linux for the exact commit.
 
 ## Notices and licenses

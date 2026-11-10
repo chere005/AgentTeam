@@ -40,7 +40,14 @@ import { markdown } from "@codemirror/lang-markdown";
 import { rust } from "@codemirror/lang-rust";
 import { sql } from "@codemirror/lang-sql";
 import { yaml } from "@codemirror/lang-yaml";
-import { csharp } from "@codemirror/legacy-modes/mode/clike";
+import {
+  clike,
+  csharp,
+  dart,
+  kotlin,
+  objectiveC,
+  scala,
+} from "@codemirror/legacy-modes/mode/clike";
 import { cmake } from "@codemirror/legacy-modes/mode/cmake";
 import { diff } from "@codemirror/legacy-modes/mode/diff";
 import { dockerFile } from "@codemirror/legacy-modes/mode/dockerfile";
@@ -48,75 +55,143 @@ import { mathematica } from "@codemirror/legacy-modes/mode/mathematica";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { toml } from "@codemirror/legacy-modes/mode/toml";
 import { verilog } from "@codemirror/legacy-modes/mode/verilog";
+import { languageForPath, type LanguageId } from "../editor-languages";
 import {
   defaultSublimePreferences,
   type SublimeEditorPreferences,
 } from "../editor-preferences";
 
+/** Grammars bundled with the editor (already part of the main chunk). */
+const eager: Partial<Record<LanguageId, () => Extension>> = {
+  typescript: () => javascript({ typescript: true }),
+  javascript: () => javascript(),
+  json: () => json(),
+  python: () => python(),
+  html: () => html(),
+  css: () => css(),
+  sql: () => sql(),
+  yaml: () => yaml(),
+  toml: () => StreamLanguage.define(toml),
+  rust: () => rust(),
+  go: () => go(),
+  java: () => java(),
+  csharp: () => StreamLanguage.define(csharp),
+  kotlin: () => StreamLanguage.define(kotlin),
+  scala: () => StreamLanguage.define(scala),
+  dart: () => StreamLanguage.define(dart),
+  objc: () => StreamLanguage.define(objectiveC),
+  php: () => StreamLanguage.define(phpMode),
+  shell: () => StreamLanguage.define(shell),
+  diff: () => StreamLanguage.define(diff),
+  dockerfile: () => StreamLanguage.define(dockerFile),
+  wolfram: () => StreamLanguage.define(mathematica),
+  verilog: () => StreamLanguage.define(verilog),
+  cmake: () => StreamLanguage.define(cmake),
+  xml: () => xml(),
+  cpp: () => cpp(),
+  markdown: () => markdown(),
+};
+/** Small legacy grammars loaded on first use (a separate chunk each) so the main bundle does not grow. */
+const lazy: Partial<Record<LanguageId, () => Promise<Extension>>> = {
+  swift: async () =>
+    StreamLanguage.define(
+      (await import("@codemirror/legacy-modes/mode/swift")).swift,
+    ),
+  ruby: async () =>
+    StreamLanguage.define(
+      (await import("@codemirror/legacy-modes/mode/ruby")).ruby,
+    ),
+  lua: async () =>
+    StreamLanguage.define(
+      (await import("@codemirror/legacy-modes/mode/lua")).lua,
+    ),
+  perl: async () =>
+    StreamLanguage.define(
+      (await import("@codemirror/legacy-modes/mode/perl")).perl,
+    ),
+  r: async () =>
+    StreamLanguage.define((await import("@codemirror/legacy-modes/mode/r")).r),
+  julia: async () =>
+    StreamLanguage.define(
+      (await import("@codemirror/legacy-modes/mode/julia")).julia,
+    ),
+  haskell: async () =>
+    StreamLanguage.define(
+      (await import("@codemirror/legacy-modes/mode/haskell")).haskell,
+    ),
+  groovy: async () =>
+    StreamLanguage.define(
+      (await import("@codemirror/legacy-modes/mode/groovy")).groovy,
+    ),
+  powershell: async () =>
+    StreamLanguage.define(
+      (await import("@codemirror/legacy-modes/mode/powershell")).powerShell,
+    ),
+  protobuf: async () =>
+    StreamLanguage.define(
+      (await import("@codemirror/legacy-modes/mode/protobuf")).protobuf,
+    ),
+  properties: async () =>
+    StreamLanguage.define(
+      (await import("@codemirror/legacy-modes/mode/properties")).properties,
+    ),
+};
+
+/** PHP as a C-like stream grammar ($variables, # comments, the usual keywords); no HTML embedding. */
+const phpMode = clike({
+  name: "php",
+  keywords: words(
+    "abstract and array as break callable case catch class clone const continue declare default do else elseif enddeclare endfor endforeach endif endswitch endwhile extends final finally fn for foreach function global goto if implements include include_once instanceof insteadof interface match namespace new or print private protected public readonly require require_once return static switch throw trait try use var while xor yield echo isset unset empty die exit list enum",
+  ),
+  blockKeywords: words(
+    "catch class do else elseif for foreach if interface namespace switch try while finally",
+  ),
+  atoms: words(
+    "true false null self parent __FILE__ __LINE__ __DIR__ __CLASS__ __FUNCTION__ __METHOD__ __NAMESPACE__",
+  ),
+  types: words(
+    "int float string bool array object mixed void never iterable callable",
+  ),
+  hooks: {
+    $: (stream: any) => {
+      stream.eatWhile(/[\w$]/);
+      return "variable";
+    },
+    "#": (stream: any) => {
+      if (stream.peek() === "[") return null;
+      stream.skipToEnd();
+      return "comment";
+    },
+  },
+});
+function words(list: string): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const word of list.split(" ")) out[word] = true;
+  return out;
+}
+
 export function editorLanguage(path: string): {
   name: string;
   extension: Extension;
+  /** Present when the grammar is a separate chunk: resolve it, then reconfigure the editor with the result. */
+  load?: () => Promise<Extension>;
 } {
-  const filename = path.split(/[\\/]/).pop()?.toLowerCase() ?? "";
-  const ext = filename.split(".").pop();
-  if (
-    ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"].includes(ext ?? "")
-  )
+  const { id, name } = languageForPath(path);
+  if (id === "typescript" || id === "javascript") {
+    const ext = path.split(".").pop()?.toLowerCase() ?? "";
     return {
-      name: ext === "ts" || ext === "tsx" ? "TypeScript" : "JavaScript",
+      name,
       extension: javascript({
-        typescript: ext === "ts" || ext === "tsx",
+        typescript: id === "typescript",
         jsx: ext === "jsx" || ext === "tsx",
       }),
     };
-  if (ext === "json") return { name: "JSON", extension: json() };
-  if (ext === "py") return { name: "Python", extension: python() };
-  if (["html", "htm", "xhtml"].includes(ext ?? ""))
-    return { name: "HTML", extension: html() };
-  if (ext === "css") return { name: "CSS", extension: css() };
-  if (ext === "sql") return { name: "SQL", extension: sql() };
-  if (["yaml", "yml"].includes(ext ?? ""))
-    return { name: "YAML", extension: yaml() };
-  if (ext === "toml")
-    return { name: "TOML", extension: StreamLanguage.define(toml) };
-  if (ext === "rs") return { name: "Rust", extension: rust() };
-  if (ext === "go") return { name: "Go", extension: go() };
-  if (ext === "java") return { name: "Java", extension: java() };
-  if (ext === "cs")
-    return { name: "C#", extension: StreamLanguage.define(csharp) };
-  if (
-    ["sh", "bash", "zsh", "ksh"].includes(ext ?? "") ||
-    filename === "pkgbuild"
-  )
-    return { name: "Shell", extension: StreamLanguage.define(shell) };
-  if (["diff", "patch"].includes(ext ?? ""))
-    return { name: "Diff", extension: StreamLanguage.define(diff) };
-  if (filename === "dockerfile" || filename.startsWith("dockerfile."))
-    return {
-      name: "Dockerfile",
-      extension: StreamLanguage.define(dockerFile),
-    };
-  if (["wl", "wls", "nb"].includes(ext ?? ""))
-    return {
-      name: "Wolfram Language",
-      extension: StreamLanguage.define(mathematica),
-    };
-  if (["v", "sv", "svh"].includes(ext ?? ""))
-    return { name: "Verilog", extension: StreamLanguage.define(verilog) };
-  if (
-    filename === "cmakelists.txt" ||
-    filename === "cmakelists.txt.in" ||
-    ext === "cmake" ||
-    filename.endsWith(".cmake.in")
-  )
-    return { name: "CMake", extension: StreamLanguage.define(cmake) };
-  if (["xml", "xsl", "xsd", "svg", "xhtml"].includes(ext ?? ""))
-    return { name: "XML", extension: xml() };
-  if (["c", "h", "cc", "cpp", "hpp"].includes(ext ?? ""))
-    return { name: "C / C++", extension: cpp() };
-  if (ext === "md" || ext === "markdown")
-    return { name: "Markdown", extension: markdown() };
-  return { name: "Plain text", extension: [] };
+  }
+  const make = eager[id];
+  if (make) return { name, extension: make() };
+  const load = lazy[id];
+  if (load) return { name, extension: [], load };
+  return { name, extension: [] };
 }
 
 const highlighting = HighlightStyle.define([
@@ -372,9 +447,21 @@ export function CodeEditor({
       });
   }, [value]);
   useEffect(() => {
+    // A grammar that is its own chunk arrives after the first paint; a path change meanwhile discards it.
+    let current = true;
+    const language = editorLanguage(path);
+    language.load?.().then(
+      (extension) => {
+        if (current)
+          view.current?.dispatch({
+            effects: config.current.language.reconfigure(extension),
+          });
+      },
+      () => undefined,
+    );
     view.current?.dispatch({
       effects: [
-        config.current.language.reconfigure(editorLanguage(path).extension),
+        config.current.language.reconfigure(language.extension),
         config.current.access.reconfigure(EditorState.readOnly.of(readOnly)),
         config.current.editable.reconfigure(EditorView.editable.of(!readOnly)),
         config.current.wrapping.reconfigure(
@@ -383,6 +470,9 @@ export function CodeEditor({
         config.current.formatting.reconfigure(formatting(preferences)),
       ],
     });
+    return () => {
+      current = false;
+    };
   }, [path, readOnly, wrap, preferences]);
   return <div ref={host} className="code-editor" data-testid="code-editor" />;
 }
