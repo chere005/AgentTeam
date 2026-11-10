@@ -1,11 +1,14 @@
 import { test, expect, _electron as electron } from "@playwright/test";
+import { realpathSync } from "node:fs";
 import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openFeature } from "./helpers";
 
 test("effective access, shared resources, queue reasons and external-editor labels are visible", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "agentteam-coop-ui-"));
+  const directory = realpathSync.native(
+    await mkdtemp(join(tmpdir(), "agentteam-coop-ui-")),
+  );
   const project = join(directory, "project");
   await mkdir(join(project, "secrets"), { recursive: true });
   await writeFile(join(project, "secrets", "key.txt"), "hidden");

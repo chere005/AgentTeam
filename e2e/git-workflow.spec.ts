@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { test, expect, _electron as electron } from "@playwright/test";
 import { mkdtemp, rm, mkdir, writeFile, rename } from "node:fs/promises";
-import { devNull, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openFeature } from "./helpers";
 
@@ -9,17 +9,24 @@ import { openFeature } from "./helpers";
 // network, a browser, or the user's AgentTeam data directory.
 // Fetch/pull/push spawn Git against a local bare remote; a busy hosted runner has taken over 5 s.
 const GIT_NETWORK = 20_000;
-test("git workflow: fetch/pull/push feedback, branch safety, conflicts, PR link, previews, live refresh", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "agentteam-gitwf-"));
-  const env = {
+async function fixtureGitEnvironment(directory: string) {
+  const config = join(directory, "empty.gitconfig");
+  // Git for Windows rejects the device returned by os.devNull as a config file.
+  await writeFile(config, "");
+  return {
     ...process.env,
-    GIT_CONFIG_GLOBAL: devNull,
+    GIT_CONFIG_GLOBAL: config,
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_AUTHOR_NAME: "Test",
     GIT_COMMITTER_NAME: "Test",
     GIT_AUTHOR_EMAIL: "t@example.invalid",
     GIT_COMMITTER_EMAIL: "t@example.invalid",
   };
+}
+
+test("git workflow: fetch/pull/push feedback, branch safety, conflicts, PR link, previews, live refresh", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "agentteam-gitwf-"));
+  const env = await fixtureGitEnvironment(directory);
   const git = (cwd: string, ...args: string[]) =>
     execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", env });
   const bare = join(directory, "origin.git"),
@@ -250,15 +257,7 @@ test("git workflow: fetch/pull/push feedback, branch safety, conflicts, PR link,
 // merge or rebase from a chosen branch, including the conflict workflow it feeds.
 test("git workflow: stage a rename pair, start a merge or rebase with confirmation, conflicts and abort", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentteam-gitint-"));
-  const env = {
-    ...process.env,
-    GIT_CONFIG_GLOBAL: devNull,
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_AUTHOR_NAME: "Test",
-    GIT_COMMITTER_NAME: "Test",
-    GIT_AUTHOR_EMAIL: "t@example.invalid",
-    GIT_COMMITTER_EMAIL: "t@example.invalid",
-  };
+  const env = await fixtureGitEnvironment(directory);
   const git = (cwd: string, ...args: string[]) =>
     execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", env });
   const project = join(directory, "project");
