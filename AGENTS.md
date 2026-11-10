@@ -14,6 +14,7 @@ Applies to the entire repository. Follow explicit user instructions and higher-p
 AgentTeam is a local, cross-platform desktop workspace for configuring and orchestrating agents across Claude, Codex, and Wolfram environments.
 
 - Keep Electron, React, TypeScript, and SQLite compatible with macOS, Windows, and Linux. Do not introduce a platform-specific replacement for the application shell.
+- macOS targets Apple Silicon only; Windows and Linux x64 support remains.
 - A team is the persistent organization of agents; a project is work assigned to that team (`workflow` in the API); a workflow graph is an executable step graph inside a project. Team settings affect future assignments without rewriting existing projects.
 - Use the hybrid architecture: custom product orchestration and access policies, ACP transport where supported, direct provider adapters as alternatives.
 - `TeamService` owns validated mutations and communication rules; `Scheduler` selects eligible tasks; `ResourceCoordinator` governs resource leases, priority, fairness, and concurrency. UI and provider tools must use the same backend policy checks.

@@ -9,8 +9,7 @@ try {
 } catch {
   process.exit(0);
 }
-// A Mac can package either target architecture regardless of the Node host.
-const architectures =
-  process.platform === "darwin" ? ["arm64", "x64"] : undefined;
+// macOS packages target Apple Silicon only.
+const architectures = process.platform === "darwin" ? ["arm64"] : undefined;
 for (const helper of ensureSpawnHelper(entry, architectures))
   console.log("node-pty spawn-helper ready: " + helper);

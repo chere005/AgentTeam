@@ -23,6 +23,8 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 /** The installer files one job uploads, in the names electron-builder gives them (artifactName in package.json). */
 export function installerFiles(platform, arch, version) {
   const base = `AgentTeam-${version}-`;
+  if (platform === "mac" && arch !== "arm64")
+    throw new Error("macOS builds support Apple Silicon only");
   if (platform === "mac")
     return [`${base}mac-${arch}.dmg`, `${base}mac-${arch}.zip`];
   if (platform === "windows") return [`${base}win-x64.exe`];
@@ -34,7 +36,6 @@ export function installerFiles(platform, arch, version) {
 export function allInstallerFiles(version) {
   return [
     ...installerFiles("mac", "arm64", version),
-    ...installerFiles("mac", "x64", version),
     ...installerFiles("windows", "x64", version),
     ...installerFiles("linux", "x64", version),
   ];
@@ -42,7 +43,9 @@ export function allInstallerFiles(version) {
 /** The unpacked application electron-builder leaves next to the installers, and where its resources are. */
 export function unpackedApp(platform, arch, dir = "release") {
   if (platform === "mac") {
-    const folder = arch === "arm64" ? "mac-arm64" : "mac";
+    if (arch !== "arm64")
+      throw new Error("macOS builds support Apple Silicon only");
+    const folder = "mac-arm64";
     return {
       app: join(dir, folder, "AgentTeam.app"),
       resources: join(dir, folder, "AgentTeam.app", "Contents", "Resources"),
@@ -135,6 +138,8 @@ export function verify({
     )
       fail(`node-pty lacks pty.node in ${locations.join(" or ")}`);
     if (platform === "mac") {
+      if (existsSync(join(pty, "prebuilds", "darwin-x64")))
+        fail("Mac package contains Intel node-pty prebuilds");
       const helper = join(pty, prebuild, "spawn-helper");
       if (!existsSync(helper)) fail("node-pty spawn-helper missing");
       else if ((statSync(helper).mode & 0o111) === 0)
@@ -155,7 +160,7 @@ export function verify({
       "-archs",
       join(app, "Contents", "MacOS", "AgentTeam"),
     ]);
-    const want = arch === "arm64" ? "arm64" : "x86_64";
+    const want = "arm64";
     if (
       archs.status !== 0 ||
       archs.stdout.trim().split(/\s+/).join(" ") !== want
@@ -256,6 +261,8 @@ async function main(argv) {
     process.platform
   ];
   if (!platform) throw new Error(`unsupported platform ${process.platform}`);
+  if (platform === "mac" && arch !== "arm64")
+    throw new Error("macOS builds support Apple Silicon only");
   const version = JSON.parse(
     readFileSync(join(root, "package.json"), "utf8"),
   ).version;

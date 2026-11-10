@@ -83,7 +83,8 @@
     },
     "files": [
       "dist/**/*",
-      "package.json"
+      "package.json",
+      "!node_modules/node-pty/prebuilds/darwin-x64/**/*"
     ],
     "extraResources": [
       {
@@ -93,8 +94,18 @@
     ],
     "mac": {
       "target": [
-        "dmg",
-        "zip"
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
       ],
       "category": "public.app-category.developer-tools",
       "hardenedRuntime": true,
