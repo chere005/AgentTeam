@@ -43,7 +43,7 @@ Current check results are recorded in docs/CONTINUATION.md (fixture and desktop 
 
 ### Automatic worktree setup
 
-- [ ] Auto-create setting (`/worktrees/settings`, global toggle in the Git pane, per-repository overrides API-only) runs only for tasks created through `POST /tasks`; tasks created by templates/samples/service calls, a per-project UI, and an HTTP-level test of the auto path remain.
+- [ ] Auto-create setting (`/worktrees/settings`, global toggle in the Git pane, per-repository overrides API-only) now covers `POST /tasks`, team-space project assignment and the Wolfram sample route (HTTP-tested in `test/projects.test.ts`); tasks created internally by running work (execution projects with explicit output folders, pipelines which manage their own worktrees, delegated children, review tasks) deliberately do not auto-create. A per-project UI toggle remains optional.
 - [ ] Test creation, attachment, failure recovery, and cleanup on macOS, Windows, and Linux (verified on macOS only; `/dev/null`-style and permission assumptions are untested elsewhere).
 
 ### Development server and preview

@@ -124,6 +124,26 @@ export class TeamService {
   /** Dry-run services only: a missing absolute workspace folder is kept as written, not an ENOENT. */
   allowPlannedFolders = false;
   /**
+   * Set by the HTTP layer (WorktreeService.autoForTask). Task creators that are not `POST /tasks`
+   * (project assignment, samples) call it through `autoWorktreesFor` so the auto-create setting
+   * applies to them too. Absent in dry-run and unit-test services: nothing is created.
+   */
+  autoWorktree:
+    ((agentId: string, taskId?: string) => Promise<unknown>) | null = null;
+  /** Auto-create worktrees for each distinct agent that has tasks in the workflow; never throws. */
+  async autoWorktreesFor(workflowId: string) {
+    const out: { agentId: string; result: unknown }[] = [];
+    if (!this.autoWorktree) return out;
+    const seen = new Set<string>();
+    for (const task of this.store.list<Task>("task")) {
+      if (task.workflowId !== workflowId || seen.has(task.agentId)) continue;
+      seen.add(task.agentId);
+      const result = await this.autoWorktree(task.agentId, task.id);
+      if (result) out.push({ agentId: task.agentId, result });
+    }
+    return out;
+  }
+  /**
    * Whether a provider runtime is installed and signed in, as the app currently knows it. Wired by
    * the RunManager; the setup and notice views report it, the launch has its own path for it.
    */

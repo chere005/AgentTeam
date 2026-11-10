@@ -618,3 +618,54 @@ test("team templates v3: roleType and the project profile round-trip; a partial 
   );
   store.close();
 });
+
+test("the worktree auto-create setting applies over HTTP to POST /tasks and to assigned projects, and is off by default", async (t) => {
+  const w = await api(t);
+  const team = await w.insert("product-feature-team");
+  const members = w.service.teamSpaces.members(team.teamId).agents;
+  const backend = members.find((a) => a.name === "Backend Engineer")!;
+  const front = members.find((a) => a.name === "Frontend Engineer")!;
+  const project = (goal: string) =>
+    w.call("POST", `/team-spaces/${team.teamId}/projects`, {
+      goal,
+      workspace: w.repo,
+      tasks: [{ title: "Backend preference", agentId: backend.id }],
+    });
+  const workspaceOf = (id: string) =>
+    w.store.get<Agent>("agent", id).workspaces.find((f) => f.active)?.path;
+
+  // Off by default: nothing is created.
+  const off = await project("Add a dark mode toggle");
+  assert.equal(off.status, 201, JSON.stringify(off.body));
+  assert.equal(off.body.autoWorktrees, undefined);
+  assert.equal(workspaceOf(backend.id), w.repo);
+
+  assert.equal(
+    (await w.call("PUT", "/worktrees/settings", { autoCreate: true })).status,
+    200,
+  );
+  // A project assigned to the team (not POST /tasks) now gets an isolated worktree per agent.
+  const on = await project("Add a light mode toggle");
+  assert.equal(on.status, 201, JSON.stringify(on.body));
+  assert.equal(on.body.autoWorktrees.length, 1);
+  assert.equal(on.body.autoWorktrees[0].agentId, backend.id);
+  assert.equal(on.body.autoWorktrees[0].result.ok, true);
+  const made = workspaceOf(backend.id)!;
+  assert.notEqual(made, w.repo);
+  assert.equal(made, await realpath(on.body.autoWorktrees[0].result.path));
+
+  // POST /tasks keeps working the same way.
+  w.store.put("agent", {
+    ...front,
+    workspaces: [{ path: w.repo, access: "write", active: true }],
+  });
+  const direct = await w.call("POST", "/tasks", {
+    workflowId: on.body.id,
+    agentId: front.id,
+    title: "Direct task",
+    completionCriteria: "Done",
+  });
+  assert.equal(direct.status, 201, JSON.stringify(direct.body));
+  assert.equal(direct.body.autoWorktree.ok, true);
+  assert.notEqual(workspaceOf(front.id), w.repo);
+});
