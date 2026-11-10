@@ -10,7 +10,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 import {
   allInstallerFiles,
@@ -20,7 +21,8 @@ import {
   verify,
 } from "../scripts/installer-gates.mjs";
 
-const repo = new URL("..", import.meta.url).pathname;
+// fileURLToPath: `URL.pathname` is "/C:/..." on Windows.
+const repo = fileURLToPath(new URL("..", import.meta.url));
 const text = (...p: string[]) => readFileSync(join(repo, ...p), "utf8");
 
 test("installer file names match electron-builder's artifactName", () => {
@@ -118,7 +120,13 @@ function fixture(
 }
 
 test("verify passes a complete linux package and a complete unsigned mac package", () => {
-  for (const platform of ["linux", "mac"] as const) {
+  // A Windows filesystem keeps no execute bit (chmod is a no-op there), so the mac package's
+  // spawn-helper check can only be exercised where the package is built: macOS (and Linux).
+  const platforms =
+    process.platform === "win32"
+      ? (["linux"] as const)
+      : (["linux", "mac"] as const);
+  for (const platform of platforms) {
     const f = fixture(platform);
     try {
       const r = verify({
@@ -246,9 +254,16 @@ esac
   );
   chmodSync(join(bin, "git"), 0o755);
   chmodSync(join(bin, "gh"), 0o755);
+  // Windows spells the variable Path and separates entries with ";" (Git Bash converts it).
+  const env: Record<string, string> = {};
+  let path = "";
+  for (const [key, value] of Object.entries(process.env))
+    if (value === undefined) continue;
+    else if (/^path$/i.test(key)) path = value;
+    else env[key] = value;
   const r = spawnSync("bash", [join(repo, "scripts", "preflight.sh")], {
     encoding: "utf8",
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+    env: { ...env, PATH: `${bin}${delimiter}${path}` },
     timeout: 30_000,
   });
   const marked =

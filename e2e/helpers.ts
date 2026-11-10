@@ -94,3 +94,32 @@ export async function openAgentPanel(page: Page, agentName: string) {
   await openFeature(page, "Canvas");
   return openSetup(page, agentName);
 }
+
+/**
+ * Installs a Node fixture script (test/fixtures/*.mjs) as an executable named `name` in `bin`
+ * and returns the path to configure as the runtime's executable. POSIX: the script itself with
+ * its `#!/usr/bin/env node` shebang, made executable. Windows: an npm-style `<name>.cmd` shim
+ * next to the script, as npm installs Codex/Claude there, plus `node.exe` beside it (a hard
+ * link, or a copy across volumes) so the shim runs even with an empty PATH; AgentTeam launches
+ * the shim's script directly without a shell (src/runtime-spawn.ts).
+ */
+export async function installFixtureExecutable(
+  bin: string,
+  name: string,
+  source: string,
+): Promise<string> {
+  const { chmod, copyFile, link, writeFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  if (process.platform !== "win32") {
+    const executable = join(bin, name);
+    await copyFile(source, executable);
+    await chmod(executable, 0o755);
+    return executable;
+  }
+  await copyFile(source, join(bin, `${name}.mjs`));
+  const node = join(bin, "node.exe");
+  await link(process.execPath, node).catch(() => copyFile(process.execPath, node));
+  const shim = join(bin, `${name}.cmd`);
+  await writeFile(shim, `@"%~dp0\\node.exe" "%~dp0\\${name}.mjs" %*\r\n`);
+  return shim;
+}

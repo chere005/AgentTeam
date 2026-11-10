@@ -30,6 +30,7 @@ export { withRepoLock } from "./repo-lock.ts";
 import { withRepoLock } from "./repo-lock.ts";
 import { restoreSourceWrite } from "./project-worktrees.ts";
 import { NO_GIT_HOOKS_DIR } from "./git-config.ts";
+import { samePath } from "./path-utils.ts";
 
 type GitResult = { ok: boolean; out: string; err: string };
 async function run(cwd: string, args: string[]): Promise<GitResult> {
@@ -196,7 +197,20 @@ export class WorktreeService {
   effective(root: string) {
     const all = this.settings();
     const { autoCreate, keepSource, setup } = all;
-    return { autoCreate, keepSource, setup, ...all.projects[root] };
+    // Overrides are keyed by the repository's real path. On Windows the same folder can be
+    // spelled with another drive-letter case, forward slashes or an 8.3 alias; match by identity.
+    const key =
+      root in all.projects
+        ? root
+        : process.platform === "win32"
+          ? Object.keys(all.projects).find((k) => samePath(k, root))
+          : undefined;
+    return {
+      autoCreate,
+      keepSource,
+      setup,
+      ...(key ? all.projects[key] : {}),
+    };
   }
   // ---- helpers ----------------------------------------------------------
   /** Why the agent's folders must not switch now, or null. */
@@ -900,14 +914,18 @@ export class WorktreeService {
           .join(", ")}). Commit, stash, or archive it instead`,
         409,
       );
+      // Run Git from the main working tree, never from inside the tree being removed: Windows
+      // refuses to delete a process's current directory ("Permission denied"), and afterwards
+      // the removed folder no longer exists for the branch deletion.
+      const from = mainRoot || root;
       await withRepoLock(common, async () => {
         await must(
-          root,
+          from,
           ["worktree", "remove", "--", target],
           "worktree_remove_failed",
         );
         if (data.deleteBranch && branch) {
-          const r = await run(root, ["branch", "-d", "--", branch]);
+          const r = await run(from, ["branch", "-d", "--", branch]);
           branchDeleted = r.ok;
           if (!r.ok) warning = `Branch ${branch} was kept: ${r.err.trim()}`;
         }

@@ -1,3 +1,4 @@
+import "./fixtures/temp-data-dir.ts";
 // C coordinator fixtures deliberately mock B's execution boundary. They test routing, exact
 // review identity/provenance and durable rounds; real confinement is covered separately by B.
 import { test } from "node:test";

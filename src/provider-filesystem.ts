@@ -1,5 +1,5 @@
 import { realpath, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { pathModule } from "./runtime-spawn.ts";
 import { canonicalPolicyPath } from "./filesystem-policy.ts";
 import { assert, type Agent, type Task } from "./model.ts";
 import { hasRestrictions } from "./access.ts";
@@ -146,7 +146,8 @@ export function codexTaskPermissions(
     for (const ws of workspaces) {
       filesystem[ws.path] =
         writable && ws.access === "write" ? "write" : "read";
-      filesystem[join(ws.path, ".git")] = "deny";
+      // The target platform's separator, not the host's (a launch planned for another platform).
+      filesystem[pathModule(platform).join(ws.path, ".git")] = "deny";
     }
   if (tools.includes("read"))
     for (const root of extraReadRoots) filesystem[root] ??= "read";
