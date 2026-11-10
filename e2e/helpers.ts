@@ -108,7 +108,8 @@ export async function installFixtureExecutable(
   name: string,
   source: string,
 ): Promise<string> {
-  const { chmod, copyFile, link, writeFile } = await import("node:fs/promises");
+  const { chmod, constants, copyFile, link, writeFile } =
+    await import("node:fs/promises");
   const { join } = await import("node:path");
   if (process.platform !== "win32") {
     const executable = join(bin, name);
@@ -118,7 +119,17 @@ export async function installFixtureExecutable(
   }
   await copyFile(source, join(bin, `${name}.mjs`));
   const node = join(bin, "node.exe");
-  await link(process.execPath, node).catch(() => copyFile(process.execPath, node));
+  const alreadyExists = (error: unknown) =>
+    (error as NodeJS.ErrnoException).code === "EEXIST";
+  await link(process.execPath, node).catch(async (error) => {
+    // Several shims can share the same bin. Never copy over an existing Node hardlink.
+    if (alreadyExists(error)) return;
+    await copyFile(process.execPath, node, constants.COPYFILE_EXCL).catch(
+      (copyError) => {
+        if (!alreadyExists(copyError)) throw copyError;
+      },
+    );
+  });
   const shim = join(bin, `${name}.cmd`);
   await writeFile(shim, `@"%~dp0\\node.exe" "%~dp0\\${name}.mjs" %*\r\n`);
   return shim;
