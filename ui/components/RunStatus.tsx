@@ -33,19 +33,8 @@ type Project = Snapshot["workflows"][number];
 
 /** The one project-context header, shown above every work view (canvas, chat, files, diff, tabs). */
 export function ProjectContextBar({ project }: { project: Project | null }) {
-  if (!project)
-    return (
-      <div
-        className="project-context-bar projects-current-context"
-        data-testid="project-context"
-      >
-        <span>Current project</span>
-        <b>None selected</b>
-        <small>
-          Choose a project in the top bar to keep the views in context.
-        </small>
-      </div>
-    );
+  // No project: the top bar's Current project picker already says so; no empty bar in every view.
+  if (!project) return null;
   const done = project.tasks.filter((t) => t.status === "completed").length;
   const folder = project.setup?.workspace?.split(/[\\/]/).filter(Boolean).pop();
   return (
