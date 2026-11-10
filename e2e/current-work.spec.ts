@@ -98,7 +98,7 @@ test("Projects can resolve a failed attempt against verified work and undo it", 
     await card.getByRole("button", { name: "Mark superseded" }).click();
 
     await expect(card.locator(".project-heading .badge")).toHaveText(
-      "completed",
+      "done",
     );
     await expect(card.getByRole("progressbar")).toHaveAttribute(
       "aria-valuenow",
