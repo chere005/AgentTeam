@@ -103,24 +103,32 @@ export function ExecutionProjectCard({
         <div key={q.id} data-testid={`planner-question-${q.id}`}>
           <label>
             {q.prompt}
-            <input
-              aria-label={q.prompt}
-              disabled={!!project || !!q.answer}
-              placeholder={q.suggestion ?? ""}
-              value={q.answer ?? answers[q.id] ?? ""}
-              onChange={(e) =>
-                setAnswers({ ...answers, [q.id]: e.target.value })
-              }
-            />
+            {(() => {
+              const field = {
+                "aria-label": q.prompt,
+                disabled: !!project || !!q.answer,
+                placeholder: q.suggestion ?? "",
+                value: q.answer ?? answers[q.id] ?? "",
+                onChange: (
+                  e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
+                ) => setAnswers({ ...answers, [q.id]: e.target.value }),
+              };
+              // Expected output can span lines; the other answers are one line.
+              return q.id === "output" ? (
+                <textarea {...field} />
+              ) : (
+                <input {...field} />
+              );
+            })()}
           </label>
           {!project && !q.answer && (
             <>
               <button
-                disabled={busy || !(answers[q.id] ?? q.suggestion)}
+                disabled={busy || !(answers[q.id] || q.suggestion)}
                 onClick={() =>
                   void perform(
                     "configure",
-                    answerPayload(q.id, answers[q.id] ?? q.suggestion!),
+                    answerPayload(q.id, answers[q.id] || q.suggestion!),
                   )
                 }
               >
