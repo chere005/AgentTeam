@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import { validatePackageTarget } from "./package-target.mjs";
+validatePackageTarget(process.platform, process.argv.slice(2));
 const env = { ...process.env };
 // GitHub Actions passes unset secrets as empty strings. electron-builder treats
 // an empty CSC_LINK as a path, which resolves to the repository directory and

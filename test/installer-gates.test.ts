@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 import preserveMacNotices from "../scripts/preserve-mac-notices.mjs";
+import { validatePackageTarget } from "../scripts/package-target.mjs";
 import {
   allInstallerFiles,
   installerFiles,
@@ -32,6 +33,7 @@ test("installer file names match electron-builder's artifactName", () => {
     "AgentTeam-1.2.3-mac-arm64.dmg",
     "AgentTeam-1.2.3-mac-arm64.zip",
   ]);
+  assert.throws(() => installerFiles("mac", "x64", "1.2.3"));
   assert.deepEqual(installerFiles("windows", "x64", "1.2.3"), [
     "AgentTeam-1.2.3-win-x64.exe",
   ]);
@@ -40,6 +42,26 @@ test("installer file names match electron-builder's artifactName", () => {
     "AgentTeam-1.2.3-linux-amd64.deb",
   ]);
   assert.throws(() => installerFiles("beos", "x64", "1"));
+});
+
+test("macOS packaging rejects Intel and universal targets without blocking other platforms", () => {
+  assert.throws(() => validatePackageTarget("darwin", ["--x64"]));
+  assert.throws(() => validatePackageTarget("linux", ["--mac", "--universal"]));
+  assert.throws(() => validatePackageTarget("darwin", ["--arch=x64"]));
+  assert.throws(() => validatePackageTarget("darwin", ["--arch", "x86_64"]));
+  assert.throws(() => validatePackageTarget("darwin", ["--x64=true"]));
+  assert.doesNotThrow(() => validatePackageTarget("darwin", ["--arm64"]));
+  assert.doesNotThrow(() =>
+    validatePackageTarget("darwin", ["--win", "--x64"]),
+  );
+  assert.doesNotThrow(() => validatePackageTarget("linux", ["--x64"]));
+  const config = JSON.parse(text("package.json"));
+  assert.ok(
+    config.build.mac.target.every(
+      (target: { arch: string[] }) =>
+        JSON.stringify(target.arch) === JSON.stringify(["arm64"]),
+    ),
+  );
 });
 
 test("release.yml publishes exactly the files the gates script lists, and both workflows call the script", () => {
@@ -56,6 +78,13 @@ test("release.yml publishes exactly the files the gates script lists, and both w
   assert.match(release, /node scripts\/installer-gates\.mjs --x64/);
   assert.doesNotMatch(release, /scripts\/package\.mjs/);
   const ci = parse(text(".github", "workflows", "ci.yml"));
+  assert.deepEqual(parse(release).jobs.mac.strategy.matrix.arch, ["arm64"]);
+  assert.deepEqual(
+    ci.jobs.installers.strategy.matrix.include
+      .filter((job: { os: string }) => job.os === "macos-latest")
+      .map((job: { arch: string }) => job.arch),
+    ["arm64"],
+  );
   const steps = JSON.stringify(ci.jobs.installers.steps);
   assert.match(steps, /scripts\/installer-gates\.mjs/);
   assert.equal(ci.jobs.installers["continue-on-error"], true);
@@ -71,7 +100,7 @@ function fixture(
 ) {
   const dir = mkdtempSync(join(tmpdir(), "gates-"));
   const version = "1.0.0";
-  const arch = "x64";
+  const arch = platform === "mac" ? "arm64" : "x64";
   const big = Buffer.alloc(5_000_001);
   for (const f of installerFiles(platform, arch, version))
     writeFileSync(join(dir, f), big);
@@ -90,7 +119,7 @@ function fixture(
     "app.asar.unpacked",
     "node_modules",
     "node-pty",
-    platform === "mac" ? "prebuilds/darwin-x64" : "build/Release",
+    platform === "mac" ? "prebuilds/darwin-arm64" : "build/Release",
   );
   put(join(pty, "pty.node"));
   if (platform === "mac") {
@@ -105,7 +134,7 @@ function fixture(
         Buffer.from(JSON.stringify({ version: opts.version ?? version })),
     }),
     cmd: (c: string, a: string[]) => {
-      if (c === "lipo") return { status: 0, stdout: "x86_64\n", stderr: "" };
+      if (c === "lipo") return { status: 0, stdout: "arm64\n", stderr: "" };
       if (c === "codesign")
         return { status: 1, stdout: "", stderr: "not signed" };
       if (c === "unzip")
@@ -141,6 +170,35 @@ test("verify passes a complete linux package and a complete unsigned mac package
     } finally {
       rmSync(f.dir, { recursive: true, force: true });
     }
+  }
+});
+
+test("a Mac package must not contain Intel node-pty prebuilds", () => {
+  const f = fixture("mac");
+  try {
+    const { resources } = unpackedApp("mac", "arm64", f.dir);
+    const intel = join(
+      resources,
+      "app.asar.unpacked",
+      "node_modules",
+      "node-pty",
+      "prebuilds",
+      "darwin-x64",
+    );
+    mkdirSync(intel, { recursive: true });
+    writeFileSync(join(intel, "pty.node"), "fixture");
+    const result = verify({
+      platform: "mac",
+      arch: f.arch,
+      version: f.version,
+      dir: f.dir,
+      run: f.run,
+    });
+    assert.ok(
+      result.failures.some((failure: string) => /Intel node-pty/.test(failure)),
+    );
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
   }
 });
 
@@ -236,7 +294,7 @@ test("a mac build with signing credentials fails when codesign does", () => {
       ...f.run,
       cmd: (c: string) =>
         c === "lipo"
-          ? { status: 0, stdout: "arm64\n", stderr: "" }
+          ? { status: 0, stdout: "x86_64\n", stderr: "" }
           : f.run.cmd(c, []),
     };
     const r2 = verify({

@@ -96,7 +96,7 @@ jobs:
 
   # The installer gates, on preflight branches only (scripts/preflight.sh): the same script the release runs
   # (scripts/installer-gates.mjs) builds and packages the app for each platform, inspects the package and smoke-launches it.
-  # Nothing is uploaded or published. macOS (arm64 and x64) decides; Windows and Linux are informational like the checks.
+  # Nothing is uploaded or published. Apple Silicon macOS decides; Windows and Linux are informational like the checks.
   installers:
     if: github.triggering_actor == 'github-actions[bot]' && startsWith(github.ref_name, 'preflight/')
     name: installers (${{ matrix.os }}, ${{ matrix.arch }}${{ matrix.optional && ', optional' || '' }})
@@ -106,9 +106,6 @@ jobs:
         include:
           - os: macos-latest
             arch: arm64
-            optional: false
-          - os: macos-latest
-            arch: x64
             optional: false
           - os: windows-latest
             arch: x64
