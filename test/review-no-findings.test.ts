@@ -86,9 +86,11 @@ test("a task-scoped Codex reviewer keeps a shell, but a read-only one with no ne
   assert.ok(fs.includes('"/work/a"="read"'));
   assert.ok(!fs.includes('"write"'), "no root is writable");
   assert.ok(fs.includes(`${JSON.stringify(join("/work/a", ".git"))}="deny"`));
-  const windows = codexTaskPermissions(plan.workspaces, plan.tools, "win32").join(
-    " ",
-  );
+  const windows = codexTaskPermissions(
+    plan.workspaces,
+    plan.tools,
+    "win32",
+  ).join(" ");
   assert.ok(windows.includes(JSON.stringify("\\work\\a\\.git") + '="deny"'));
   assert.ok(!fs.includes("/Users"), "no node or home roots");
   assert.ok(
