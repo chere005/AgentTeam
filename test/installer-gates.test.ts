@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -10,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 import preserveMacNotices from "../scripts/preserve-mac-notices.mjs";
@@ -257,6 +258,7 @@ function preflight(jobs: string) {
   const bin = join(dir, "bin");
   mkdirSync(bin);
   mkdirSync(join(dir, ".git"));
+  writeFileSync(join(dir, "preflight.sh"), text("scripts", "preflight.sh"));
   writeFileSync(join(dir, "jobs.tsv"), jobs);
   writeFileSync(
     join(bin, "git"),
@@ -265,8 +267,8 @@ case "$1 $2" in
   "rev-parse --abbrev-ref") echo work ;;
   "status --porcelain") ;;
   "rev-parse HEAD") echo 0123456789abcdef0123456789abcdef01234567 ;;
-  "rev-parse --git-common-dir") echo "${dir}/.git" ;;
-  *) echo "git $*" >> "${dir}/git.log" ;;
+  "rev-parse --git-common-dir") echo .git ;;
+  *) echo "git $*" >> git.log ;;
 esac
 `,
   );
@@ -277,27 +279,23 @@ case "$*" in
   api*) echo 4242 ;;
   *status,jobs*) printf 'completed\\t2\\t0\\n' ;;
   *--jq*"failure"*) ;;
-  *) cat "${dir}/jobs.tsv" ;;
+  *) cat jobs.tsv ;;
 esac
 `,
   );
-  chmodSync(join(bin, "git"), 0o755);
-  chmodSync(join(bin, "gh"), 0o755);
-  // Windows spells the variable Path and separates entries with ";" (Git Bash converts it).
-  const env: Record<string, string> = {};
-  let path = "";
-  for (const [key, value] of Object.entries(process.env))
-    if (value === undefined) continue;
-    else if (/^path$/i.test(key)) path = value;
-    else env[key] = value;
-  const r = spawnSync("bash", [join(repo, "scripts", "preflight.sh")], {
-    encoding: "utf8",
-    env: { ...env, PATH: `${bin}${delimiter}${path}` },
-    timeout: 30_000,
-  });
-  const marked =
-    spawnSync("ls", [join(dir, ".git", "preflight")], { encoding: "utf8" })
-      .status === 0;
+  // Git Bash on Windows can prepend its own binaries at startup. Use shell
+  // functions in the same Bash process so neither command depends on PATH order.
+  const r = spawnSync(
+    "bash",
+    [
+      "-c",
+      `git() { bash ./bin/git "$@"; }
+gh() { bash ./bin/gh "$@"; }
+source ./preflight.sh`,
+    ],
+    { cwd: dir, encoding: "utf8", timeout: 30_000 },
+  );
+  const marked = existsSync(join(dir, ".git", "preflight"));
   rmSync(dir, { recursive: true, force: true });
   return { ...r, marked };
 }
