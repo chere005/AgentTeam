@@ -1,6 +1,7 @@
 import "./fixtures/temp-data-dir.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import { contractObjects, EMPTY_LIST_FIELDS } from "../src/limits.ts";
 import { parseVerdict } from "../src/orchestration.ts";
 import { REVIEW_CONTRACT } from "../src/roles.ts";
@@ -10,6 +11,7 @@ import {
   commandFor,
 } from "../src/runtime.ts";
 import { codexShellMode } from "../src/launch-capability.ts";
+import { codexTaskPermissions } from "../src/provider-filesystem.ts";
 
 // ---- (b) an empty `findings` list is a real answer; nothing else empty is --------------------------
 
@@ -83,7 +85,11 @@ test("a task-scoped Codex reviewer keeps a shell, but a read-only one with no ne
   const fs = table(c.args);
   assert.ok(fs.includes('"/work/a"="read"'));
   assert.ok(!fs.includes('"write"'), "no root is writable");
-  assert.ok(fs.includes('"/work/a/.git"="deny"'));
+  assert.ok(fs.includes(`${JSON.stringify(join("/work/a", ".git"))}="deny"`));
+  const windows = codexTaskPermissions(plan.workspaces, plan.tools, "win32").join(
+    " ",
+  );
+  assert.ok(windows.includes(JSON.stringify("\\work\\a\\.git") + '="deny"'));
   assert.ok(!fs.includes("/Users"), "no node or home roots");
   assert.ok(
     c.args.includes("permissions.agentteam-task.network.enabled=false"),
