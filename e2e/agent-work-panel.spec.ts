@@ -18,67 +18,73 @@ test("an agent's Chat pane leads with its result and tucks full instructions beh
     await expect(
       page.getByText("Workspace connected", { exact: true }),
     ).toBeVisible();
-    const work = await page.evaluate(async (folder) => {
-      const request = window.agentteam.request;
-      const manager = await request("POST", "/agents", {
-        name: "Manager",
-        environment: "codex",
-        roleType: "coordinator",
-      });
-      const builder = await request("POST", "/agents", {
-        name: "Python Builder",
-        environment: "claude",
-        roleType: "implementer",
-        workspaces: [{ path: folder, access: "write", active: true }],
-      });
-      const reviewer = await request("POST", "/agents", {
-        name: "Code Reviewer",
-        environment: "codex",
-        roleType: "reviewer",
-      });
-      await request("POST", "/edges", {
-        from: manager.id,
-        to: builder.id,
-        kind: "delegate",
-      });
-      await request("POST", "/edges", {
-        from: manager.id,
-        to: reviewer.id,
-        kind: "review",
-      });
-      const workflow = await request("POST", "/workflows", {
-        name: "Pi demo",
-        goal: "Build a Pi program",
-        ownerId: manager.id,
-        completionCriteria: "Reviewer approves",
-      });
-      const parent = await request("POST", "/tasks", {
-        workflowId: workflow.id,
-        agentId: manager.id,
-        title: "Coordinate the Pi demo",
-        completionCriteria: "Report the result",
-      });
-      await request("POST", `/tasks/${parent.id}/status`, {
-        status: "running",
-      });
-      const handoff = await request("POST", "/orchestration/invoke", {
-        fromAgentId: manager.id,
-        taskId: parent.id,
-        recipient: builder.id,
-        title: "Write the Python Pi program",
-        instructions:
-          "Create python/pi.py. Produce 300 significant digits; leading 3 counts as digit one.",
-        completionCriteria: "Return the file path and run instructions",
-      });
-      await request("POST", `/tasks/${handoff.childTaskId}/status`, {
-        status: "running",
-      });
-      await request("POST", `/tasks/${handoff.childTaskId}/status`, {
-        status: "completed",
-        result: "Created python/pi.py and verified the 300 digit output.",
-      });
-      return { builderId: builder.id, reviewerId: reviewer.id };
-    }, workspace);
+    const isWindows = process.platform === "win32";
+    const work = await page.evaluate(
+      async ([folder, isWindows]) => {
+        const request = window.agentteam.request;
+        const manager = await request("POST", "/agents", {
+          name: "Manager",
+          environment: "codex",
+          roleType: "coordinator",
+        });
+        const builder = await request("POST", "/agents", {
+          name: "Python Builder",
+          // Claude's required shell sandbox is unavailable on native Windows, which refuses the
+          // handoff; this spec exercises the panel, not the provider, so use Codex there.
+          environment: isWindows ? "codex" : "claude",
+          roleType: "implementer",
+          workspaces: [{ path: folder, access: "write", active: true }],
+        });
+        const reviewer = await request("POST", "/agents", {
+          name: "Code Reviewer",
+          environment: "codex",
+          roleType: "reviewer",
+        });
+        await request("POST", "/edges", {
+          from: manager.id,
+          to: builder.id,
+          kind: "delegate",
+        });
+        await request("POST", "/edges", {
+          from: manager.id,
+          to: reviewer.id,
+          kind: "review",
+        });
+        const workflow = await request("POST", "/workflows", {
+          name: "Pi demo",
+          goal: "Build a Pi program",
+          ownerId: manager.id,
+          completionCriteria: "Reviewer approves",
+        });
+        const parent = await request("POST", "/tasks", {
+          workflowId: workflow.id,
+          agentId: manager.id,
+          title: "Coordinate the Pi demo",
+          completionCriteria: "Report the result",
+        });
+        await request("POST", `/tasks/${parent.id}/status`, {
+          status: "running",
+        });
+        const handoff = await request("POST", "/orchestration/invoke", {
+          fromAgentId: manager.id,
+          taskId: parent.id,
+          recipient: builder.id,
+          title: "Write the Python Pi program",
+          instructions:
+            "Create python/pi.py. Produce 300 significant digits; leading 3 counts as digit one.",
+          completionCriteria: "Return the file path and run instructions",
+        });
+        await request("POST", `/tasks/${handoff.childTaskId}/status`, {
+          status: "running",
+        });
+        await request("POST", `/tasks/${handoff.childTaskId}/status`, {
+          status: "completed",
+          result: "Created python/pi.py and verified the 300 digit output.",
+        });
+        return { builderId: builder.id, reviewerId: reviewer.id };
+      },
+      [workspace, isWindows] as const,
+    );
     await page
       .getByLabel("Agent", { exact: true })
       .selectOption(work.builderId);
@@ -129,6 +135,7 @@ test("an agent's Chat pane leads with its result and tucks full instructions beh
             overflowY: style.overflowY,
             minHeight: style.minHeight,
             overflows: node.scrollHeight > node.clientHeight,
+            scrollTop: node.scrollTop,
             bottom: box.bottom,
             viewport: window.innerHeight,
             holdsComposer: !!node.querySelector(
@@ -158,14 +165,20 @@ test("an agent's Chat pane leads with its result and tucks full instructions beh
       .locator(".chat-body")
       .filter({ has: panel })
       .hover({ position: { x: 20, y: 20 } });
+    // Assert on the scroll container's own offset, not on moving text: wheel to the top first.
     await expect(async () => {
       await page.mouse.wheel(0, -5000);
-      await expect(
-        page.getByText("Team assignments & conversations"),
-      ).toBeInViewport({ timeout: 250 });
+      await expect
+        .poll(async () => (await scroller())?.scrollTop, { timeout: 500 })
+        .toBe(0);
     }).toPass();
+    await expect(
+      page.getByText("Team assignments & conversations"),
+    ).toBeInViewport();
+    // Then wheel down until the region has moved and the group chat's button is visible.
     await expect(async () => {
       await page.mouse.wheel(0, 150);
+      expect((await scroller())!.scrollTop).toBeGreaterThan(0);
       await expect(sendToGroup).toBeInViewport({ timeout: 250 });
     }).toPass();
     await expect(
