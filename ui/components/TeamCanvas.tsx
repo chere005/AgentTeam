@@ -547,26 +547,32 @@ export function TeamCanvas(p: Props) {
     height: cardMode ? CARD_HEIGHT.compact : CARD_HEIGHT.detailed,
   });
   /**
-   * Measured card sizes (React Flow), so rows fit compact and detailed cards alike. Below
-   * FAR_ZOOM the cards show the smaller glance layout, so measurements taken then would be too
-   * small once zoomed in again: the nominal sizes are used instead.
+   * Measured sizes can still reflect the compact cards while the detailed cards expand.
+   * Reserve the nominal detailed height until React Flow has a larger measurement.
+   * Below FAR_ZOOM, use nominal sizes because the glance cards shrink when zooming out.
    */
-  const measuredSizes = (ns: Node[], cardMode = simple) => {
-    const measured = Object.fromEntries(
+  const measuredSizes = (ns: Node[], cardMode = simple): Record<string, Size> =>
+    Object.fromEntries(
       ns
         .filter(
           (n) =>
+            cardMode === simple &&
             n.type === "agent" &&
             n.measured?.width &&
+            n.measured?.height &&
             (flow?.getZoom() ?? 1) >= FAR_ZOOM,
         )
         .map((n) => [
           n.id,
-          { width: n.measured!.width!, height: n.measured!.height! },
+          {
+            width: n.measured!.width!,
+            height: Math.max(
+              n.measured!.height!,
+              cardMode ? 0 : CARD_HEIGHT.detailed,
+            ),
+          },
         ]),
     );
-    return cardMode === simple ? (measured as Record<string, Size>) : {};
-  };
   /** The whole team's org layout for the current canvas width (compact when too wide). */
   const bestLayout = (cardMode = simple) => {
     const el = canvasRef.current;
@@ -997,6 +1003,9 @@ export function TeamCanvas(p: Props) {
             if (modeArrangeTimer.current)
               window.clearTimeout(modeArrangeTimer.current);
             if (isAutoArranged) {
+              // Make room before the detailed cards start expanding. A later pass can use their
+              // measured sizes once the transition has had time to render.
+              if (!nextMode) arrange(undefined, false, nextMode);
               modeArrangeTimer.current = window.setTimeout(() => {
                 modeArrangeTimer.current = null;
                 arrangeRef.current(undefined, false, nextMode);
