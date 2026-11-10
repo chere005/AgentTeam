@@ -1,4 +1,22 @@
-# AgentTeam 0.7.0
+# AgentTeam 0.8.0
+
+The lead confirms what a request leaves open before any work starts, task-scoped Codex runs can execute Node inside a read boundary, and every provider run records how it was launched.
+
+- **Planner reading:** a program request shows the lead's reading of it (languages, digits of pi, expected output, folder) in the setup card. Anything the text leaves open is a question with a suggested answer, and Start stays disabled until each is answered. Answers survive a restart.
+- **Codex read boundary:** task-scoped Codex runs on macOS read and write only their task folders plus the Node install they need to execute (`node`, builds, tests); other user folders, `.git`, shared scratch folders (`/tmp`, `/var/tmp`) and symlinks that leave a task folder are refused. Checked against the installed Codex with model-free sandbox probes (`AGENTTEAM_BOUNDARY_PROBE=1`). Where the boundary is unverified (Codex on Linux and Windows) a scoped launch is refused with the reason; `AGENTTEAM_UNVERIFIED_SANDBOX=1` opts in. Local test servers stay unavailable inside the Codex sandbox, and the run is told so.
+- **Launch record:** every provider run records its effective launch (executable, arguments, folder, sandbox, read and write roots, model, effort, resumed session, names of environment variables set), redacted, under Launch in the Inspector.
+- **Changed files from Git:** specialist and required-review routing uses the files a task actually changed in Git, not only the ones it declared, so a task that omits its file list cannot skip a files-only review rule.
+- **Team Assistant folders:** a proposal can attach a folder that does not exist yet; applying it checks the parent with the system first, then creates it.
+- **Worktrees:** the automatic worktree setting also applies to projects assigned to a team and to the Wolfram sample.
+- **One status vocabulary:** canvas cards, task rows, Projects, Inspector and Recovery show the same states (queued, running, waiting for you, blocked, failed, done), and a selected project is named in one bar above every work view.
+- **Limits in one place:** the agent editor and each project show the effective limits for that work and which one binds, with a link to where each is set.
+- **Code viewer:** syntax highlighting for Kotlin, Scala, Dart, Objective-C, Swift, Ruby, Lua, Perl, R, Julia, Haskell, Groovy, PowerShell, Protobuf, ini/properties and PHP, loaded on demand.
+- **Release checks:** the preflight now builds, packages, inspects and launches the installers the same way the release does, so an installer problem fails before a tag instead of after it.
+- **Windows/Linux CI:** Windows path handling in folder checks and tests, and steadier desktop specs on hosted runners.
+
+Verification: the real Wolfram kernel smoke test passes (`AGENTTEAM_WOLFRAM_SMOKE=1`). Installers are unsigned unless signing credentials are configured.
+
+## Earlier release notes: 0.7.0
 
 Folders macOS protects no longer fail work silently. Before any provider call, AgentTeam checks that it can really read or write each project folder, from the app and from the processes it launches.
 
