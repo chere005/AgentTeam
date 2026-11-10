@@ -1,5 +1,9 @@
 import { existsSync, realpathSync } from "node:fs";
-import { delimiter, dirname, join, sep } from "node:path";
+import { posix } from "node:path";
+
+// Past the Windows early return every platform here is POSIX: use POSIX path rules even when the
+// roots are computed for another host (a fixture, or a launch planned on a different platform).
+const { delimiter, dirname, join, sep } = posix;
 
 /**
  * Read-only roots a sandboxed task needs to EXECUTE Node: the install that `node` resolves to,

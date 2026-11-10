@@ -1,22 +1,17 @@
 import { test, expect, _electron as electron } from "@playwright/test";
-import {
-  chmod,
-  copyFile,
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-} from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openAgentPanel, openChatWith } from "./helpers";
+import {
+  installFixtureExecutable,
+  openAgentPanel,
+  openChatWith,
+} from "./helpers";
 
 // A FIXTURE `codex` (test/fixtures/assistant-codex-fixture.mjs) plays the Team Assistant: it reads
 // the prompt, checks the proposal protocol is in it and answers with a plan plus one
 // agentteam-proposal block built from the team-state ids. Temp AGENTTEAM_DATA_DIR; no real CLI,
 // no provider, no network.
-test.skip(process.platform === "win32", "fixture executable is a POSIX script");
-
 test("team assistant chat: proposal card, approve & apply adds skills, reject, invalid proposal fix request, processing vs queued", async () => {
   test.setTimeout(120_000);
   const directory = await realpath(
@@ -24,12 +19,11 @@ test("team assistant chat: proposal card, approve & apply adds skills, reject, i
   );
   const bin = join(directory, "bin");
   await mkdir(bin);
-  const codex = join(bin, "codex-fixture");
-  await copyFile(
+  const codex = await installFixtureExecutable(
+    bin,
+    "codex-fixture",
     join(process.cwd(), "test", "fixtures", "assistant-codex-fixture.mjs"),
-    codex,
   );
-  await chmod(codex, 0o755);
   const shots = join("test-results", "assistant-chat");
   await mkdir(shots, { recursive: true });
   const app = await electron.launch({

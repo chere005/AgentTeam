@@ -8,10 +8,13 @@ import {
   readdir,
   realpath,
   rm,
-  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import {
+  createDirectoryAlias,
+  createFileSymlink,
+} from "./fixtures/filesystem-links.ts";
 import { join } from "node:path";
 import { createServer } from "node:net";
 import { Store } from "../src/store.ts";
@@ -264,19 +267,36 @@ test("wrong precision and one wrong digit fail the independently generated Pi ch
 test("symlink sources and revoked reads are refused before execution", async (t) => {
   const f = await fixture(t);
   await writeFile(join(f.base, "outside.py"), "print('ok')\n");
-  await symlink(join(f.base, "outside.py"), join(f.workspace, "link.py"));
+  // A directory alias out of the workspace (a junction on Windows: no privilege needed).
+  await mkdir(join(f.base, "outside-dir"));
+  await writeFile(join(f.base, "outside-dir", "out.py"), "print('ok')\n");
+  await createDirectoryAlias(
+    join(f.base, "outside-dir"),
+    join(f.workspace, "alias"),
+  );
   const reference = f.service.verification.registerReference({
     label: "ok",
     stdout: "ok",
   });
-  await assert.rejects(
-    f.service.verification.verify(f.task.id, {
-      entry: "link.py",
-      language: "python",
-      referenceId: reference.id,
-    }),
-    /outside|symlink|traverse/,
-  );
+  const entries = ["alias/out.py"];
+  // A file symlink needs Developer Mode or the symlink privilege on Windows.
+  if (
+    await createFileSymlink(
+      join(f.base, "outside.py"),
+      join(f.workspace, "link.py"),
+    )
+  )
+    entries.push("link.py");
+  for (const entry of entries)
+    await assert.rejects(
+      f.service.verification.verify(f.task.id, {
+        entry,
+        language: "python",
+        referenceId: reference.id,
+      }),
+      /outside|symlink|traverse/,
+      entry,
+    );
   await writeFile(join(f.workspace, "local.py"), "print('ok')\n");
   const agent = f.store.get<{ id: string; workspaces: unknown[] }>(
     "agent",

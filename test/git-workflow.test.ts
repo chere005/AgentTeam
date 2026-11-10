@@ -828,10 +828,15 @@ const exists = (p: string) =>
   );
 /** An executable shell script that records it ran by touching `marker`. */
 async function markerScript(path: string, marker: string, exit = 0) {
-  await writeFile(path, `#!/bin/sh\ntouch "${marker}"\nexit ${exit}\n`);
+  await writeFile(
+    path,
+    `#!/bin/sh\ntouch "${shellPath(marker)}"\nexit ${exit}\n`,
+  );
   await chmod(path, 0o755);
 }
-const posixOnly = process.platform === "win32" ? "shell hooks" : false;
+/** A path as the shell Git runs these commands with reads it (Git for Windows' sh: an
+ * unquoted backslash is an escape, so use forward slashes, which Windows accepts too). */
+const shellPath = (path: string) => path.replaceAll("\\", "/");
 
 test("push refuses a tracked target branch with another name unless that target is confirmed", async (t) => {
   const { root, bare, agent, gw } = await fixture(t);
@@ -881,7 +886,6 @@ test("push refuses a tracked target branch with another name unless that target 
 
 test(
   "fetch, pull, push and status never run repository hooks or fsmonitor",
-  { skip: posixOnly },
   async (t) => {
     const { root, other, base, agent, gw } = await fixture(t);
     const marker = join(base, "hook-ran");
@@ -896,7 +900,7 @@ test(
     // Also a repo-local fsmonitor command, run by plain `git status` otherwise.
     const fsmMarker = join(base, "fsmonitor-ran");
     await markerScript(join(base, "fsm.sh"), fsmMarker, 1);
-    sh(root, "config", "core.fsmonitor", join(base, "fsm.sh"));
+    sh(root, "config", "core.fsmonitor", shellPath(join(base, "fsm.sh")));
     await writeFile(join(other, "n.txt"), "new\n");
     sh(other, "add", ".");
     sh(other, "commit", "-qm", "upstream");
@@ -927,7 +931,6 @@ test(
 
 test(
   "attached-repository filter drivers cannot run during status, diff, stage or branch switch",
-  { skip: posixOnly },
   async (t) => {
     const { root, base, agent, gw, ws } = await fixture(t, { remote: false });
     await writeFile(join(root, ".gitattributes"), "*.txt filter=hostile\n");
@@ -947,7 +950,7 @@ test(
         root,
         "config",
         `filter.hostile.${kind}`,
-        `sh ${join(base, "filter.sh")}`,
+        `sh ${shellPath(join(base, "filter.sh"))}`,
       );
 
     await gw.state(agent.id, w(root));
@@ -978,7 +981,6 @@ test(
 
 test(
   "a credential helper configured by an attached repository cannot execute",
-  { skip: posixOnly },
   async (t) => {
     const { root, base } = await fixture(t, { remote: false });
     const repoMarker = join(base, "repo-credential-helper-ran");
@@ -988,7 +990,7 @@ test(
     const globalConfig = join(base, "global.gitconfig");
     await writeFile(
       globalConfig,
-      `[credential]\n\thelper = !sh ${join(base, "user-credential-helper.sh")}\n`,
+      `[credential]\n\thelper = !sh ${shellPath(join(base, "user-credential-helper.sh"))}\n`,
     );
     const savedGlobal = process.env.GIT_CONFIG_GLOBAL;
     process.env.GIT_CONFIG_GLOBAL = globalConfig;
@@ -1000,7 +1002,7 @@ test(
       root,
       "config",
       "credential.helper",
-      `!sh ${join(base, "repo-credential-helper.sh")}`,
+      `!sh ${shellPath(join(base, "repo-credential-helper.sh"))}`,
     );
     try {
       execFileSync(
@@ -1033,10 +1035,9 @@ test(
 
 test(
   "Git runs without askpass or interactive credentials and ignores a repository-local sshCommand",
-  { skip: posixOnly },
   async (t) => {
     const { root, base, agent, gw } = await fixture(t);
-    sh(root, "config", "core.askPass", join(base, "askpass.sh"));
+    sh(root, "config", "core.askPass", shellPath(join(base, "askpass.sh")));
     // The safe prefix overrides repository-local askPass/fsmonitor values.
     const get = (key: string) => {
       try {
@@ -1066,7 +1067,7 @@ test(
       userMarker = join(base, "user-ssh-ran");
     await markerScript(join(base, "repo-ssh.sh"), repoMarker, 1);
     await markerScript(join(base, "user-ssh.sh"), userMarker, 1);
-    sh(root, "config", "core.sshCommand", join(base, "repo-ssh.sh"));
+    sh(root, "config", "core.sshCommand", shellPath(join(base, "repo-ssh.sh")));
     // No real host is contacted: the user's SSH command is a local script that exits 1.
     sh(root, "remote", "set-url", "origin", "ssh://git@example.invalid/x.git");
     const saved = {
@@ -1079,7 +1080,7 @@ test(
       process.env.GIT_CONFIG_GLOBAL = saved.global;
     });
     // 1. The user's environment wins.
-    process.env.GIT_SSH_COMMAND = join(base, "user-ssh.sh");
+    process.env.GIT_SSH_COMMAND = shellPath(join(base, "user-ssh.sh"));
     assert.equal((await gw.fetch(agent.id, w(root))).ok, false);
     assert.equal(await exists(userMarker), true);
     assert.equal(await exists(repoMarker), false);
@@ -1089,7 +1090,7 @@ test(
     const globalConfig = join(base, "global.gitconfig");
     await writeFile(
       globalConfig,
-      `[core]\n\tsshCommand = ${join(base, "user-ssh.sh")}\n`,
+      `[core]\n\tsshCommand = ${shellPath(join(base, "user-ssh.sh"))}\n`,
     );
     process.env.GIT_CONFIG_GLOBAL = globalConfig;
     assert.equal((await gw.fetch(agent.id, w(root))).ok, false);

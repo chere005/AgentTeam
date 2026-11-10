@@ -575,3 +575,149 @@ test("worktree routes require the bearer token and enforce validation", async (t
     401,
   );
 });
+
+// Automatic worktrees over HTTP, as the desktop creates tasks, with the folder spellings Windows
+// produces (drive-letter case, forward slashes) and a full create/attach/fail/recover/clean cycle.
+test("POST /tasks auto-creates, attaches and reports worktrees; failures keep the task; cleanup removes the folder", async (t) => {
+  const { createApi } = await import("../src/http.ts");
+  const { RunManager } = await import("../src/runtime.ts");
+  const { base, root, agent, team, git } = await fixture(t);
+  const server = createApi(
+    team,
+    "tok",
+    new RunManager(team, false, process.cwd()),
+  );
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+  const url = "http://127.0.0.1:" + (server.address() as any).port;
+  const call = async (path: string, body: unknown, method = "POST") => {
+    const res = await fetch(url + path, {
+      method,
+      headers: {
+        authorization: "Bearer tok",
+        "content-type": "application/json",
+      },
+      body: method === "GET" ? undefined : JSON.stringify(body),
+    });
+    return { status: res.status, body: await res.json() };
+  };
+  const wf = team.workflow({
+    name: "W",
+    goal: "G",
+    ownerId: agent.id,
+    completionCriteria: "D",
+  });
+  const task = (agentId: string, title: string) =>
+    call("/tasks", {
+      workflowId: wf.id,
+      agentId,
+      title,
+      completionCriteria: "Done",
+    });
+
+  // Off by default: the task runs in the shared checkout.
+  const plain = await task(agent.id, "No worktree");
+  assert.equal(plain.status, 201);
+  assert.equal(plain.body.autoWorktree, undefined);
+
+  // On: the task gets its own worktree, attached as the agent's active folder.
+  assert.equal(
+    (await call("/worktrees/settings", { autoCreate: true }, "PUT")).status,
+    200,
+  );
+  const made = await task(agent.id, "Isolated");
+  assert.equal(made.status, 201);
+  assert.equal(made.body.autoWorktree.ok, true, JSON.stringify(made.body));
+  const treePath: string = made.body.autoWorktree.path;
+  assert.equal(await realpath(treePath), treePath, "a canonical path");
+  const active = team.store
+    .get<any>("agent", agent.id)
+    .workspaces.find((w: any) => w.active);
+  assert.equal(active.path, treePath);
+  assert.equal(
+    (await readFile(join(treePath, "file.txt"), "utf8")).replace(/\r\n/g, "\n"),
+    "committed\n",
+  );
+  const listed = git("worktree", "list", "--porcelain");
+  assert.ok(listed.includes(made.body.autoWorktree.branch));
+  // Already in a linked worktree: the next task reuses it.
+  const again = await task(agent.id, "Same tree");
+  assert.equal(again.body.autoWorktree, undefined);
+  assert.equal(team.store.list<any>("worktree").length, 1);
+
+  // A per-repository override spelled differently from the real path still applies (on
+  // Windows: another drive-letter case and forward slashes).
+  const other = await team.saveAgent({
+    name: "Other",
+    environment: "codex",
+    workspaces: [{ path: root, access: "write", active: true }],
+  });
+  const spelled =
+    process.platform === "win32"
+      ? (root[0] === root[0].toUpperCase()
+          ? root[0].toLowerCase()
+          : root[0].toUpperCase()) +
+        root.slice(1).replaceAll("\\", "/")
+      : root;
+  await call(
+    "/worktrees/settings",
+    { autoCreate: true, projects: { [spelled]: { autoCreate: false } } },
+    "PUT",
+  );
+  const overridden = await task(other.id, "Override off");
+  assert.equal(overridden.status, 201);
+  assert.equal(overridden.body.autoWorktree, undefined);
+
+  // Failure: a repository without commits cannot branch. The task is still created, the reason
+  // is returned and recorded, and the agent keeps its folder.
+  const emptyRepo = join(base, "empty");
+  await mkdir(emptyRepo);
+  execFileSync("git", ["-C", emptyRepo, "init", "-q"]);
+  const lonely = await team.saveAgent({
+    name: "Empty",
+    environment: "codex",
+    workspaces: [{ path: emptyRepo, access: "write", active: true }],
+  });
+  await call("/worktrees/settings", { autoCreate: true }, "PUT");
+  const failed = await task(lonely.id, "Cannot branch");
+  assert.equal(failed.status, 201);
+  assert.equal(failed.body.autoWorktree.ok, false);
+  assert.ok(failed.body.autoWorktree.message);
+  assert.ok(
+    team.store.history(0, 10_000).some((e) => e.type === "worktree.auto_failed"),
+  );
+  assert.equal(
+    team.store.get<any>("agent", lonely.id).workspaces[0].path,
+    emptyRepo,
+  );
+  // Recovery: once the repository has a commit, the next task gets its worktree.
+  await writeFile(join(emptyRepo, "a.txt"), "a\n");
+  execFileSync("git", ["-C", emptyRepo, "add", "."]);
+  execFileSync("git", [
+    "-C",
+    emptyRepo,
+    "-c",
+    "user.name=T",
+    "-c",
+    "user.email=t@example.invalid",
+    "commit",
+    "-qm",
+    "first",
+  ]);
+  const recovered = await task(lonely.id, "Now it can");
+  assert.equal(recovered.body.autoWorktree?.ok, true);
+
+  // Cleanup: removing the (clean) worktree deletes its folder and Git's record of it.
+  const removed = await call(`/agents/${agent.id}/worktrees/remove`, {
+    workspace: treePath,
+    path: treePath,
+    mode: "remove",
+    acknowledgeUsers: true,
+  });
+  assert.equal(removed.status, 200, JSON.stringify(removed.body));
+  await assert.rejects(stat(treePath));
+  assert.ok(!git("worktree", "list", "--porcelain").includes(treePath));
+});

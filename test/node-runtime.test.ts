@@ -16,7 +16,11 @@ test("Homebrew node: the whole prefix read-only (dylibs and openssl.cnf live in 
     "/opt/homebrew/Cellar": "/opt/homebrew/Cellar",
   });
   assert.deepEqual(
-    nodeReadRoots({ pathEnv: "/usr/bin:/opt/homebrew/bin", ...fs }),
+    nodeReadRoots({
+      pathEnv: "/usr/bin:/opt/homebrew/bin",
+      platform: "darwin",
+      ...fs,
+    }),
     ["/opt/homebrew"],
   );
 });
@@ -28,6 +32,7 @@ test("version-manager node: only its own install prefix, never the home folder",
   assert.deepEqual(
     nodeReadRoots({
       pathEnv: "/Users/u/.nvm/versions/node/v22.1.0/bin",
+      platform: "darwin",
       ...fs,
     }),
     ["/Users/u/.nvm/versions/node/v22.1.0"],
