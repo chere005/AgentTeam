@@ -54,7 +54,7 @@ export const completionCheckSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("output-fields"),
-      /** The output must contain a JSON object (whole text or a fenced/embedded block) with these non-empty keys. */
+      /** The output must contain a JSON object (whole text or a fenced/embedded block) with these non-empty keys (an empty `findings` list counts as present: a clean review). */
       fields: z.array(z.string().min(1)).min(1).max(50),
     })
     .strict(),

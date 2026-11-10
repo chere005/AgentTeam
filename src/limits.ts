@@ -75,12 +75,21 @@ export function jsonObjectCandidates(text: string): Record<string, unknown>[] {
   }
   return out;
 }
-const fieldPresent = (v: unknown) =>
+/**
+ * List fields whose EMPTY array is a real answer: a review that found nothing wrong returns
+ * `findings: []`. Every other empty value (an empty string, null, a missing key, or an empty list
+ * under another name) still counts as missing, so a contract cannot be met vacuously. Whether the
+ * review approves is decided separately by the verdict (`parseVerdict`), never by findings.
+ */
+export const EMPTY_LIST_FIELDS: readonly string[] = ["findings"];
+const fieldPresent = (v: unknown, field?: string) =>
   !(
     v === undefined ||
     v === null ||
     (typeof v === "string" && !v.trim()) ||
-    (Array.isArray(v) && !v.length)
+    (Array.isArray(v) &&
+      !v.length &&
+      !(field !== undefined && EMPTY_LIST_FIELDS.includes(field)))
   );
 /**
  * The distinct objects in a reply that carry every required field (non-empty). The output-fields
@@ -90,7 +99,7 @@ const fieldPresent = (v: unknown) =>
 export function contractObjects(text: string, fields: string[]) {
   const seen = new Map<string, Record<string, unknown>>();
   for (const o of jsonObjectCandidates(text))
-    if (fields.every((f) => fieldPresent(o[f]))) seen.set(canonical(o), o);
+    if (fields.every((f) => fieldPresent(o[f], f))) seen.set(canonical(o), o);
   return [...seen.values()];
 }
 
@@ -959,7 +968,7 @@ export class LimitsService {
           );
         let best: string[] = check.fields;
         for (const obj of jsonObjectCandidates(result)) {
-          const missing = check.fields.filter((f) => !fieldPresent(obj[f]));
+          const missing = check.fields.filter((f) => !fieldPresent(obj[f], f));
           if (missing.length < best.length) best = missing;
         }
         return done(
