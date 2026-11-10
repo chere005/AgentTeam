@@ -1,30 +1,38 @@
 import { test, expect, _electron as electron } from "@playwright/test";
-import { mkdtemp, rm, copyFile, chmod, mkdir, symlink } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openAgentPanel, openFeature } from "./helpers";
+import {
+  installFixtureExecutable,
+  openAgentPanel,
+  openFeature,
+} from "./helpers";
 
 // Fixture installation only: scans are limited to an empty PATH so the developer's real
 // Codex/Claude/Wolfram installs (and accounts) are never touched.
-test.skip(process.platform === "win32", "fixture executable is a POSIX script");
 test("runtime diagnostics, validated model/effort choices, invocation limits and capability table", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentteam-runtime-"));
   const bin = join(directory, "bin");
   await mkdir(bin);
-  const fixture = join(bin, "codex-fixture");
-  await copyFile(
+  // On Windows an npm-style .cmd shim with node.exe beside it (see installFixtureExecutable).
+  const fixture = await installFixtureExecutable(
+    bin,
+    "codex-fixture",
     join(process.cwd(), "test", "fixtures", "codex-fixture.mjs"),
-    fixture,
   );
-  await chmod(fixture, 0o755);
   const empty = join(directory, "empty-path");
   await mkdir(empty);
-  // The fixture's `#!/usr/bin/env node` shebang needs node on PATH; nothing else is there.
-  await symlink(process.execPath, join(empty, "node"));
+  // The POSIX fixture's `#!/usr/bin/env node` shebang needs node on PATH; nothing else is there.
+  if (process.platform !== "win32")
+    await symlink(process.execPath, join(empty, "node"));
+  // Windows spells it Path; drop every spelling so only the empty PATH below is seen.
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env))
+    if (value !== undefined && !/^path$/i.test(key)) env[key] = value;
   const app = await electron.launch({
     args: [".", ...(process.platform === "linux" ? ["--no-sandbox"] : [])],
     env: {
-      ...process.env,
+      ...env,
       AGENTTEAM_DATA_DIR: join(directory, "data"),
       AGENTTEAM_TEST: "1",
       AGENTTEAM_DISCOVERY_PATH_ONLY: "1",

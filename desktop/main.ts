@@ -74,6 +74,20 @@ async function start() {
     enabled = store.get<any>("settings", "execution").enabled === true;
   } catch {}
   const runs = new RunManager(service, enabled, app.getPath("home"));
+  // Test seam (AGENTTEAM_TEST=1 only): the provider host the launch policy assumes, like the
+  // backend fixtures' `runtimePlatform`. Desktop specs drive UI flows with fixture providers; on
+  // a Windows runner the native-Windows sandbox refusal (covered by backend tests) would
+  // otherwise refuse every program-running fixture agent before the UI under test appears.
+  const simulatedHost =
+    process.env.AGENTTEAM_TEST === "1"
+      ? process.env.AGENTTEAM_TEST_RUNTIME_PLATFORM
+      : undefined;
+  if (
+    simulatedHost === "linux" ||
+    simulatedHost === "darwin" ||
+    simulatedHost === "win32"
+  )
+    runs.runtimePlatform = simulatedHost;
   runs.recover();
   const scheduler = new Scheduler(service, runs);
   scheduler.start();

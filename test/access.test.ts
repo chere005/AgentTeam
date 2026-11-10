@@ -21,6 +21,7 @@ import {
 import { accessAgentView } from "../src/access-routes.ts";
 import { sharedResources } from "../src/sharing.ts";
 import {
+  createDirectoryAlias,
   createFileSymlink,
   WINDOWS_FILE_SYMLINK_SKIP_REASON,
 } from "./fixtures/filesystem-links.ts";
@@ -299,9 +300,13 @@ test("saving an agent normalizes rules and rejects unsafe or empty explicit-only
   );
 });
 test("artifact registration obeys exclusions and explicit-only rules", async (t) => {
-  const { team, agent, store } = await fixture(t, {
-    rules: [{ path: "secrets", access: "none" }],
-  });
+  const { team, agent, store, root, fileSymlinksAvailable } = await fixture(
+    t,
+    { rules: [{ path: "secrets", access: "none" }] },
+  );
+  // A directory alias (a junction on Windows, which needs no symlink privilege) into the
+  // excluded folder: the excluded file reached through it is still refused.
+  await createDirectoryAlias(join(root, "secrets"), join(root, "alias-dir"));
   const wf = team.workflow({
     name: "W",
     goal: "G",
@@ -324,7 +329,10 @@ test("artifact registration obeys exclusions and explicit-only rules", async (t)
       path,
     });
   assert.equal(await code(reg("secrets/key.txt")), "access_denied");
-  assert.equal(await code(reg("link-to-secret")), "access_denied");
+  assert.equal(await code(reg("alias-dir/key.txt")), "access_denied");
+  // A file symlink needs Developer Mode or the symlink privilege on Windows.
+  if (fileSymlinksAvailable)
+    assert.equal(await code(reg("link-to-secret")), "access_denied");
   assert.equal(await code(reg("src/a.ts")), "ok");
   // An exclusion added after registration hides the file's current content in previews.
   const art = store

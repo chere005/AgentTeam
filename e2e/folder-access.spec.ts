@@ -1,7 +1,5 @@
 import { test, expect, _electron as electron } from "@playwright/test";
 import {
-  chmod,
-  copyFile,
   mkdir,
   mkdtemp,
   realpath,
@@ -10,11 +8,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-
-test.skip(
-  process.platform === "win32",
-  "The scripted shell fixtures use POSIX executable files",
-);
+import { installFixtureExecutable } from "./helpers";
 
 // The installed 0.6.0 app applied ~/Desktop to twelve roles and started three workers that could
 // not write one byte, because macOS folder privacy refuses the app and every process it starts
@@ -33,12 +27,11 @@ test("a folder the system refuses is explained on the setup card with the macOS 
   await mkdir(denied);
   await mkdir(chosen);
   await mkdir(bin);
-  const claude = join(bin, "claude-fixture");
-  const codex = join(bin, "codex-fixture");
+  const claudeSource = join(directory, "claude-fixture.src.mjs");
   const calls = join(directory, "provider-calls.txt");
   await writeFile(calls, "");
   await writeFile(
-    claude,
+    claudeSource,
     `#!/usr/bin/env node
 import { appendFileSync } from "node:fs";
 if (process.argv.includes("--version")) { console.log("2.1.41 (Claude Code)"); process.exit(0); }
@@ -53,9 +46,17 @@ process.stdin.on("end", () => {
 });
 `,
   );
-  await copyFile(join(process.cwd(), "test/fixtures/codex-fixture.mjs"), codex);
-  await chmod(claude, 0o755);
-  await chmod(codex, 0o755);
+  // POSIX: executable scripts; Windows: npm-style .cmd shims (e2e/helpers.ts).
+  const claude = await installFixtureExecutable(
+    bin,
+    "claude-fixture",
+    claudeSource,
+  );
+  const codex = await installFixtureExecutable(
+    bin,
+    "codex-fixture",
+    join(process.cwd(), "test/fixtures/codex-fixture.mjs"),
+  );
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env))
     if (value !== undefined && !/^path$/i.test(key)) env[key] = value;
@@ -218,12 +219,11 @@ async function launchFolderApp(extraEnv: Record<string, string>) {
   );
   const bin = join(directory, "bin");
   await mkdir(bin);
-  const claude = join(bin, "claude-fixture");
-  const codex = join(bin, "codex-fixture");
+  const claudeSource = join(directory, "claude-fixture.src.mjs");
   const calls = join(directory, "provider-calls.txt");
   await writeFile(calls, "");
   await writeFile(
-    claude,
+    claudeSource,
     `#!/usr/bin/env node
 import { appendFileSync } from "node:fs";
 if (process.argv.includes("--version")) { console.log("2.1.41 (Claude Code)"); process.exit(0); }
@@ -238,9 +238,17 @@ process.stdin.on("end", () => {
 });
 `,
   );
-  await copyFile(join(process.cwd(), "test/fixtures/codex-fixture.mjs"), codex);
-  await chmod(claude, 0o755);
-  await chmod(codex, 0o755);
+  // POSIX: executable scripts; Windows: npm-style .cmd shims (e2e/helpers.ts).
+  const claude = await installFixtureExecutable(
+    bin,
+    "claude-fixture",
+    claudeSource,
+  );
+  const codex = await installFixtureExecutable(
+    bin,
+    "codex-fixture",
+    join(process.cwd(), "test/fixtures/codex-fixture.mjs"),
+  );
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env))
     if (value !== undefined && !/^path$/i.test(key)) env[key] = value;
