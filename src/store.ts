@@ -70,6 +70,21 @@ export class Store {
         createdAt: String(r.created_at),
       }));
   }
+  /** Events of one type for one entity, oldest first. */
+  eventsOf(type: string, entityId: string): Event[] {
+    return this.db
+      .prepare(
+        "SELECT * FROM events WHERE type=? AND entity_id=? ORDER BY seq LIMIT 100",
+      )
+      .all(type, entityId)
+      .map((r) => ({
+        seq: Number(r.seq),
+        type: String(r.type),
+        entityId: String(r.entity_id),
+        data: JSON.parse(String(r.data)),
+        createdAt: String(r.created_at),
+      }));
+  }
   transaction<T>(fn: () => T): T {
     if (this.pending) return fn();
     this.pending = [];

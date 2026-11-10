@@ -105,6 +105,8 @@ export function codexTaskPermissions(
   workspaces: Agent["workspaces"],
   tools: string[],
   platform = process.platform,
+  /** Read-only roots needed to execute Node (src/node-runtime.ts); never added over a task root. */
+  extraReadRoots: string[] = [],
 ) {
   const writable =
     tools.includes("read") &&
@@ -116,6 +118,8 @@ export function codexTaskPermissions(
         writable && ws.access === "write" ? "write" : "read";
       filesystem[join(ws.path, ".git")] = "deny";
     }
+  if (tools.includes("read"))
+    for (const root of extraReadRoots) filesystem[root] ??= "read";
   // TOML inline tables, not JSON objects. JSON quoting is valid for these individual TOML strings.
   const table = `{${Object.entries(filesystem)
     .map(

@@ -42,6 +42,8 @@ export type Command = {
   allowedTools?: string[];
   /** Per-run authenticated AgentTeam HTTP MCP tools; never persisted or logged. */
   teammateTools?: TeammateTools;
+  /** Known sandbox limits of this launch, shown in the prompt and the recorded launch. */
+  limitations?: string[];
 };
 export interface RuntimeAdapter {
   execute(

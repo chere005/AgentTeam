@@ -27,6 +27,8 @@ import { assistantContext } from "./assistant-context.ts";
 import { ToolSessions } from "./tool-endpoint.ts";
 import { GroupChats } from "./group-chat.ts";
 import { ensureWorkspaceBaseline } from "./workspace-changes.ts";
+import { recordLaunch } from "./launch-record.ts";
+import { nodeReadRoots } from "./node-runtime.ts";
 import { codexTaskPermissions } from "./provider-filesystem.ts";
 import { assertProviderCapabilities } from "./provider-capabilities.ts";
 import { noteRuntimeWait } from "./runtime-waits.ts";
@@ -188,6 +190,8 @@ export function commandFor(
     };
   }
   const writable = workspaceCapabilities(plan).write;
+  const shellOn =
+    plan.executionMode !== "file-only" && plan.tools.includes("shell");
   const args = [
     "exec",
     "--json",
@@ -198,10 +202,12 @@ export function commandFor(
       ? [
           "--strict-config",
           "--ephemeral",
-          ...codexTaskPermissions(roots, plan.tools).flatMap((setting) => [
-            "-c",
-            setting,
-          ]),
+          ...codexTaskPermissions(
+            roots,
+            plan.tools,
+            process.platform,
+            shellOn ? nodeReadRoots() : [],
+          ).flatMap((setting) => ["-c", setting]),
         ]
       : [
           "-c",
@@ -224,10 +230,21 @@ export function commandFor(
   return {
     executable: executablePaths.codex ?? "codex",
     args,
-    stdin: `${plan.instructions}\n\nUser request:\n${prompt}`,
+    stdin: `${plan.instructions}${plan.taskScoped && shellOn ? `\n\n${CODEX_TASK_SANDBOX_NOTE}` : ""}\n\nUser request:\n${prompt}`,
     cwd,
+    ...(plan.taskScoped && shellOn
+      ? { limitations: [CODEX_TASK_SANDBOX_NOTE] }
+      : {}),
   };
 }
+/**
+ * Verified with codex-cli 0.167 on macOS (`codex sandbox`): `network.enabled=false` also blocks
+ * binding or connecting to 127.0.0.1, and the only switch that allows it (`network.enabled=true`)
+ * opens the whole internet; `network.allow_local_binding` / `domains` / `mode` are not enforced
+ * outside the managed proxy. AgentTeam does not widen the sandbox for this.
+ */
+export const CODEX_TASK_SANDBOX_NOTE =
+  "Sandbox limits: commands can run node and read/write only the assigned task folders, but all network access, including binding or connecting to localhost, is blocked. Report any check that needs a local server or network as not run; do not claim it passed.";
 export function decodeEvent(environment: string, event: any): RuntimeEvent[] {
   const events: RuntimeEvent[] = [];
   if (environment === "wolfram") {
@@ -1118,6 +1135,14 @@ export class RunManager {
           plan.workspaces.some((w) => w.access === "write"),
         ref: { messageId: message.id },
       }).effect.id;
+      recordLaunch(
+        store,
+        "session",
+        id,
+        command,
+        plan,
+        store.get<Session>("session", id).providerSessionId,
+      );
       await this.execute(
         command,
         plan.environment,

@@ -179,6 +179,13 @@ function classify(
       summary: `Task ${status ?? "updated"}`,
     };
   }
+  if (t === "task.launch" || t === "session.launch")
+    return {
+      category: "setting",
+      severity: "info",
+      summary:
+        `Launch: ${str(d.environment) ?? "?"} ${str(d.executable)?.split("/").pop() ?? ""}`.trim(),
+    };
   if (t === "task.settings")
     return {
       category: "setting",

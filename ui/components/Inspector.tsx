@@ -4,6 +4,7 @@ import "./inspector.css";
 import { ConversationLink } from "./ConversationExtras";
 import { agentSelectorLabel } from "../agent-identity";
 import type { LaunchManifest } from "../../src/capability-context";
+import type { LaunchRecord } from "../../src/launch-record";
 
 /** Encodes every character the desktop IPC path filter rejects (".", "_") as well as reserved ones. */
 const enc = (v: string) =>
@@ -319,6 +320,8 @@ function Timeline(p: Props) {
             {open === e.seq &&
               (e.type === "task.launch_manifest" ? (
                 <LaunchManifestView data={e.data} />
+              ) : e.type === "task.launch" || e.type === "session.launch" ? (
+                <LaunchRecordView data={e.data} />
               ) : (
                 <pre>{JSON.stringify(e.data, null, 2)}</pre>
               ))}
@@ -326,6 +329,44 @@ function Timeline(p: Props) {
         ))}
       </ol>
     </section>
+  );
+}
+
+function LaunchRecordView({ data }: { data: unknown }) {
+  if (!data || typeof data !== "object" || !("args" in data))
+    return <pre>{JSON.stringify(data, null, 2)}</pre>;
+  const r = data as LaunchRecord;
+  return (
+    <details open data-testid="launch-record">
+      <summary>Launch</summary>
+      <dl>
+        <dt>Executable</dt>
+        <dd>{r.executable}</dd>
+        <dt>Working folder</dt>
+        <dd>{r.cwd}</dd>
+        <dt>Model</dt>
+        <dd>
+          {r.model ?? "default"}
+          {r.effort ? ` / ${r.effort}` : ""}
+          {r.providerSessionId ? ` · resumed ${r.providerSessionId}` : ""}
+        </dd>
+        <dt>Sandbox</dt>
+        <dd>{JSON.stringify(r.sandbox)}</dd>
+        <dt>Read roots</dt>
+        <dd>{r.readRoots.join(", ") || "None"}</dd>
+        <dt>Write roots</dt>
+        <dd>{r.writeRoots.join(", ") || "None"}</dd>
+        <dt>Environment (names)</dt>
+        <dd>{r.envNames.set.join(", ") || "none set"}; rest inherited</dd>
+        {r.limitations.length > 0 && (
+          <>
+            <dt>Limits</dt>
+            <dd>{r.limitations.join(" ")}</dd>
+          </>
+        )}
+      </dl>
+      <pre>{[r.executable, ...r.args].join(" ")}</pre>
+    </details>
   );
 }
 
