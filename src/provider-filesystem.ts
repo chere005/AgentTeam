@@ -1,6 +1,6 @@
 import { realpath, stat } from "node:fs/promises";
-import { canonicalPolicyPath } from "./filesystem-policy.ts";
 import { join } from "node:path";
+import { canonicalPolicyPath } from "./filesystem-policy.ts";
 import { assert, type Agent, type Task } from "./model.ts";
 import { hasRestrictions } from "./access.ts";
 import { contains } from "./resources.ts";
@@ -100,6 +100,35 @@ export async function taskFilesystem(
   return taskScope(agent, declared);
 }
 
+/**
+ * Shared scratch locations a Codex permission profile (`:minimal`) leaves readable and writable
+ * on top of the task roots. Probed on macOS with Codex 0.167: `/private/tmp` and `/private/var/tmp`
+ * (hence `/tmp`) are open to read and write, so they would be a side channel between tasks and to
+ * every other program's scratch files. An explicit `deny` loses to a more specific task root, so a
+ * root that lives under one of them keeps working.
+ */
+export function codexScratchDenials(platform = process.platform) {
+  if (platform === "darwin") return ["/private/tmp", "/private/var/tmp"];
+  if (platform === "linux") return ["/tmp", "/var/tmp"];
+  return [];
+}
+
+/**
+ * A scoped Codex launch needs an OS sandbox that restricts READS. Verified model-free on macOS
+ * (seatbelt via `codex sandbox`, test/provider-boundary-probe.test.ts). Linux (bubblewrap) and
+ * Windows (MXC; the legacy sandbox needs broad read access) were not verified on a real host, so a
+ * scoped launch there is refused instead of silently running with whatever the sandbox does.
+ * `AGENTTEAM_UNVERIFIED_SANDBOX=1` is the explicit opt-in for hosts someone has verified.
+ */
+export function codexReadBoundaryIssue(
+  platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  if (platform === "darwin" || env.AGENTTEAM_UNVERIFIED_SANDBOX === "1")
+    return null;
+  return `Task-scoped Codex runs need a read-restricting sandbox, which AgentTeam has verified only on macOS; on ${platform} it cannot confirm that files outside the task folders are unreadable. Set AGENTTEAM_UNVERIFIED_SANDBOX=1 to run anyway after verifying the sandbox yourself, or use a macOS host.`;
+}
+
 /** Exact read AND write roots. No :root, :workspace or implicit writable temp grants. */
 export function codexTaskPermissions(
   workspaces: Agent["workspaces"],
@@ -112,6 +141,7 @@ export function codexTaskPermissions(
     tools.includes("read") &&
     (tools.includes("write") || tools.includes("edit"));
   const filesystem: Record<string, string> = { ":minimal": "read" };
+  for (const path of codexScratchDenials(platform)) filesystem[path] = "deny";
   if (tools.includes("read"))
     for (const ws of workspaces) {
       filesystem[ws.path] =

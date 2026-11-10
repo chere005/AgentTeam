@@ -29,7 +29,10 @@ import { GroupChats } from "./group-chat.ts";
 import { ensureWorkspaceBaseline } from "./workspace-changes.ts";
 import { recordLaunch } from "./launch-record.ts";
 import { nodeReadRoots } from "./node-runtime.ts";
-import { codexTaskPermissions } from "./provider-filesystem.ts";
+import {
+  codexReadBoundaryIssue,
+  codexTaskPermissions,
+} from "./provider-filesystem.ts";
 import { assertProviderCapabilities } from "./provider-capabilities.ts";
 import { noteRuntimeWait } from "./runtime-waits.ts";
 import { classifyRequest } from "./execution-contract.ts";
@@ -188,6 +191,10 @@ export function commandFor(
         ? { allowedTools: ["Bash"] }
         : {}),
     };
+  }
+  if (plan.taskScoped) {
+    const issue = codexReadBoundaryIssue();
+    assert(!issue, "provider_access_unsupported", issue ?? "", 409);
   }
   const writable = workspaceCapabilities(plan).write;
   const shellOn =
