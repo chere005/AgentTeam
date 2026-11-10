@@ -1,7 +1,7 @@
 name: Desktop checks
 # CI runs on main pushes and on preflight/** branches (scripts/preflight.sh pushes one, reads each
 # job's own conclusion and says pass or fail); .githooks/pre-push refuses main or a v* tag whose
-# commit has not passed preflight.
+# commit has not passed preflight. Preflight branches also run the `installers` jobs (the release's installer gates; nothing is published).
 #
 # QUIET CI (AgentSuite's ci.md and tools/check-workflows.py in Sean's checkout). GitHub mails a run's outcome to whoever
 # TRIGGERED it. So a run a person starts (a push, `gh workflow run`, a re-run) only runs `handoff`, which re-dispatches this
@@ -93,3 +93,41 @@ jobs:
       - if: failure()
         shell: bash
         run: ls -R test-results 2>/dev/null | head -100 || true
+
+  # The installer gates, on preflight branches only (scripts/preflight.sh): the same script the release runs
+  # (scripts/installer-gates.mjs) builds and packages the app for each platform, inspects the package and smoke-launches it.
+  # Nothing is uploaded or published. macOS (arm64 and x64) decides; Windows and Linux are informational like the checks.
+  installers:
+    if: github.triggering_actor == 'github-actions[bot]' && startsWith(github.ref_name, 'preflight/')
+    name: installers (${{ matrix.os }}, ${{ matrix.arch }}${{ matrix.optional && ', optional' || '' }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            arch: arm64
+            optional: false
+          - os: macos-latest
+            arch: x64
+            optional: false
+          - os: windows-latest
+            arch: x64
+            optional: true
+          - os: ubuntu-latest
+            arch: x64
+            optional: true
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node node_modules/electron/install.js
+      - if: runner.os != 'Linux'
+        run: node scripts/installer-gates.mjs --${{ matrix.arch }} --smoke
+      - if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum node scripts/installer-gates.mjs --${{ matrix.arch }} --smoke

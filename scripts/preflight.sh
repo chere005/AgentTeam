@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# PREFLIGHT: run the "Desktop checks" jobs (macOS, Windows, Linux) on GitHub against the commit
-# about to go to main or a release tag. It pushes HEAD to preflight/<branch>; the push's run hands
+# PREFLIGHT: run the "Desktop checks" jobs (macOS, Windows, Linux: audit, typecheck, tests, and the installer gates
+# of scripts/installer-gates.mjs, the same script release.yml runs) on GitHub against the commit about to go to main or a
+# release tag. Nothing is uploaded or published by it. It pushes HEAD to preflight/<branch>; the push's run hands
 # the jobs to github-actions[bot] (so nothing can mail anyone), and this waits for the bot's run,
 # reads each job's conclusion and deletes that branch.
 #
@@ -62,6 +63,11 @@ done
 
 jobs="$(gh run view "$run" --repo "$REPO" --json jobs --jq '.jobs[] | [.name, .conclusion] | @tsv')"
 echo "$jobs" | sed 's/^/  /'
+# A run without its installer jobs would pass without the gates the release runs after the tag: that is a failure.
+if ! echo "$jobs" | grep -q '^installers '; then
+  echo "preflight: FAIL (the bot's run has no installers job: the installer gates did not run)" >&2
+  exit 1
+fi
 # Jobs named "optional" (Windows, Linux for now) report but never decide.
 failed="$(echo "$jobs" | awk -F'\t' '$1 !~ /optional/ && $2 != "success" && $2 != "skipped" { print $1 }')"
 if [ -n "$failed" ]; then

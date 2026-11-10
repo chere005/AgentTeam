@@ -238,7 +238,9 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run test:ui
-      - run: node scripts/package.mjs --${{ matrix.arch }}
+      # The installer gates (scripts/installer-gates.mjs, the same step the preflight runs): build, package, inspect the package
+      # (files, version, asar, notices, node-pty, architecture, signature), smoke-launch it. A failing gate uploads nothing.
+      - run: node scripts/installer-gates.mjs --${{ matrix.arch }} --smoke
         env:
           CSC_LINK: ${{ secrets.MAC_CERTIFICATE_P12 }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
@@ -248,7 +250,8 @@ jobs:
       - name: Files for the release
         run: |
           set -euo pipefail
-          files="release/AgentTeam-${VERSION}-mac-${{ matrix.arch }}.dmg release/AgentTeam-${VERSION}-mac-${{ matrix.arch }}.zip"
+          files=""
+          for f in $(node scripts/installer-gates.mjs --files mac ${{ matrix.arch }} "$VERSION"); do files="$files release/$f"; done
           ls -l release
           # shellcheck disable=SC2086
           ls -l $files
@@ -272,10 +275,8 @@ jobs:
         include:
           - os: windows-latest
             platform: windows
-            files: AgentTeam-VERSION-win-x64.exe
           - os: ubuntu-latest
             platform: linux
-            files: AgentTeam-VERSION-linux-x86_64.AppImage AgentTeam-VERSION-linux-amd64.deb
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     continue-on-error: true
@@ -298,13 +299,13 @@ jobs:
       - run: npm run typecheck
       - run: npm test
         continue-on-error: true
-      - run: npm run build
-      - run: node scripts/package.mjs --x64
+      # Same installer gates as the mac jobs and the preflight (no smoke launch off macOS here: it would only block a release).
+      - run: node scripts/installer-gates.mjs --x64
       - name: Files for the release
         run: |
           set -euo pipefail
           files=""
-          for f in ${{ matrix.files }}; do files="$files release/${f//VERSION/$VERSION}"; done
+          for f in $(node scripts/installer-gates.mjs --files ${{ matrix.platform }} x64 "$VERSION"); do files="$files release/$f"; done
           ls -l release
           # shellcheck disable=SC2086
           ls -l $files
