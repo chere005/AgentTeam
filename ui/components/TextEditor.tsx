@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { FILE_EDITOR_LEAVE_EVENT } from "../file-editor-guard";
 import { CodeEditor, editorLanguage, type EditorStatus } from "./CodeEditor";
@@ -117,13 +117,23 @@ export function TextEditor({
       .filter(Boolean)
       .join(" + ") || "Sublime defaults";
 
+  // Read by the leave guards below: a save that just finished has rendered "Saved" before React
+  // runs the effect cleanup that removes them, and a shortcut in between must not ask to discard.
+  // Updated in a layout effect (runs synchronously in the commit, before any event can be
+  // dispatched), not during render, so a discarded concurrent render cannot leave it wrong.
+  const dirtyNow = useRef(dirty);
+  useLayoutEffect(() => {
+    dirtyNow.current = dirty;
+  }, [dirty]);
   useEffect(() => {
     if (!dirty || !guardLeave || !active) return;
     const confirmLeave = (event: Event) => {
+      if (!dirtyNow.current) return;
       if (!window.confirm("Discard your unsaved file changes?"))
         event.preventDefault();
     };
     const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (!dirtyNow.current) return;
       event.preventDefault();
       event.returnValue = "";
     };

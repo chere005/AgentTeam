@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type ElectronApplication, type Page } from "@playwright/test";
 
 /**
  * Opens a view through the command palette (Ctrl/Cmd+K): type its name, pick the exact match.
@@ -118,8 +118,34 @@ export async function installFixtureExecutable(
   }
   await copyFile(source, join(bin, `${name}.mjs`));
   const node = join(bin, "node.exe");
-  await link(process.execPath, node).catch(() => copyFile(process.execPath, node));
+  await link(process.execPath, node).catch(() =>
+    copyFile(process.execPath, node),
+  );
   const shim = join(bin, `${name}.cmd`);
   await writeFile(shim, `@"%~dp0\\node.exe" "%~dp0\\${name}.mjs" %*\r\n`);
   return shim;
+}
+
+/**
+ * Sets the window's content (page) size. On Windows at 200 % scaling a never-shown test window
+ * gets a content size a few pixels smaller than asked (1095x585 for 1100x600: the frame insets
+ * of a hidden window are miscomputed), so the difference is measured and added once. Only on
+ * Windows: elsewhere (Linux/X11) the size can apply asynchronously, so reading it back at once
+ * and correcting could overshoot; there it is the plain setContentSize call.
+ */
+export async function setContentSize(
+  app: ElectronApplication,
+  width: number,
+  height: number,
+) {
+  await app.evaluate(
+    ({ BrowserWindow }, [w, h]) => {
+      const win = BrowserWindow.getAllWindows()[0];
+      win.setContentSize(w, h);
+      if (process.platform !== "win32") return;
+      const [cw, ch] = win.getContentSize();
+      if (cw !== w || ch !== h) win.setContentSize(w + w - cw, h + h - ch);
+    },
+    [width, height] as const,
+  );
 }

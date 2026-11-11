@@ -51,6 +51,12 @@ const hiddenWindow =
   process.env.AGENTTEAM_SHOW_WINDOW !== "1";
 if (hiddenWindow && process.platform === "darwin")
   app.setActivationPolicy("accessory");
+// On Windows a never-shown window gets about one animation frame a second (backgroundThrottling
+// off does not change that), and Playwright waits for two frames before every click, so each
+// click took 2 s and long specs ran out of time. Measured on Windows 10: 3 frames in 2 s hidden,
+// about 116 with this switch. Test mode on Windows only; macOS and Linux keep their defaults.
+if (hiddenWindow && process.platform === "win32")
+  app.commandLine.appendSwitch("disable-frame-rate-limit");
 async function start() {
   const project = app.isPackaged ? process.resourcesPath : join(here, "../..");
   setProjectRoot(project);

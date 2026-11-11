@@ -2,6 +2,7 @@ import { test, expect, _electron as electron } from "@playwright/test";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setContentSize } from "./helpers";
 
 test("an agent's Chat pane leads with its result and tucks full instructions behind a disclosure", async () => {
   const directory = await mkdtemp(join(tmpdir(), "agentteam-e2e-agent-work-"));
@@ -117,12 +118,7 @@ test("an agent's Chat pane leads with its result and tucks full instructions beh
 
     // A tall invocation section scrolls with the messages in one region at a short, narrow
     // window: nothing is cut off at the window edge and the composer stays in view.
-    const size = (w: number, h: number) =>
-      app.evaluate(
-        ({ BrowserWindow }, [a, b]) =>
-          BrowserWindow.getAllWindows()[0].setContentSize(a, b),
-        [w, h] as const,
-      );
+    const size = (w: number, h: number) => setContentSize(app, w, h);
     await size(1100, 600);
     await expect.poll(() => page.evaluate(() => window.innerHeight)).toBe(600);
     const scroller = () =>

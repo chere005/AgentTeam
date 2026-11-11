@@ -8,7 +8,7 @@ import {
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openFeature, openSetup } from "./helpers";
+import { openFeature, openSetup, setContentSize } from "./helpers";
 import { MIN_FIT_ZOOM } from "../ui/canvas-fit";
 
 // Canvas fit, edge declutter, unsaved-changes guard and the light theme (docs/ui-design.md).
@@ -174,12 +174,7 @@ test("canvas fit: fits the team, re-fits when the side panel opens/closes, offer
 test("wide teams at 1100 px with the side panel open: the automatic org chart reflows wide leaf rows into lines, so every card stays on the canvas; a hand-placed arrangement is never reflowed", async () => {
   await withApp(async ({ start }) => {
     const { page, app, errors } = await start();
-    const size = (w: number, h: number) =>
-      app.evaluate(
-        ({ BrowserWindow }, [a, b]) =>
-          BrowserWindow.getAllWindows()[0].setContentSize(a, b),
-        [w, h] as const,
-      );
+    const size = (w: number, h: number) => setContentSize(app, w, h);
     await size(1440, 900);
     await api(page, "POST", "/teams/examples/product-feature-team/insert", {
       acceptUnverifiedModels: true,
@@ -414,11 +409,7 @@ test("screenshots: Sand Ink empty/example team, More, a feature tab, Settings an
   await withApp(async ({ start }) => {
     const { page, app, errors } = await start();
     const size = (width: number, height: number) =>
-      app.evaluate(
-        ({ BrowserWindow }, [w, h]) =>
-          BrowserWindow.getAllWindows()[0].setContentSize(w, h),
-        [width, height] as const,
-      );
+      setContentSize(app, width, height);
     await size(1440, 900);
     const shoot = async (themeName: string, name: string) => {
       await page.waitForTimeout(500);
