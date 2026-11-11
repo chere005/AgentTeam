@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -10,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 import {
@@ -222,6 +223,23 @@ test("a mac build with signing credentials fails when codesign does", () => {
   }
 });
 
+// The bash that runs scripts/preflight.sh. On Windows it is Git for Windows' bin/bash.exe, which is rarely on PATH
+// (and a bare "bash" there can be WSL's, which cannot read Windows paths); found from `git --exec-path`
+// (<git>/mingw64/libexec/git-core), a read-only query. That launcher puts Git's own folders (and the real git) first
+// on PATH, so preflight() puts the stubs back in front inside the shell.
+function findBash(): string | undefined {
+  if (process.platform !== "win32") return "bash";
+  const exec = spawnSync("git", ["--exec-path"], { encoding: "utf8" });
+  if (exec.status !== 0) return undefined;
+  const bash = join(
+    dirname(dirname(dirname(exec.stdout.trim()))),
+    "bin",
+    "bash.exe",
+  );
+  return existsSync(bash) ? bash : undefined;
+}
+const bash = findBash();
+
 // scripts/preflight.sh with git and gh stubbed: nothing is pushed, no network.
 function preflight(jobs: string) {
   const dir = mkdtempSync(join(tmpdir(), "preflight-"));
@@ -260,33 +278,56 @@ esac
   for (const [key, value] of Object.entries(process.env))
     if (value === undefined) continue;
     else if (/^path$/i.test(key)) path = value;
-    else env[key] = value;
-  const r = spawnSync("bash", [join(repo, "scripts", "preflight.sh")], {
-    encoding: "utf8",
-    env: { ...env, PATH: `${bin}${delimiter}${path}` },
-    timeout: 30_000,
-  });
-  const marked =
-    spawnSync("ls", [join(dir, ".git", "preflight")], { encoding: "utf8" })
-      .status === 0;
+    else if (!/^GIT_/.test(key)) env[key] = value;
+  // The stubs go first again inside the shell (cygpath turns C:\... into /c/... under Git Bash). Should the real git
+  // still be reached, it runs outside any repository: the temp folder, with GIT_DIR naming its empty .git, so it
+  // cannot push this checkout.
+  const r = spawnSync(
+    bash!,
+    [
+      "-c",
+      'PATH="$(cygpath -u "$1" 2>/dev/null || printf %s "$1"):$PATH"; export PATH; exec bash "$2"',
+      "preflight",
+      bin,
+      join(repo, "scripts", "preflight.sh"),
+    ],
+    {
+      cwd: dir,
+      encoding: "utf8",
+      env: {
+        ...env,
+        PATH: `${bin}${delimiter}${path}`,
+        GIT_DIR: join(dir, ".git"),
+        GIT_CEILING_DIRECTORIES: dir,
+      },
+      timeout: 30_000,
+    },
+  );
+  const marked = existsSync(join(dir, ".git", "preflight"));
   rmSync(dir, { recursive: true, force: true });
   return { ...r, marked };
 }
 
-test("preflight passes only when the installers jobs ran and succeeded", () => {
-  const ok = preflight(
-    "check (macos-latest)\tsuccess\ninstallers (macos-latest, arm64)\tsuccess\ninstallers (windows-latest, x64, optional)\tfailure\n",
-  );
-  assert.equal(ok.status, 0, ok.stderr + ok.stdout);
-  assert.ok(ok.marked);
-  const noInstallers = preflight("check (macos-latest)\tsuccess\n");
-  assert.equal(noInstallers.status, 1);
-  assert.match(noInstallers.stderr, /no installers job/);
-  assert.ok(!noInstallers.marked);
-  const bad = preflight(
-    "check (macos-latest)\tsuccess\ninstallers (macos-latest, arm64)\tfailure\n",
-  );
-  assert.equal(bad.status, 1);
-  assert.match(bad.stdout, /FAIL/);
-  assert.ok(!bad.marked);
-});
+test(
+  "preflight passes only when the installers jobs ran and succeeded",
+  {
+    skip: bash ? false : "no Git Bash found (git --exec-path)",
+  },
+  () => {
+    const ok = preflight(
+      "check (macos-latest)\tsuccess\ninstallers (macos-latest, arm64)\tsuccess\ninstallers (windows-latest, x64, optional)\tfailure\n",
+    );
+    assert.equal(ok.status, 0, ok.stderr + ok.stdout);
+    assert.ok(ok.marked);
+    const noInstallers = preflight("check (macos-latest)\tsuccess\n");
+    assert.equal(noInstallers.status, 1);
+    assert.match(noInstallers.stderr, /no installers job/);
+    assert.ok(!noInstallers.marked);
+    const bad = preflight(
+      "check (macos-latest)\tsuccess\ninstallers (macos-latest, arm64)\tfailure\n",
+    );
+    assert.equal(bad.status, 1);
+    assert.match(bad.stdout, /FAIL/);
+    assert.ok(!bad.marked);
+  },
+);

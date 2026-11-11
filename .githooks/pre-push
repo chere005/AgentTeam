@@ -10,7 +10,23 @@ set -uo pipefail
 # failed run mails whoever triggered it. The checker lives in Sean's sibling AgentSuite checkout; skipped when absent.
 suite="$(git rev-parse --show-toplevel)/../AgentSuite/tools/check-workflows.py"
 if [ -f "$suite" ]; then
-  python3 "$suite" "$(git rev-parse --show-toplevel)" || { echo "pre-push: refused - a workflow breaks the quiet-CI contract" >&2; exit 1; }
+  # The first interpreter that really runs Python 3.8+. On Windows, python3/python can be the Microsoft Store shortcuts,
+  # which exist on PATH but only print an install hint, so each candidate is run rather than just found; `py -3` is the
+  # Windows launcher. Same order as AgentSuite's githooks/pre-push.
+  py=""
+  for candidate in python3 python "py -3"; do
+    # shellcheck disable=SC2086
+    if $candidate -c 'import sys; sys.exit(sys.version_info < (3, 8))' > /dev/null 2>&1; then
+      py="$candidate"
+      break
+    fi
+  done
+  if [ -z "$py" ]; then
+    echo "pre-push: refused - Python 3.8+ is needed to check the workflows (python3, python or py -3)" >&2
+    exit 1
+  fi
+  # shellcheck disable=SC2086
+  $py "$suite" "$(git rev-parse --show-toplevel)" || { echo "pre-push: refused - a workflow breaks the quiet-CI contract" >&2; exit 1; }
 fi
 
 [ "${AGENTTEAM_SKIP_PREFLIGHT:-}" = "1" ] && exit 0
