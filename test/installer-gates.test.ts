@@ -11,9 +11,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
+import preserveMacNotices from "../scripts/preserve-mac-notices.mjs";
+import { validatePackageTarget } from "../scripts/package-target.mjs";
 import {
   allInstallerFiles,
   installerFiles,
@@ -31,6 +33,7 @@ test("installer file names match electron-builder's artifactName", () => {
     "AgentTeam-1.2.3-mac-arm64.dmg",
     "AgentTeam-1.2.3-mac-arm64.zip",
   ]);
+  assert.throws(() => installerFiles("mac", "x64", "1.2.3"));
   assert.deepEqual(installerFiles("windows", "x64", "1.2.3"), [
     "AgentTeam-1.2.3-win-x64.exe",
   ]);
@@ -39,6 +42,26 @@ test("installer file names match electron-builder's artifactName", () => {
     "AgentTeam-1.2.3-linux-amd64.deb",
   ]);
   assert.throws(() => installerFiles("beos", "x64", "1"));
+});
+
+test("macOS packaging rejects Intel and universal targets without blocking other platforms", () => {
+  assert.throws(() => validatePackageTarget("darwin", ["--x64"]));
+  assert.throws(() => validatePackageTarget("linux", ["--mac", "--universal"]));
+  assert.throws(() => validatePackageTarget("darwin", ["--arch=x64"]));
+  assert.throws(() => validatePackageTarget("darwin", ["--arch", "x86_64"]));
+  assert.throws(() => validatePackageTarget("darwin", ["--x64=true"]));
+  assert.doesNotThrow(() => validatePackageTarget("darwin", ["--arm64"]));
+  assert.doesNotThrow(() =>
+    validatePackageTarget("darwin", ["--win", "--x64"]),
+  );
+  assert.doesNotThrow(() => validatePackageTarget("linux", ["--x64"]));
+  const config = JSON.parse(text("package.json"));
+  assert.ok(
+    config.build.mac.target.every(
+      (target: { arch: string[] }) =>
+        JSON.stringify(target.arch) === JSON.stringify(["arm64"]),
+    ),
+  );
 });
 
 test("release.yml publishes exactly the files the gates script lists, and both workflows call the script", () => {
@@ -55,6 +78,13 @@ test("release.yml publishes exactly the files the gates script lists, and both w
   assert.match(release, /node scripts\/installer-gates\.mjs --x64/);
   assert.doesNotMatch(release, /scripts\/package\.mjs/);
   const ci = parse(text(".github", "workflows", "ci.yml"));
+  assert.deepEqual(parse(release).jobs.mac.strategy.matrix.arch, ["arm64"]);
+  assert.deepEqual(
+    ci.jobs.installers.strategy.matrix.include
+      .filter((job: { os: string }) => job.os === "macos-latest")
+      .map((job: { arch: string }) => job.arch),
+    ["arm64"],
+  );
   const steps = JSON.stringify(ci.jobs.installers.steps);
   assert.match(steps, /scripts\/installer-gates\.mjs/);
   assert.equal(ci.jobs.installers["continue-on-error"], true);
@@ -70,7 +100,7 @@ function fixture(
 ) {
   const dir = mkdtempSync(join(tmpdir(), "gates-"));
   const version = "1.0.0";
-  const arch = "x64";
+  const arch = platform === "mac" ? "arm64" : "x64";
   const big = Buffer.alloc(5_000_001);
   for (const f of installerFiles(platform, arch, version))
     writeFileSync(join(dir, f), big);
@@ -81,21 +111,20 @@ function fixture(
     writeFileSync(p, body);
   };
   for (const rel of requiredResources) put(join(resources, rel));
-  if (platform === "linux") {
-    put(join(app, "LICENSE"));
-    put(join(app, "LICENSES.chromium.html"));
-  }
+  const notices = platform === "mac" ? resources : app;
+  put(join(notices, "LICENSE.electron.txt"));
+  put(join(notices, "LICENSES.chromium.html"));
   const pty = join(
     resources,
     "app.asar.unpacked",
     "node_modules",
     "node-pty",
-    "prebuilds",
+    platform === "mac" ? "prebuilds/darwin-arm64" : "build/Release",
   );
-  put(join(pty, platform === "mac" ? "darwin-x64" : "linux-x64", "pty.node"));
+  put(join(pty, "pty.node"));
   if (platform === "mac") {
-    put(join(pty, "darwin-x64", "spawn-helper"));
-    chmodSync(join(pty, "darwin-x64", "spawn-helper"), 0o755);
+    put(join(pty, "spawn-helper"));
+    chmodSync(join(pty, "spawn-helper"), 0o755);
   }
   const files = ["/package.json", "/dist/desktop/main.js", "/dist/index.html"];
   const run = {
@@ -105,7 +134,7 @@ function fixture(
         Buffer.from(JSON.stringify({ version: opts.version ?? version })),
     }),
     cmd: (c: string, a: string[]) => {
-      if (c === "lipo") return { status: 0, stdout: "x86_64\n", stderr: "" };
+      if (c === "lipo") return { status: 0, stdout: "arm64\n", stderr: "" };
       if (c === "codesign")
         return { status: 1, stdout: "", stderr: "not signed" };
       if (c === "unzip")
@@ -141,6 +170,64 @@ test("verify passes a complete linux package and a complete unsigned mac package
     } finally {
       rmSync(f.dir, { recursive: true, force: true });
     }
+  }
+});
+
+test("a Mac package must not contain Intel node-pty prebuilds", () => {
+  const f = fixture("mac");
+  try {
+    const { resources } = unpackedApp("mac", "arm64", f.dir);
+    const intel = join(
+      resources,
+      "app.asar.unpacked",
+      "node_modules",
+      "node-pty",
+      "prebuilds",
+      "darwin-x64",
+    );
+    mkdirSync(intel, { recursive: true });
+    writeFileSync(join(intel, "pty.node"), "fixture");
+    const result = verify({
+      platform: "mac",
+      arch: f.arch,
+      version: f.version,
+      dir: f.dir,
+      run: f.run,
+    });
+    assert.ok(
+      result.failures.some((failure: string) => /Intel node-pty/.test(failure)),
+    );
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("the mac packaging hook preserves the extracted Electron and Chromium notices inside the app", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "gates-notices-"));
+  try {
+    const resources = join(dir, "Electron.app", "Contents", "Resources");
+    mkdirSync(resources, { recursive: true });
+    writeFileSync(join(dir, "LICENSE"), "Electron distribution notice");
+    writeFileSync(
+      join(dir, "LICENSES.chromium.html"),
+      "Chromium distribution notice",
+    );
+    await preserveMacNotices({
+      appOutDir: dir,
+      electronPlatformName: "darwin",
+    });
+    rmSync(join(dir, "LICENSE"));
+    rmSync(join(dir, "LICENSES.chromium.html"));
+    assert.equal(
+      readFileSync(join(resources, "LICENSE.electron.txt"), "utf8"),
+      "Electron distribution notice",
+    );
+    assert.equal(
+      readFileSync(join(resources, "LICENSES.chromium.html"), "utf8"),
+      "Chromium distribution notice",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
@@ -207,7 +294,7 @@ test("a mac build with signing credentials fails when codesign does", () => {
       ...f.run,
       cmd: (c: string) =>
         c === "lipo"
-          ? { status: 0, stdout: "arm64\n", stderr: "" }
+          ? { status: 0, stdout: "x86_64\n", stderr: "" }
           : f.run.cmd(c, []),
     };
     const r2 = verify({
@@ -246,6 +333,7 @@ function preflight(jobs: string) {
   const bin = join(dir, "bin");
   mkdirSync(bin);
   mkdirSync(join(dir, ".git"));
+  writeFileSync(join(dir, "preflight.sh"), text("scripts", "preflight.sh"));
   writeFileSync(join(dir, "jobs.tsv"), jobs);
   writeFileSync(
     join(bin, "git"),
@@ -254,8 +342,8 @@ case "$1 $2" in
   "rev-parse --abbrev-ref") echo work ;;
   "status --porcelain") ;;
   "rev-parse HEAD") echo 0123456789abcdef0123456789abcdef01234567 ;;
-  "rev-parse --git-common-dir") echo "${dir}/.git" ;;
-  *) echo "git $*" >> "${dir}/git.log" ;;
+  "rev-parse --git-common-dir") echo .git ;;
+  *) echo "git $*" >> git.log ;;
 esac
 `,
   );
@@ -266,42 +354,21 @@ case "$*" in
   api*) echo 4242 ;;
   *status,jobs*) printf 'completed\\t2\\t0\\n' ;;
   *--jq*"failure"*) ;;
-  *) cat "${dir}/jobs.tsv" ;;
+  *) cat jobs.tsv ;;
 esac
 `,
   );
-  chmodSync(join(bin, "git"), 0o755);
-  chmodSync(join(bin, "gh"), 0o755);
-  // Windows spells the variable Path and separates entries with ";" (Git Bash converts it).
-  const env: Record<string, string> = {};
-  let path = "";
-  for (const [key, value] of Object.entries(process.env))
-    if (value === undefined) continue;
-    else if (/^path$/i.test(key)) path = value;
-    else if (!/^GIT_/.test(key)) env[key] = value;
-  // The stubs go first again inside the shell (cygpath turns C:\... into /c/... under Git Bash). Should the real git
-  // still be reached, it runs outside any repository: the temp folder, with GIT_DIR naming its empty .git, so it
-  // cannot push this checkout.
+  // Git Bash on Windows can prepend its own binaries at startup. Use shell
+  // functions in the same Bash process so neither command depends on PATH order.
   const r = spawnSync(
     bash!,
     [
       "-c",
-      'PATH="$(cygpath -u "$1" 2>/dev/null || printf %s "$1"):$PATH"; export PATH; exec bash "$2"',
-      "preflight",
-      bin,
-      join(repo, "scripts", "preflight.sh"),
+      `git() { bash ./bin/git "$@"; }
+gh() { bash ./bin/gh "$@"; }
+source ./preflight.sh`,
     ],
-    {
-      cwd: dir,
-      encoding: "utf8",
-      env: {
-        ...env,
-        PATH: `${bin}${delimiter}${path}`,
-        GIT_DIR: join(dir, ".git"),
-        GIT_CEILING_DIRECTORIES: dir,
-      },
-      timeout: 30_000,
-    },
+    { cwd: dir, encoding: "utf8", timeout: 30_000 },
   );
   const marked = existsSync(join(dir, ".git", "preflight"));
   rmSync(dir, { recursive: true, force: true });

@@ -40,6 +40,7 @@ import { launchManifest } from "./capability-context.ts";
 import { TICK_PROBE_MS, isPending } from "./folder-access.ts";
 import {
   claudeFileTools,
+  codexShellMode,
   providerRootsOf as providerRoots,
   workspaceCapabilities,
 } from "./launch-capability.ts";
@@ -197,8 +198,8 @@ export function commandFor(
     assert(!issue, "provider_access_unsupported", issue ?? "", 409);
   }
   const writable = workspaceCapabilities(plan).write;
-  const shellOn =
-    plan.executionMode !== "file-only" && plan.tools.includes("shell");
+  const shellMode = codexShellMode(plan);
+  const shellOn = shellMode === "full";
   const args = [
     "exec",
     "--json",
@@ -214,6 +215,7 @@ export function commandFor(
             plan.tools,
             process.platform,
             shellOn ? nodeReadRoots() : [],
+            shellOn,
           ).flatMap((setting) => ["-c", setting]),
         ]
       : [
@@ -222,9 +224,7 @@ export function commandFor(
         ]),
     "-c",
     'approval_policy="never"',
-    ...(plan.executionMode === "file-only" || !plan.tools.includes("shell")
-      ? ["-c", "features.shell_tool=false"]
-      : []),
+    ...(shellMode === "off" ? ["-c", "features.shell_tool=false"] : []),
   ];
   if (writable && !plan.taskScoped)
     for (const root of roots)
@@ -234,24 +234,35 @@ export function commandFor(
     args.push("-c", `model_reasoning_effort=${JSON.stringify(plan.effort)}`);
   if (sessionId) args.push("resume", sessionId, "-");
   else args.push("-");
+  const note = !plan.taskScoped
+    ? null
+    : shellOn
+      ? CODEX_TASK_SANDBOX_NOTE
+      : shellMode === "read-only"
+        ? CODEX_READ_ONLY_SHELL_NOTE
+        : null;
   return {
     executable: executablePaths.codex ?? "codex",
     args,
-    stdin: `${plan.instructions}${plan.taskScoped && shellOn ? `\n\n${CODEX_TASK_SANDBOX_NOTE}` : ""}\n\nUser request:\n${prompt}`,
+    stdin: `${plan.instructions}${note ? `\n\n${note}` : ""}\n\nUser request:\n${prompt}`,
     cwd,
-    ...(plan.taskScoped && shellOn
-      ? { limitations: [CODEX_TASK_SANDBOX_NOTE] }
-      : {}),
+    ...(note ? { limitations: [note] } : {}),
   };
 }
 /**
- * Verified with codex-cli 0.167 on macOS (`codex sandbox`): `network.enabled=false` also blocks
- * binding or connecting to 127.0.0.1, and the only switch that allows it (`network.enabled=true`)
- * opens the whole internet; `network.allow_local_binding` / `domains` / `mode` are not enforced
- * outside the managed proxy. AgentTeam does not widen the sandbox for this.
+ * macOS, codex-cli 0.167 (`codex sandbox`, plus one real `codex exec` turn): `network.enabled=false`
+ * also blocks binding or connecting to 127.0.0.1, and `network.enabled=true` alone opens the whole
+ * internet (`allow_local_binding` / `domains` / `mode` are ignored without the managed proxy).
+ * With the experimental `network_proxy` feature added, the seatbelt profile allows only loopback
+ * and public hosts fail with EPERM / a 403 from the proxy; see `codexTaskPermissions`. Other
+ * platforms keep everything blocked.
  */
 export const CODEX_TASK_SANDBOX_NOTE =
-  "Sandbox limits: commands can run node and read/write only the assigned task folders, but all network access, including binding or connecting to localhost, is blocked. Report any check that needs a local server or network as not run; do not claim it passed.";
+  process.platform === "darwin"
+    ? "Sandbox limits: commands can run node and read/write only the assigned task folders. You may bind and connect to 127.0.0.1 (for example a local test server), but every other network connection, including public hosts and package registries, is blocked. Report any check that needs the internet as not run; do not claim it passed."
+    : "Sandbox limits: commands can run node and read/write only the assigned task folders, but all network access, including binding or connecting to localhost, is blocked. Report any check that needs a local server or network as not run; do not claim it passed.";
+export const CODEX_READ_ONLY_SHELL_NOTE =
+  "Read-only access: use the shell only to read and search the assigned task folders (for example cat, ls, grep, rg). The folders are read-only and there is no network. Do not try to modify files or run the project; report any check that would need that as not run.";
 export function decodeEvent(environment: string, event: any): RuntimeEvent[] {
   const events: RuntimeEvent[] = [];
   if (environment === "wolfram") {

@@ -4,7 +4,7 @@ import {
   _electron as electron,
   type Page,
 } from "@playwright/test";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,11 +31,12 @@ async function matches(page: Page, text: string) {
 
 test("terminal tab: real shell, output, search, sub-tabs, folder rules and no orphaned PTYs", async () => {
   test.setTimeout(90_000);
-  const directory = realpathSync(
+  const directory = realpathSync.native(
     await mkdtemp(join(tmpdir(), "agentteam-e2e-terminal-")),
   );
   const project = join(directory, "project");
   await mkdir(project);
+  await writeFile(join(project, "terminal-cwd.txt"), "agentteam-project-cwd\n");
   const app = await electron.launch({
     args: [".", ...(process.platform === "linux" ? ["--no-sandbox"] : [])],
     env: {
@@ -94,12 +95,17 @@ test("terminal tab: real shell, output, search, sub-tabs, folder rules and no or
     );
     await pane.locator(".terminal-host:not([hidden]) .xterm").click();
     await page.keyboard.type(
-      process.platform === "win32" ? "(Get-Location).Path" : "pwd",
+      process.platform === "win32"
+        ? "Get-Content terminal-cwd.txt"
+        : "cat terminal-cwd.txt",
     );
     await page.keyboard.press("Enter");
-    await expect(await matches(page, project)).toHaveText(/of [1-9]/, {
-      timeout: 15_000,
-    });
+    // The marker is only in the file, so this checks the shell's working directory
+    // without depending on how the shell spells a Windows short path or wraps a long one.
+    await expect(await matches(page, "agentteam-project-cwd")).toHaveText(
+      /of 1$/,
+      { timeout: 15_000 },
+    );
     await page.getByRole("button", { name: "Close search" }).click();
 
     // Switching feature tabs keeps the sessions and their scrollback.

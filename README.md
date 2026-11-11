@@ -16,7 +16,7 @@ Feel free to build it, change it, run your own teams on it, etc.
 
 ## Platforms
 
-- macOS (Apple silicon and Intel)
+- macOS (Apple Silicon)
 - Windows x64
 - Linux x64 (AppImage and deb)
 

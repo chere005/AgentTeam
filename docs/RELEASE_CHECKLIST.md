@@ -25,6 +25,6 @@ Work through this before tagging. A configured workflow, a version bump or a gre
 
 ## Packaging and publication (needs real machines or credentials)
 
-- [ ] Install and launch the packaged app on macOS arm64/x64, Windows x64 and Linux x64 (AppImage and deb); open a team, start the backend, quit cleanly.
+- [ ] Install and launch the packaged app on macOS Apple Silicon, Windows x64 and Linux x64 (AppImage and deb); open a team, start the backend, quit cleanly.
 - [ ] macOS: signing and notarization per `SIGNING.md`; verify with `codesign --verify --deep --strict` and `spctl --assess`. Never commit or print credentials.
 - [ ] Only after explicit authorization: push, create the `v*` tag, let `release.yml` build and publish (README "Releases"; `npm run preflight` first), then download the actual assets and compare against `SHA256SUMS.txt`.

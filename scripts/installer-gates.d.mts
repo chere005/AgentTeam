@@ -23,7 +23,6 @@ export function unpackedApp(
   dir?: string,
 ): { app: string; resources: string };
 export const requiredResources: string[];
-export function nodePtyPrebuild(platform: string, arch: string): string;
 export function verify(options: {
   platform: string;
   arch: string;

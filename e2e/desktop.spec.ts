@@ -1,12 +1,15 @@
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:net";
 import { test, expect, _electron as electron } from "@playwright/test";
+import { realpathSync } from "node:fs";
 import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openChatWith, openFeature, waitForStableCanvas } from "./helpers";
 test("desktop connects, persists agents, configures limits and queues chat", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "agentteam-e2e-"));
+  const directory = realpathSync.native(
+    await mkdtemp(join(tmpdir(), "agentteam-e2e-")),
+  );
   const app = await electron.launch({
     args: [".", ...(process.platform === "linux" ? ["--no-sandbox"] : [])],
     env: { ...process.env, AGENTTEAM_DATA_DIR: directory, AGENTTEAM_TEST: "1" },
@@ -150,9 +153,7 @@ test("desktop connects, persists agents, configures limits and queues chat", asy
       .selectOption({ label: "Database Architect" });
     await expect(page.getByText("EXPLICIT FILE ACCESS")).toBeVisible();
     await expect(page.locator(".access-folder .full-path")).toContainText(
-      process.platform === "darwin"
-        ? directory.replace(/^\/var\//, "/private/var/")
-        : directory,
+      directory,
     );
     await main.getByRole("button", { name: "Resource", exact: true }).click();
     await main.getByLabel("Name", { exact: true }).fill("Shared project");

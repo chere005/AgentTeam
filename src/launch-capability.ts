@@ -72,6 +72,31 @@ export function workspaceCapabilities(plan: PlanFacts) {
   };
 }
 
+/**
+ * How a Codex launch may use its shell. Codex has no file-reading tool of its own: every read goes
+ * through the shell, so withholding the shell leaves a "read" grant unusable (a read-only reviewer
+ * then returns "inconclusive" without having seen a file).
+ * - "full": the shell was granted (and the assignment is not file-only).
+ * - "read-only": a task-scoped launch with a usable read grant but no write capability and no shell
+ *   grant. The shell is on only because reading needs it; the task permission profile (exact roots
+ *   marked "read", no network) keeps it from writing or reaching beyond the granted roots. Never
+ *   offered outside a task-scoped launch: the plain `read-only` sandbox mode can read the whole disk.
+ * - "off": no shell, so no file access at all.
+ */
+export function codexShellMode(plan: PlanFacts): "full" | "read-only" | "off" {
+  if (plan.executionMode === "file-only") return "off";
+  if (plan.tools.includes("shell")) return "full";
+  if (!plan.taskScoped) return "off";
+  const access = workspaceCapabilities(plan);
+  // codexTaskPermissions marks any root "write" when a write tool meets a write-access folder,
+  // even if other roots are read-only (workspaceCapabilities.write needs EVERY root writable).
+  // An ungranted shell must never sit next to a writable root.
+  const anyWritableRoot =
+    (plan.tools.includes("edit") || plan.tools.includes("write")) &&
+    (plan.workspaces ?? []).some((ws) => ws.access === "write");
+  return access.read && !access.write && !anyWritableRoot ? "read-only" : "off";
+}
+
 /** The Claude built-in tools a launch names (`--tools`), in the order the command line uses. */
 export function claudeFileTools(plan: PlanFacts) {
   const access = workspaceCapabilities(plan);
