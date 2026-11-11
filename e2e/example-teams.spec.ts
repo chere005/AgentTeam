@@ -22,14 +22,20 @@ const api = (page: Page, method: string, path: string, body?: unknown) =>
 
 /** Card boxes on screen for the given agents (same zoom for all, so comparable). */
 async function boxes(page: Page, ids: string[]) {
-  const out: Record<string, Box> = {};
-  for (const id of ids) {
-    const b = await page
-      .locator(`.react-flow__node[data-id="${id}"]`)
-      .boundingBox();
-    expect(b, `card for ${id}`).not.toBeNull();
-    out[id] = b!;
-  }
+  const out = await page.evaluate((ids) => {
+    const result: Record<string, Box> = {};
+    for (const id of ids) {
+      const rect = document
+        .querySelector(`.react-flow__node[data-id="${CSS.escape(id)}"]`)
+        ?.getBoundingClientRect();
+      if (rect?.width && rect.height) {
+        const { x, y, width, height } = rect;
+        result[id] = { x, y, width, height };
+      }
+    }
+    return result;
+  }, ids);
+  for (const id of ids) expect(out[id], `card for ${id}`).toBeDefined();
   return out;
 }
 
@@ -268,7 +274,9 @@ test("example teams: listed with shape and org preview, inserted as teams (no pr
         await expect(project).toContainText(
           "Build matching local socket clients",
         );
-        await expect(project.locator(".badge").first()).toHaveText("waiting for you");
+        await expect(project.locator(".badge").first()).toHaveText(
+          "waiting for you",
+        );
         const quickstartAgents = await api(page, "GET", "/agents");
         const quickstartTeamId = (await api(page, "GET", "/snapshot"))
           .activeTeamId;
@@ -301,39 +309,25 @@ test("example teams: listed with shape and org preview, inserted as teams (no pr
     // Switching card modes reflows an automatically arranged team to fit the new card size.
     // The Wolfram team (active now) is small enough to stay at full zoom.
     const wolframAgents = await teamAgents(page);
-    const compactHeights = Object.values(
-      await boxes(
-        page,
-        wolframAgents.map((a) => a.id),
-      ),
-    ).map((x) => Math.round(x.height));
+    const wolframIds = wolframAgents.map((a) => a.id);
+    const compact = await boxes(page, wolframIds);
     await page.getByRole("button", { name: "Detailed cards" }).click();
-    await page.waitForTimeout(700);
-    const detailed = await boxes(
-      page,
-      wolframAgents.map((a) => a.id),
-    );
-    console.log(
-      "card heights on screen: compact",
-      compactHeights,
-      "detailed",
-      Object.values(detailed).map((x) => Math.round(x.height)),
-      "zoom",
-      await page
-        .locator(".react-flow__viewport")
-        .evaluate((el) => (el as HTMLElement).style.transform),
-    );
-    assertOrgChart(wolframAgents, detailed);
+    await expect(async () => {
+      const detailed = await boxes(page, wolframIds);
+      for (const id of wolframIds)
+        expect(detailed[id].height).toBeGreaterThan(compact[id].height + 50);
+      assertOrgChart(wolframAgents, detailed);
+    }).toPass({ timeout: 5_000 });
     await page.screenshot({ path: join(shots, "canvas-wolfram-detailed.png") });
     await page.getByRole("button", { name: "Simple cards" }).click();
-    await page.waitForTimeout(700);
-    assertOrgChart(
-      wolframAgents,
-      await boxes(
-        page,
-        wolframAgents.map((a) => a.id),
-      ),
-    );
+    await expect(async () => {
+      const simple = await boxes(page, wolframIds);
+      for (const id of wolframIds)
+        expect(Math.abs(simple[id].height - compact[id].height)).toBeLessThan(
+          2,
+        );
+      assertOrgChart(wolframAgents, simple);
+    }).toPass({ timeout: 5_000 });
 
     // Assign a project to the product team from the team menu.
     await page.getByTestId("team-switcher").click();
@@ -363,7 +357,9 @@ test("example teams: listed with shape and org preview, inserted as teams (no pr
     await expect(form).toHaveCount(0);
     const project = page.locator(".workflow").first();
     await expect(project).toContainText("Add a dark mode toggle");
-    await expect(project.locator(".badge").first()).toHaveText("waiting for you");
+    await expect(project.locator(".badge").first()).toHaveText(
+      "waiting for you",
+    );
     await expect(project.getByLabel("Model mapping")).toContainText(
       "not verified",
     );

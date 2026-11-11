@@ -18,7 +18,7 @@ test("run inspector: timeline, wait explainer, transfers, previews, playground c
       page.getByText("Workspace connected", { exact: true }),
     ).toBeVisible();
     // Fixture data only: AGENTTEAM_TEST keeps live execution off; states are driven through the API.
-    await page.evaluate(async () => {
+    const edgeId = await page.evaluate(async () => {
       const r = window.agentteam.request;
       const planner = await r("POST", "/agents", {
         name: "Planner",
@@ -29,7 +29,7 @@ test("run inspector: timeline, wait explainer, transfers, previews, playground c
         name: "Builder",
         environment: "codex",
       });
-      await r("POST", "/edges", {
+      const edge = await r("POST", "/edges", {
         from: planner.id,
         to: builder.id,
         kind: "delegate",
@@ -66,6 +66,7 @@ test("run inspector: timeline, wait explainer, transfers, previews, playground c
         completionCriteria: "d",
         dependsOn: [blocker.id],
       });
+      return edge.id;
     });
     await openFeature(page, "Timeline & inspector");
     const inspector = page.getByTestId("inspector");
@@ -258,8 +259,24 @@ test("run inspector: timeline, wait explainer, transfers, previews, playground c
     // edge after it looked stable (initial fitView once nodes are measured, cards growing as their
     // data loads), so the centre could land on the empty pane. The React Flow onEdgeClick handler
     // still runs; what this test checks is the dialog's transfer history.
-    const edge = page.locator(".react-flow__edge").first();
-    await expect(edge).toBeVisible();
+    const edge = page.getByTestId(`rf__edge-${edgeId}`);
+    // A straight vertical SVG connector has a zero-width geometry box even though its stroke
+    // renders. Check for a drawn path rather than applying Playwright's box visibility rule.
+    await expect
+      .poll(() =>
+        edge.locator(".react-flow__edge-path").evaluateAll((paths) =>
+          paths.some((path) => {
+            const { width, height } = path.getBoundingClientRect();
+            const { visibility, stroke } = getComputedStyle(path);
+            return (
+              (width > 0 || height > 0) &&
+              visibility === "visible" &&
+              stroke !== "none"
+            );
+          }),
+        ),
+      )
+      .toBe(true);
     await edge.dispatchEvent("click");
     const dialog = page.getByRole("dialog", { name: "Connection settings" });
     await expect(

@@ -9,5 +9,7 @@ try {
 } catch {
   process.exit(0);
 }
-for (const helper of ensureSpawnHelper(entry))
+// macOS packages target Apple Silicon only.
+const architectures = process.platform === "darwin" ? ["arm64"] : undefined;
+for (const helper of ensureSpawnHelper(entry, architectures))
   console.log("node-pty spawn-helper ready: " + helper);

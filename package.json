@@ -1,6 +1,6 @@
 {
   "name": "agentteam",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "description": "Visual multi-agent desktop workspace",
@@ -83,7 +83,8 @@
     },
     "files": [
       "dist/**/*",
-      "package.json"
+      "package.json",
+      "!node_modules/node-pty/prebuilds/darwin-x64/**/*"
     ],
     "extraResources": [
       {
@@ -93,8 +94,18 @@
     ],
     "mac": {
       "target": [
-        "dmg",
-        "zip"
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
       ],
       "category": "public.app-category.developer-tools",
       "hardenedRuntime": true,
@@ -127,6 +138,7 @@
     "icon": "build/icon.png",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "npmRebuild": false,
+    "afterExtract": "./scripts/preserve-mac-notices.mjs",
     "asarUnpack": [
       "node_modules/node-pty/**"
     ]

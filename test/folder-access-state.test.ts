@@ -842,7 +842,8 @@ test("the real runner reports a timed-out child only once it is gone", async (t)
       "--",
       beat,
     ],
-    { timeoutMs: 200 },
+    // Hosted Windows can take longer than 200 ms to start Node; give the heartbeat time to run.
+    { timeoutMs: process.env.CI ? 10_000 : 1_000 },
   );
   assert.equal(outcome.timedOut, true);
   const first = await readFile(beat, "utf8");
