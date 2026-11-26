@@ -28,6 +28,25 @@ import {
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const text = (...p: string[]) => readFileSync(join(repo, ...p), "utf8");
 
+test("desktop checks require a preflight push or an explicit dispatch", () => {
+  const ci = parse(text(".github", "workflows", "ci.yml"));
+  assert.deepEqual(ci.on, {
+    push: { branches: ["preflight/**"] },
+    workflow_dispatch: null,
+  });
+  // Removing duplicate main runs must preserve the full preflight/explicit-run coverage.
+  assert.deepEqual(ci.jobs.check.strategy.matrix.include, [
+    { os: "macos-latest", optional: false },
+    { os: "windows-latest", optional: true },
+    { os: "ubuntu-latest", optional: true },
+  ]);
+  assert.deepEqual(ci.jobs.installers.strategy.matrix.include, [
+    { os: "macos-latest", arch: "arm64", optional: false },
+    { os: "windows-latest", arch: "x64", optional: true },
+    { os: "ubuntu-latest", arch: "x64", optional: true },
+  ]);
+});
+
 test("installer file names match electron-builder's artifactName", () => {
   assert.deepEqual(installerFiles("mac", "arm64", "1.2.3"), [
     "AgentTeam-1.2.3-mac-arm64.dmg",

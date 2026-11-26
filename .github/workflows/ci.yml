@@ -1,7 +1,8 @@
 name: Desktop checks
-# CI runs on main pushes and on preflight/** branches (scripts/preflight.sh pushes one, reads each
-# job's own conclusion and says pass or fail); .githooks/pre-push refuses main or a v* tag whose
-# commit has not passed preflight. Preflight branches also run the `installers` jobs (the release's installer gates; nothing is published).
+# CI runs on deliberate preflight/** pushes and explicit dispatches. scripts/preflight.sh pushes a
+# preflight branch and reads each job's conclusion; .githooks/pre-push refuses main or a v* tag whose
+# commit has not passed preflight. Main pushes do not repeat those checks. Preflight branches also
+# run the `installers` jobs (the release's installer gates; nothing is published).
 #
 # QUIET CI (AgentSuite's ci.md and tools/check-workflows.py in Sean's checkout). GitHub mails a run's outcome to whoever
 # TRIGGERED it. So a run a person starts (a push, `gh workflow run`, a re-run) only runs `handoff`, which re-dispatches this
@@ -10,7 +11,7 @@ name: Desktop checks
 # green; scripts/preflight.sh reads each job.
 on:
   push:
-    branches: [main, "preflight/**"]
+    branches: ["preflight/**"]
   workflow_dispatch:
 permissions:
   contents: read
